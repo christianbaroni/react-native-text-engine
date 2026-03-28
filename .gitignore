@@ -1,0 +1,8 @@
+node_modules
+lib
+android/build
+ios/build
+.DS_Store
+.pnp.cjs
+.pnp.loader.mjs
+.yarn

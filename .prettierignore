@@ -1,0 +1,11 @@
+node_modules
+lib
+.yarn
+android/build
+ios/build
+examples/node_modules
+examples/android/**/.cxx
+examples/android/**/.gradle
+examples/android/**/build
+examples/ios/**/Pods
+examples/ios/**/build

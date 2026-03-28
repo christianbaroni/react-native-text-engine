@@ -1,0 +1,17 @@
+export const demoTheme = {
+  accentBlue: '#7d89b8',
+  accentGold: '#b59663',
+  border: 'rgba(122, 136, 174, 0.12)',
+  borderStrong: 'rgba(122, 136, 174, 0.16)',
+  bubbleAssistant: '#0d121c',
+  bubbleUser: '#4a476e',
+  glowBlue: 'rgba(99, 112, 145, 0.08)',
+  glowPurple: 'rgba(82, 77, 120, 0.12)',
+  panel: '#0c1018',
+  panelMuted: '#10141d',
+  panelRaised: '#121722',
+  root: '#05070d',
+  textPrimary: '#f3f5fa',
+  textSecondary: '#868faa',
+  textTertiary: '#69718a',
+} as const;
