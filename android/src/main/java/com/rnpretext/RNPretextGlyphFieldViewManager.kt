@@ -3,20 +3,31 @@ package com.rnpretext
 import android.graphics.Canvas
 import android.graphics.Color
 import android.view.View
+import com.facebook.react.module.annotations.ReactModule
 import com.facebook.react.uimanager.SimpleViewManager
 import com.facebook.react.uimanager.ThemedReactContext
+import com.facebook.react.uimanager.ViewManagerDelegate
 import com.facebook.react.uimanager.annotations.ReactProp
+import com.facebook.react.viewmanagers.RNPretextGlyphFieldViewManagerDelegate
+import com.facebook.react.viewmanagers.RNPretextGlyphFieldViewManagerInterface
 
+@ReactModule(name = RNPretextGlyphFieldViewManager.REACT_CLASS)
 internal class RNPretextGlyphFieldViewManager :
-    SimpleViewManager<RNPretextGlyphFieldViewManager.RNPretextGlyphFieldView>() {
+    SimpleViewManager<RNPretextGlyphFieldViewManager.RNPretextGlyphFieldView>(),
+    RNPretextGlyphFieldViewManagerInterface<RNPretextGlyphFieldViewManager.RNPretextGlyphFieldView> {
+    private val delegate: ViewManagerDelegate<RNPretextGlyphFieldView> =
+        RNPretextGlyphFieldViewManagerDelegate<RNPretextGlyphFieldView, RNPretextGlyphFieldViewManager>(this)
+
     override fun getName(): String = REACT_CLASS
 
     override fun createViewInstance(reactContext: ThemedReactContext): RNPretextGlyphFieldView {
         return RNPretextGlyphFieldView(reactContext)
     }
 
+    override fun getDelegate(): ViewManagerDelegate<RNPretextGlyphFieldView> = delegate
+
     @ReactProp(name = "handle", defaultDouble = 0.0)
-    fun setHandle(view: RNPretextGlyphFieldView, handle: Double) {
+    override fun setHandle(view: RNPretextGlyphFieldView, handle: Double) {
         view.updateHandle(handle.toLong())
     }
 

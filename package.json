@@ -27,6 +27,7 @@
     "src",
     "lib",
     "android",
+    "common",
     "ios",
     "README.md",
     "LICENSE",
@@ -103,8 +104,15 @@
   },
   "codegenConfig": {
     "name": "RNPretextSpec",
-    "type": "modules",
+    "type": "all",
     "jsSrcsDir": "src",
+    "ios": {
+      "componentProvider": {
+        "RNPretextGlyphFieldView": "RNPretextGlyphFieldViewComponentView",
+        "RNPretextPreparedTextView": "RNPretextPreparedTextViewComponentView",
+        "RNPretextTextView": "RNPretextTextViewComponentView"
+      }
+    },
     "android": {
       "javaPackageName": "com.rnpretext"
     }

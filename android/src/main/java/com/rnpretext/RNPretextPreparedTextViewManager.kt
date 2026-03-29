@@ -6,32 +6,43 @@ import android.text.TextUtils
 import android.util.TypedValue
 import android.widget.TextView.BufferType
 import androidx.appcompat.widget.AppCompatTextView
+import com.facebook.react.module.annotations.ReactModule
 import com.facebook.react.uimanager.SimpleViewManager
 import com.facebook.react.uimanager.ThemedReactContext
+import com.facebook.react.uimanager.ViewManagerDelegate
 import com.facebook.react.uimanager.ViewProps
 import com.facebook.react.uimanager.annotations.ReactProp
+import com.facebook.react.viewmanagers.RNPretextPreparedTextViewManagerDelegate
+import com.facebook.react.viewmanagers.RNPretextPreparedTextViewManagerInterface
 
+@ReactModule(name = RNPretextPreparedTextViewManager.REACT_CLASS)
 internal class RNPretextPreparedTextViewManager :
-    SimpleViewManager<RNPretextPreparedTextViewManager.RNPretextPreparedTextView>() {
+    SimpleViewManager<RNPretextPreparedTextViewManager.RNPretextPreparedTextView>(),
+    RNPretextPreparedTextViewManagerInterface<RNPretextPreparedTextViewManager.RNPretextPreparedTextView> {
+    private val delegate: ViewManagerDelegate<RNPretextPreparedTextView> =
+        RNPretextPreparedTextViewManagerDelegate<RNPretextPreparedTextView, RNPretextPreparedTextViewManager>(this)
+
     override fun getName(): String = REACT_CLASS
 
     override fun createViewInstance(reactContext: ThemedReactContext): RNPretextPreparedTextView {
         return RNPretextPreparedTextView(reactContext)
     }
 
+    override fun getDelegate(): ViewManagerDelegate<RNPretextPreparedTextView> = delegate
+
     @ReactProp(name = "handle", defaultDouble = 0.0)
-    fun setHandle(view: RNPretextPreparedTextView, handle: Double) {
+    override fun setHandle(view: RNPretextPreparedTextView, handle: Double) {
         view.setPreparedHandle(handle.toLong())
     }
 
     @ReactProp(name = ViewProps.NUMBER_OF_LINES, defaultInt = 0)
-    fun setNumberOfLines(view: RNPretextPreparedTextView, numberOfLines: Int) {
+    override fun setNumberOfLines(view: RNPretextPreparedTextView, numberOfLines: Int) {
         view.maxLines = if (numberOfLines > 0) numberOfLines else Int.MAX_VALUE
         view.setSingleLine(false)
     }
 
     @ReactProp(name = "selectable", defaultBoolean = false)
-    fun setSelectable(view: RNPretextPreparedTextView, selectable: Boolean) {
+    override fun setSelectable(view: RNPretextPreparedTextView, selectable: Boolean) {
         view.setTextIsSelectable(selectable)
         view.isFocusable = selectable
         view.isFocusableInTouchMode = selectable
@@ -40,7 +51,7 @@ internal class RNPretextPreparedTextViewManager :
     }
 
     @ReactProp(name = "ellipsizeMode")
-    fun setEllipsizeMode(view: RNPretextPreparedTextView, ellipsizeMode: String?) {
+    override fun setEllipsizeMode(view: RNPretextPreparedTextView, ellipsizeMode: String?) {
         view.ellipsize =
             when (ellipsizeMode) {
                 "head" -> TextUtils.TruncateAt.START

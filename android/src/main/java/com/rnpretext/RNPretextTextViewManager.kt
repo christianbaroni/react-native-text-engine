@@ -12,21 +12,29 @@ import android.text.style.MetricAffectingSpan
 import android.util.TypedValue
 import android.view.Gravity
 import androidx.appcompat.widget.AppCompatTextView
-import com.facebook.react.bridge.ColorPropConverter
 import com.facebook.react.bridge.ReadableArray
 import com.facebook.react.bridge.ReadableMap
+import com.facebook.react.module.annotations.ReactModule
 import com.facebook.react.uimanager.PixelUtil
 import com.facebook.react.uimanager.SimpleViewManager
 import com.facebook.react.uimanager.ThemedReactContext
+import com.facebook.react.uimanager.ViewManagerDelegate
 import com.facebook.react.uimanager.ViewProps
 import com.facebook.react.uimanager.annotations.ReactProp
+import com.facebook.react.viewmanagers.RNPretextTextViewManagerDelegate
+import com.facebook.react.viewmanagers.RNPretextTextViewManagerInterface
 import com.facebook.react.views.text.ReactTypefaceUtils
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
 
-internal class RNPretextTextViewManager : SimpleViewManager<RNPretextTextViewManager.RNPretextTextView>() {
+@ReactModule(name = RNPretextTextViewManager.REACT_CLASS)
+internal class RNPretextTextViewManager :
+    SimpleViewManager<RNPretextTextViewManager.RNPretextTextView>(),
+    RNPretextTextViewManagerInterface<RNPretextTextViewManager.RNPretextTextView> {
+    private val delegate: ViewManagerDelegate<RNPretextTextView> =
+        RNPretextTextViewManagerDelegate<RNPretextTextView, RNPretextTextViewManager>(this)
     data class TextRunStyle(
         val color: String?,
         val fontFamily: String?,
@@ -58,77 +66,78 @@ internal class RNPretextTextViewManager : SimpleViewManager<RNPretextTextViewMan
         return RNPretextTextView(reactContext)
     }
 
+    override fun getDelegate(): ViewManagerDelegate<RNPretextTextView> = delegate
+
     override fun onAfterUpdateTransaction(view: RNPretextTextView) {
         super.onAfterUpdateTransaction(view)
         view.flushTextDisplayIfNeeded()
     }
 
     @ReactProp(name = "text")
-    fun setText(view: RNPretextTextView, text: String?) {
+    override fun setText(view: RNPretextTextView, text: String?) {
         view.textValue = text ?: ""
         view.invalidateTextDisplay()
     }
 
     @ReactProp(name = "color", customType = "Color")
-    fun setColor(view: RNPretextTextView, color: Any?) {
-        val resolved = ColorPropConverter.getColor(color, view.context)
-        view.setTextColor(resolved ?: view.defaultTextColor)
+    override fun setColor(view: RNPretextTextView, color: Int?) {
+        view.setTextColor(color ?: view.defaultTextColor)
         view.invalidateTextDisplay()
     }
 
     @ReactProp(name = "fontFamily")
-    fun setFontFamily(view: RNPretextTextView, fontFamily: String?) {
+    override fun setFontFamily(view: RNPretextTextView, fontFamily: String?) {
         view.fontFamily = fontFamily
         view.updateTypeface()
         view.invalidateTextDisplay()
     }
 
     @ReactProp(name = "fontSize", defaultFloat = 14f)
-    fun setFontSize(view: RNPretextTextView, fontSize: Float) {
-        view.setTextSizePx(PixelUtil.toPixelFromDIP(fontSize))
+    override fun setFontSize(view: RNPretextTextView, fontSize: Double) {
+        view.setTextSizePx(PixelUtil.toPixelFromDIP(fontSize.toFloat()))
         view.invalidateTextDisplay()
     }
 
     @ReactProp(name = "fontStyle")
-    fun setFontStyle(view: RNPretextTextView, fontStyle: String?) {
+    override fun setFontStyle(view: RNPretextTextView, fontStyle: String?) {
         view.fontStyle = fontStyle
         view.updateTypeface()
         view.invalidateTextDisplay()
     }
 
     @ReactProp(name = "fontWeight")
-    fun setFontWeight(view: RNPretextTextView, fontWeight: String?) {
+    override fun setFontWeight(view: RNPretextTextView, fontWeight: String?) {
         view.fontWeight = fontWeight
         view.updateTypeface()
         view.invalidateTextDisplay()
     }
 
     @ReactProp(name = "letterSpacing", defaultFloat = 0f)
-    fun setLetterSpacing(view: RNPretextTextView, letterSpacing: Float) {
-        view.setLetterSpacingPx(PixelUtil.toPixelFromDIP(letterSpacing))
+    override fun setLetterSpacing(view: RNPretextTextView, letterSpacing: Double) {
+        view.setLetterSpacingPx(PixelUtil.toPixelFromDIP(letterSpacing.toFloat()))
         view.invalidateTextDisplay()
     }
 
     @ReactProp(name = "lineHeight")
-    fun setLineHeight(view: RNPretextTextView, lineHeight: Float) {
+    override fun setLineHeight(view: RNPretextTextView, lineHeight: Double) {
         view.setLineHeightPx(
             if (lineHeight.isNaN()) {
                 Float.NaN
             } else {
-                PixelUtil.toPixelFromDIP(lineHeight)
+                PixelUtil.toPixelFromDIP(lineHeight.toFloat())
             },
         )
         view.invalidateTextDisplay()
     }
 
     @ReactProp(name = ViewProps.NUMBER_OF_LINES, defaultInt = 0)
-    fun setNumberOfLines(view: RNPretextTextView, numberOfLines: Int) {
+    override fun setNumberOfLines(view: RNPretextTextView, numberOfLines: Int) {
         view.maxLines = if (numberOfLines > 0) numberOfLines else Int.MAX_VALUE
         view.setSingleLine(false)
     }
 
     @ReactProp(name = "selectable", defaultBoolean = false)
-    fun setSelectable(view: RNPretextTextView, selectable: Boolean) {
+    override fun setSelectable(view: RNPretextTextView, selectable: Boolean) {
         view.setTextIsSelectable(selectable)
         view.isFocusable = selectable
         view.isFocusableInTouchMode = selectable
@@ -137,7 +146,7 @@ internal class RNPretextTextViewManager : SimpleViewManager<RNPretextTextViewMan
     }
 
     @ReactProp(name = "ellipsizeMode")
-    fun setEllipsizeMode(view: RNPretextTextView, ellipsizeMode: String?) {
+    override fun setEllipsizeMode(view: RNPretextTextView, ellipsizeMode: String?) {
         view.ellipsize = when (ellipsizeMode) {
             "head" -> TextUtils.TruncateAt.START
             "middle" -> TextUtils.TruncateAt.MIDDLE
@@ -153,80 +162,80 @@ internal class RNPretextTextViewManager : SimpleViewManager<RNPretextTextViewMan
     }
 
     @ReactProp(name = "runStarts")
-    fun setRunStarts(view: RNPretextTextView, runStarts: ReadableArray?) {
+    override fun setRunStarts(view: RNPretextTextView, runStarts: ReadableArray?) {
         view.runStarts = runStarts
         view.invalidateTextDisplay()
     }
 
     @ReactProp(name = "runEnds")
-    fun setRunEnds(view: RNPretextTextView, runEnds: ReadableArray?) {
+    override fun setRunEnds(view: RNPretextTextView, runEnds: ReadableArray?) {
         view.runEnds = runEnds
         view.invalidateTextDisplay()
     }
 
     @ReactProp(name = "runStyleMasks")
-    fun setRunStyleMasks(view: RNPretextTextView, runStyleMasks: ReadableArray?) {
+    override fun setRunStyleMasks(view: RNPretextTextView, runStyleMasks: ReadableArray?) {
         view.runStyleMasks = runStyleMasks
         view.invalidateTextDisplay()
     }
 
     @ReactProp(name = "runColors")
-    fun setRunColors(view: RNPretextTextView, runColors: ReadableArray?) {
+    override fun setRunColors(view: RNPretextTextView, runColors: ReadableArray?) {
         view.runColors = runColors
         view.invalidateTextDisplay()
     }
 
     @ReactProp(name = "runCount", defaultInt = 0)
-    fun setRunCount(view: RNPretextTextView, runCount: Int) {
+    override fun setRunCount(view: RNPretextTextView, runCount: Int) {
         view.runCount = runCount
         view.invalidateTextDisplay()
     }
 
     @ReactProp(name = "runFontFamilies")
-    fun setRunFontFamilies(view: RNPretextTextView, runFontFamilies: ReadableArray?) {
+    override fun setRunFontFamilies(view: RNPretextTextView, runFontFamilies: ReadableArray?) {
         view.runFontFamilies = runFontFamilies
         view.invalidateTextDisplay()
     }
 
     @ReactProp(name = "runFontSizes")
-    fun setRunFontSizes(view: RNPretextTextView, runFontSizes: ReadableArray?) {
+    override fun setRunFontSizes(view: RNPretextTextView, runFontSizes: ReadableArray?) {
         view.runFontSizes = runFontSizes
         view.invalidateTextDisplay()
     }
 
     @ReactProp(name = "runFontWeights")
-    fun setRunFontWeights(view: RNPretextTextView, runFontWeights: ReadableArray?) {
+    override fun setRunFontWeights(view: RNPretextTextView, runFontWeights: ReadableArray?) {
         view.runFontWeights = runFontWeights
         view.invalidateTextDisplay()
     }
 
     @ReactProp(name = "runFontStyles")
-    fun setRunFontStyles(view: RNPretextTextView, runFontStyles: ReadableArray?) {
+    override fun setRunFontStyles(view: RNPretextTextView, runFontStyles: ReadableArray?) {
         view.runFontStyles = runFontStyles
         view.invalidateTextDisplay()
     }
 
     @ReactProp(name = "runLetterSpacings")
-    fun setRunLetterSpacings(view: RNPretextTextView, runLetterSpacings: ReadableArray?) {
+    override fun setRunLetterSpacings(view: RNPretextTextView, runLetterSpacings: ReadableArray?) {
         view.runLetterSpacings = runLetterSpacings
         view.invalidateTextDisplay()
     }
 
     @ReactProp(name = "runLineHeights")
-    fun setRunLineHeights(view: RNPretextTextView, runLineHeights: ReadableArray?) {
+    override fun setRunLineHeights(view: RNPretextTextView, runLineHeights: ReadableArray?) {
         view.runLineHeights = runLineHeights
         view.invalidateTextDisplay()
     }
 
     @ReactProp(name = "runTabularNumbers")
-    fun setRunTabularNumbers(view: RNPretextTextView, runTabularNumbers: ReadableArray?) {
+    override fun setRunTabularNumbers(view: RNPretextTextView, runTabularNumbers: ReadableArray?) {
         view.runTabularNumbers = runTabularNumbers
         view.invalidateTextDisplay()
     }
 
     @Suppress("WrongConstant")
     @ReactProp(name = ViewProps.TEXT_ALIGN)
-    fun setTextAlign(view: RNPretextTextView, textAlign: String?) {
+    override fun setTextAlign(view: RNPretextTextView, textAlign: String?) {
         val horizontalGravity =
             when (textAlign) {
                 null, "auto" -> Gravity.NO_GRAVITY

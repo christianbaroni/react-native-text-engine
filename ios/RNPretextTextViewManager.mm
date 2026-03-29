@@ -1,6 +1,13 @@
 #import "RNPretextColorUtils.h"
 #import <CoreText/SFNTLayoutTypes.h>
 #import <React/RCTConvert.h>
+#ifdef RCT_NEW_ARCH_ENABLED
+#import <React/RCTConversions.h>
+#import <React/RCTViewComponentView.h>
+#import <react/renderer/components/RNPretextSpec/Props.h>
+#import <react/renderer/components/RNPretextSpec/RCTComponentViewHelpers.h>
+#import "../common/cpp/react/renderer/components/RNPretextSpec/RNPretextTextViewComponentDescriptor.h"
+#endif
 #import <React/RCTFont.h>
 #import <React/RCTViewManager.h>
 
@@ -14,6 +21,222 @@
 @property (nonatomic, strong) NSNumber *lineHeight;
 @property (nonatomic, strong) NSNumber *tabularNumbers;
 @end
+
+@class RNPretextTextRun;
+
+@interface RNPretextTextView : UIView
+@property (nonatomic, strong) UIColor *color;
+@property (nonatomic, copy) NSString *ellipsizeMode;
+@property (nonatomic, copy) NSString *fontFamily;
+@property (nonatomic, assign) CGFloat fontSize;
+@property (nonatomic, copy) NSString *fontStyle;
+@property (nonatomic, copy) NSString *fontWeight;
+@property (nonatomic, assign) CGFloat letterSpacing;
+@property (nonatomic, assign) CGFloat lineHeight;
+@property (nonatomic, assign) NSInteger numberOfLines;
+@property (nonatomic, copy) NSArray<NSString *> *runColors;
+@property (nonatomic, assign) NSInteger runCount;
+@property (nonatomic, copy) NSArray<NSNumber *> *runEnds;
+@property (nonatomic, copy) NSArray<NSString *> *runFontFamilies;
+@property (nonatomic, copy) NSArray<NSNumber *> *runFontSizes;
+@property (nonatomic, copy) NSArray<NSString *> *runFontStyles;
+@property (nonatomic, copy) NSArray<NSString *> *runFontWeights;
+@property (nonatomic, copy) NSArray<NSNumber *> *runLetterSpacings;
+@property (nonatomic, copy) NSArray<NSNumber *> *runLineHeights;
+@property (nonatomic, copy) NSArray<NSNumber *> *runStarts;
+@property (nonatomic, copy) NSArray<NSNumber *> *runStyleMasks;
+@property (nonatomic, copy) NSArray<NSNumber *> *runTabularNumbers;
+@property (nonatomic, copy) NSArray<RNPretextTextRun *> *runs;
+@property (nonatomic, assign) BOOL selectable;
+@property (nonatomic, copy) NSString *text;
+@property (nonatomic, copy) NSString *textAlign;
+@end
+
+#ifdef RCT_NEW_ARCH_ENABLED
+
+using namespace facebook::react;
+
+static NSArray<NSString *> *RNPretextNSStringArrayFromVector(const std::vector<std::string> &values)
+{
+  if (values.empty()) return @[];
+
+  NSMutableArray<NSString *> *array = [NSMutableArray arrayWithCapacity:values.size()];
+  for (const std::string &value : values) {
+    [array addObject:RCTNSStringFromString(value)];
+  }
+  return array;
+}
+
+static NSArray<NSNumber *> *RNPretextNSNumberArrayFromDoubleVector(const std::vector<double> &values)
+{
+  if (values.empty()) return @[];
+
+  NSMutableArray<NSNumber *> *array = [NSMutableArray arrayWithCapacity:values.size()];
+  for (double value : values) {
+    [array addObject:@(value)];
+  }
+  return array;
+}
+
+static NSArray<NSNumber *> *RNPretextNSNumberArrayFromBoolVector(const std::vector<bool> &values)
+{
+  if (values.empty()) return @[];
+
+  NSMutableArray<NSNumber *> *array = [NSMutableArray arrayWithCapacity:values.size()];
+  for (bool value : values) {
+    [array addObject:@(value)];
+  }
+  return array;
+}
+
+@interface RNPretextTextViewComponentView : RCTViewComponentView <RCTRNPretextTextViewViewProtocol>
+@end
+
+@implementation RNPretextTextViewComponentView {
+  RNPretextTextView *_textView;
+}
+
++ (ComponentDescriptorProvider)componentDescriptorProvider
+{
+  return concreteComponentDescriptorProvider<RNPretextTextViewComponentDescriptor>();
+}
+
+- (instancetype)initWithFrame:(CGRect)frame
+{
+  if ((self = [super initWithFrame:frame])) {
+    static const auto defaultProps = std::make_shared<const RNPretextTextViewProps>();
+    _props = defaultProps;
+    self.backgroundColor = UIColor.clearColor;
+    self.opaque = NO;
+    self.layer.backgroundColor = UIColor.clearColor.CGColor;
+    _textView = [[RNPretextTextView alloc] initWithFrame:self.bounds];
+    _textView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    [self addSubview:_textView];
+  }
+
+  return self;
+}
+
+- (void)updateProps:(const Props::Shared &)props oldProps:(const Props::Shared &)oldProps
+{
+  const auto &oldViewProps = static_cast<const RNPretextTextViewProps &>(*_props);
+  const auto &newViewProps = static_cast<const RNPretextTextViewProps &>(*props);
+
+  if (oldViewProps.text != newViewProps.text) {
+    _textView.text = RCTNSStringFromString(newViewProps.text);
+  }
+  if (oldViewProps.color != newViewProps.color) {
+    _textView.color = RCTUIColorFromSharedColor(newViewProps.color);
+  }
+  if (oldViewProps.fontFamily != newViewProps.fontFamily) {
+    _textView.fontFamily = RCTNSStringFromStringNilIfEmpty(newViewProps.fontFamily);
+  }
+  if (oldViewProps.fontSize != newViewProps.fontSize) {
+    _textView.fontSize = newViewProps.fontSize;
+  }
+  if (oldViewProps.fontStyle != newViewProps.fontStyle) {
+    _textView.fontStyle = RCTNSStringFromStringNilIfEmpty(newViewProps.fontStyle);
+  }
+  if (oldViewProps.fontWeight != newViewProps.fontWeight) {
+    _textView.fontWeight = RCTNSStringFromStringNilIfEmpty(newViewProps.fontWeight);
+  }
+  if (oldViewProps.letterSpacing != newViewProps.letterSpacing) {
+    _textView.letterSpacing = newViewProps.letterSpacing;
+  }
+  if (oldViewProps.lineHeight != newViewProps.lineHeight) {
+    _textView.lineHeight = newViewProps.lineHeight;
+  }
+  if (oldViewProps.numberOfLines != newViewProps.numberOfLines) {
+    _textView.numberOfLines = newViewProps.numberOfLines;
+  }
+  if (oldViewProps.selectable != newViewProps.selectable) {
+    _textView.selectable = newViewProps.selectable;
+  }
+  if (oldViewProps.ellipsizeMode != newViewProps.ellipsizeMode) {
+    _textView.ellipsizeMode = RCTNSStringFromStringNilIfEmpty(newViewProps.ellipsizeMode);
+  }
+  if (oldViewProps.textAlign != newViewProps.textAlign) {
+    _textView.textAlign = RCTNSStringFromStringNilIfEmpty(newViewProps.textAlign);
+  }
+  if (oldViewProps.runCount != newViewProps.runCount) {
+    _textView.runCount = newViewProps.runCount;
+  }
+  if (oldViewProps.runStarts != newViewProps.runStarts) {
+    _textView.runStarts = RNPretextNSNumberArrayFromDoubleVector(newViewProps.runStarts);
+  }
+  if (oldViewProps.runEnds != newViewProps.runEnds) {
+    _textView.runEnds = RNPretextNSNumberArrayFromDoubleVector(newViewProps.runEnds);
+  }
+  if (oldViewProps.runStyleMasks != newViewProps.runStyleMasks) {
+    _textView.runStyleMasks = RNPretextNSNumberArrayFromDoubleVector(newViewProps.runStyleMasks);
+  }
+  if (oldViewProps.runColors != newViewProps.runColors) {
+    _textView.runColors = RNPretextNSStringArrayFromVector(newViewProps.runColors);
+  }
+  if (oldViewProps.runFontFamilies != newViewProps.runFontFamilies) {
+    _textView.runFontFamilies = RNPretextNSStringArrayFromVector(newViewProps.runFontFamilies);
+  }
+  if (oldViewProps.runFontSizes != newViewProps.runFontSizes) {
+    _textView.runFontSizes = RNPretextNSNumberArrayFromDoubleVector(newViewProps.runFontSizes);
+  }
+  if (oldViewProps.runFontStyles != newViewProps.runFontStyles) {
+    _textView.runFontStyles = RNPretextNSStringArrayFromVector(newViewProps.runFontStyles);
+  }
+  if (oldViewProps.runFontWeights != newViewProps.runFontWeights) {
+    _textView.runFontWeights = RNPretextNSStringArrayFromVector(newViewProps.runFontWeights);
+  }
+  if (oldViewProps.runLetterSpacings != newViewProps.runLetterSpacings) {
+    _textView.runLetterSpacings = RNPretextNSNumberArrayFromDoubleVector(newViewProps.runLetterSpacings);
+  }
+  if (oldViewProps.runLineHeights != newViewProps.runLineHeights) {
+    _textView.runLineHeights = RNPretextNSNumberArrayFromDoubleVector(newViewProps.runLineHeights);
+  }
+  if (oldViewProps.runTabularNumbers != newViewProps.runTabularNumbers) {
+    _textView.runTabularNumbers = RNPretextNSNumberArrayFromBoolVector(newViewProps.runTabularNumbers);
+  }
+
+  [super updateProps:props oldProps:oldProps];
+}
+
+- (void)layoutSubviews
+{
+  [super layoutSubviews];
+  _textView.frame = self.bounds;
+}
+
+- (void)prepareForRecycle
+{
+  [super prepareForRecycle];
+  _textView.text = @"";
+  _textView.color = nil;
+  _textView.fontFamily = nil;
+  _textView.fontSize = 14;
+  _textView.fontStyle = nil;
+  _textView.fontWeight = nil;
+  _textView.letterSpacing = 0;
+  _textView.lineHeight = 0;
+  _textView.numberOfLines = 0;
+  _textView.selectable = NO;
+  _textView.ellipsizeMode = nil;
+  _textView.textAlign = nil;
+  _textView.runs = nil;
+  _textView.runCount = 0;
+  _textView.runStarts = nil;
+  _textView.runEnds = nil;
+  _textView.runStyleMasks = nil;
+  _textView.runColors = nil;
+  _textView.runFontFamilies = nil;
+  _textView.runFontSizes = nil;
+  _textView.runFontStyles = nil;
+  _textView.runFontWeights = nil;
+  _textView.runLetterSpacings = nil;
+  _textView.runLineHeights = nil;
+  _textView.runTabularNumbers = nil;
+}
+
+@end
+
+#endif
 
 @implementation RNPretextTextRunStyle
 @end
@@ -46,38 +269,58 @@ static NSString *RNPretextStringOrNil(id value)
   return [value isKindOfClass:[NSString class]] ? (NSString *)value : nil;
 }
 
-@interface RNPretextTextView : UIView
-@property (nonatomic, strong) UIColor *color;
-@property (nonatomic, copy) NSString *ellipsizeMode;
-@property (nonatomic, copy) NSString *fontFamily;
-@property (nonatomic, assign) CGFloat fontSize;
-@property (nonatomic, copy) NSString *fontStyle;
-@property (nonatomic, copy) NSString *fontWeight;
-@property (nonatomic, assign) CGFloat letterSpacing;
-@property (nonatomic, assign) CGFloat lineHeight;
-@property (nonatomic, assign) NSInteger numberOfLines;
-@property (nonatomic, copy) NSArray<NSString *> *runColors;
-@property (nonatomic, assign) NSInteger runCount;
-@property (nonatomic, copy) NSArray<NSNumber *> *runEnds;
-@property (nonatomic, copy) NSArray<NSString *> *runFontFamilies;
-@property (nonatomic, copy) NSArray<NSNumber *> *runFontSizes;
-@property (nonatomic, copy) NSArray<NSString *> *runFontStyles;
-@property (nonatomic, copy) NSArray<NSString *> *runFontWeights;
-@property (nonatomic, copy) NSArray<NSNumber *> *runLetterSpacings;
-@property (nonatomic, copy) NSArray<NSNumber *> *runLineHeights;
-@property (nonatomic, copy) NSArray<NSNumber *> *runStarts;
-@property (nonatomic, copy) NSArray<NSNumber *> *runStyleMasks;
-@property (nonatomic, copy) NSArray<NSNumber *> *runTabularNumbers;
-@property (nonatomic, copy) NSArray<RNPretextTextRun *> *runs;
-@property (nonatomic, assign) BOOL selectable;
-@property (nonatomic, copy) NSString *text;
-@property (nonatomic, copy) NSString *textAlign;
-@end
-
 @implementation RNPretextTextView {
-  UILabel *_label;
+  NSAttributedString *_displayText;
   BOOL _textDisplayDirty;
   UITextView *_textView;
+}
+
+- (BOOL)isOpaque
+{
+  return NO;
+}
+
+static NSLineBreakMode RNPretextTextResolveLineBreakMode(NSString *ellipsizeMode)
+{
+  if ([ellipsizeMode isEqualToString:@"head"]) return NSLineBreakByTruncatingHead;
+  if ([ellipsizeMode isEqualToString:@"middle"]) return NSLineBreakByTruncatingMiddle;
+  if ([ellipsizeMode isEqualToString:@"tail"]) return NSLineBreakByTruncatingTail;
+  return NSLineBreakByClipping;
+}
+
+static NSAttributedString *RNPretextTextSelectionText(NSAttributedString *attributedText)
+{
+  if (attributedText.length == 0) return attributedText;
+
+  NSMutableAttributedString *selectionText = [[NSMutableAttributedString alloc] initWithAttributedString:attributedText];
+  [selectionText addAttribute:NSForegroundColorAttributeName
+                        value:UIColor.clearColor
+                        range:NSMakeRange(0, selectionText.length)];
+  return selectionText;
+}
+
+static void RNPretextTextDrawAttributedText(
+    NSAttributedString *attributedText,
+    CGRect bounds,
+    NSInteger numberOfLines,
+    NSString *ellipsizeMode)
+{
+  if (attributedText.length == 0 || CGRectIsEmpty(bounds)) return;
+
+  NSTextStorage *textStorage = [[NSTextStorage alloc] initWithAttributedString:attributedText];
+  NSLayoutManager *layoutManager = [[NSLayoutManager alloc] init];
+  NSTextContainer *textContainer = [[NSTextContainer alloc] initWithSize:bounds.size];
+  textContainer.lineFragmentPadding = 0;
+  textContainer.lineBreakMode = RNPretextTextResolveLineBreakMode(ellipsizeMode);
+  textContainer.maximumNumberOfLines = numberOfLines > 0 ? numberOfLines : 0;
+
+  [layoutManager addTextContainer:textContainer];
+  [textStorage addLayoutManager:layoutManager];
+  [layoutManager ensureLayoutForTextContainer:textContainer];
+
+  NSRange glyphRange = [layoutManager glyphRangeForTextContainer:textContainer];
+  [layoutManager drawBackgroundForGlyphRange:glyphRange atPoint:bounds.origin];
+  [layoutManager drawGlyphsForGlyphRange:glyphRange atPoint:bounds.origin];
 }
 
 - (UIFont *)resolveFontWithFamily:(NSString *)fontFamily
@@ -140,7 +383,7 @@ static NSString *RNPretextStringOrNil(id value)
     NSMutableParagraphStyle *paragraphStyle = [[NSMutableParagraphStyle alloc] init];
     paragraphStyle.minimumLineHeight = resolvedLineHeight;
     paragraphStyle.maximumLineHeight = resolvedLineHeight;
-    paragraphStyle.alignment = _label.textAlignment;
+    paragraphStyle.alignment = _textView.textAlignment;
     attributes[NSParagraphStyleAttributeName] = paragraphStyle;
   }
 
@@ -208,20 +451,20 @@ static NSString *RNPretextStringOrNil(id value)
 {
   if ((self = [super init])) {
     self.backgroundColor = UIColor.clearColor;
+    self.clearsContextBeforeDrawing = NO;
+    self.opaque = NO;
+    self.contentMode = UIViewContentModeRedraw;
+    self.layer.backgroundColor = UIColor.clearColor.CGColor;
+    self.layer.opaque = NO;
     _textDisplayDirty = YES;
 
     _fontSize = 14;
-    _label = [[UILabel alloc] initWithFrame:self.bounds];
-    _label.autoresizingMask =
-        UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    _label.backgroundColor = UIColor.clearColor;
-    _label.numberOfLines = 0;
-    [self addSubview:_label];
-
     _textView = [[UITextView alloc] initWithFrame:self.bounds];
     _textView.autoresizingMask =
         UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     _textView.backgroundColor = UIColor.clearColor;
+    _textView.opaque = NO;
+    _textView.layer.opaque = NO;
     _textView.editable = NO;
     _textView.scrollEnabled = NO;
     _textView.selectable = NO;
@@ -230,6 +473,7 @@ static NSString *RNPretextStringOrNil(id value)
     _textView.textContainerInset = UIEdgeInsetsZero;
     _textView.textContainer.lineFragmentPadding = 0;
     _textView.hidden = YES;
+    _textView.userInteractionEnabled = NO;
     [self addSubview:_textView];
   }
 
@@ -239,14 +483,14 @@ static NSString *RNPretextStringOrNil(id value)
 - (void)layoutSubviews
 {
   [super layoutSubviews];
-  _label.frame = self.bounds;
-  _label.preferredMaxLayoutWidth = CGRectGetWidth(self.bounds);
   _textView.frame = self.bounds;
   _textView.textContainer.size = self.bounds.size;
 
   if (_textDisplayDirty) {
     _textDisplayDirty = NO;
     [self updateTextDisplay];
+  } else {
+    [self setNeedsDisplay];
   }
 }
 
@@ -385,25 +629,15 @@ static NSString *RNPretextStringOrNil(id value)
 - (void)setNumberOfLines:(NSInteger)numberOfLines
 {
   _numberOfLines = numberOfLines;
-  _label.numberOfLines = numberOfLines > 0 ? numberOfLines : 0;
   _textView.textContainer.maximumNumberOfLines = numberOfLines > 0 ? numberOfLines : 0;
+  [self setNeedsDisplay];
 }
 
 - (void)setEllipsizeMode:(NSString *)ellipsizeMode
 {
   _ellipsizeMode = [ellipsizeMode copy];
-  NSLineBreakMode lineBreakMode = NSLineBreakByClipping;
-
-  if ([ellipsizeMode isEqualToString:@"head"]) {
-    lineBreakMode = NSLineBreakByTruncatingHead;
-  } else if ([ellipsizeMode isEqualToString:@"middle"]) {
-    lineBreakMode = NSLineBreakByTruncatingMiddle;
-  } else if ([ellipsizeMode isEqualToString:@"tail"]) {
-    lineBreakMode = NSLineBreakByTruncatingTail;
-  }
-
-  _label.lineBreakMode = lineBreakMode;
-  _textView.textContainer.lineBreakMode = lineBreakMode;
+  _textView.textContainer.lineBreakMode = RNPretextTextResolveLineBreakMode(ellipsizeMode);
+  [self setNeedsDisplay];
 }
 
 - (void)setTextAlign:(NSString *)textAlign
@@ -419,7 +653,6 @@ static NSString *RNPretextStringOrNil(id value)
     alignment = NSTextAlignmentJustified;
   }
 
-  _label.textAlignment = alignment;
   _textView.textAlignment = alignment;
   [self invalidateTextDisplay];
 }
@@ -427,10 +660,10 @@ static NSString *RNPretextStringOrNil(id value)
 - (void)setSelectable:(BOOL)selectable
 {
   _selectable = selectable;
-  _label.hidden = selectable;
   _textView.hidden = !selectable;
   _textView.selectable = selectable;
   _textView.userInteractionEnabled = selectable;
+  [self setNeedsDisplay];
 }
 
 - (NSAttributedString *)buildAttributedText
@@ -462,9 +695,21 @@ static NSString *RNPretextStringOrNil(id value)
 
 - (void)updateTextDisplay
 {
-  NSAttributedString *attributedText = [self buildAttributedText];
-  _label.attributedText = attributedText;
-  _textView.attributedText = attributedText;
+  _displayText = [self buildAttributedText];
+  _textView.attributedText = _selectable ? RNPretextTextSelectionText(_displayText ?: [[NSAttributedString alloc] initWithString:@""]) : nil;
+  [self setNeedsDisplay];
+}
+
+- (void)drawRect:(CGRect)rect
+{
+  CGContextRef context = UIGraphicsGetCurrentContext();
+  if (context == nullptr) return;
+
+  CGContextSetBlendMode(context, kCGBlendModeCopy);
+  CGContextSetFillColorWithColor(context, UIColor.clearColor.CGColor);
+  CGContextFillRect(context, self.bounds);
+  CGContextSetBlendMode(context, kCGBlendModeNormal);
+  RNPretextTextDrawAttributedText(_displayText ?: [[NSAttributedString alloc] initWithString:@""], self.bounds, _numberOfLines, _ellipsizeMode);
 }
 
 @end

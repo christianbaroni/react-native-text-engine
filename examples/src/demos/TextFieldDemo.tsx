@@ -53,6 +53,8 @@ export function TextFieldDemo({ isActive = true }: { isActive?: boolean }) {
     y: 0,
   });
 
+  const fieldHandle = field.handle;
+
   useEffect(() => {
     installPretextInUIRuntime();
   }, []);
@@ -77,18 +79,15 @@ export function TextFieldDemo({ isActive = true }: { isActive?: boolean }) {
   }, [config.artHeight, config.artWidth, field, fieldFrame, frameBuffer, phase, runtimeInput]);
 
   const updateFieldFrame = (event: LayoutChangeEvent) => {
-    const { height: layoutHeight, width: layoutWidth, x, y } = event.nativeEvent.layout;
-    fieldFrame.value = { height: layoutHeight, width: layoutWidth, x, y };
+    const info = event.nativeEvent.layout;
+    fieldFrame.value = { height: info.height, width: info.width, x: info.x, y: info.y };
   };
 
   useFrameCallback(frameInfo => {
-    'worklet';
-
     if (active.value === 0) return;
-
     phase.value += (frameInfo.timeSincePreviousFrame ?? 16.67) / 1000;
     const frame = stepTextFieldRuntime(runtimeInput, frameBuffer, phase.value, pointer.value);
-    updateGlyphFieldInRuntime(field.handle, frame.glyphs, frame.variantIndices);
+    updateGlyphFieldInRuntime(fieldHandle, frame.glyphs, frame.variantIndices);
   });
 
   const dragGesture = useMemo(
@@ -126,7 +125,7 @@ export function TextFieldDemo({ isActive = true }: { isActive?: boolean }) {
       <GestureDetector gesture={dragGesture}>
         <View style={styles.stage}>
           <View onLayout={updateFieldFrame} style={[styles.textField, { height: config.artHeight, width: config.artWidth }]}>
-            <GlyphFieldView handle={field.handle} style={[styles.fieldSurface, { height: config.artHeight, width: config.artWidth }]} />
+            <GlyphFieldView handle={fieldHandle} style={[styles.fieldSurface, { height: config.artHeight, width: config.artWidth }]} />
           </View>
         </View>
       </GestureDetector>

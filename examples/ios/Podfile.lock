@@ -2423,7 +2423,7 @@ SPEC CHECKSUMS:
   ReactCommon: 07572bf9e687c8a52fbe4a3641e9e3a1a477c78e
   ReactNativeDependencies: d33cc6e6780de81a7d3ea1ef1545ca298aa416fd
   RNGestureHandler: 695faf9c1f0aa1a6d52ab778e459a1bcbae3153b
-  RNPretext: ff9ae68a4a150e70dec6fd2c42c7a8ab2b14154e
+  RNPretext: 3c6ef06beb66e91bc7305c9b54d789d696e35371
   RNReanimated: 923eb30d50cea473eed734767d4c33c374fae5fc
   RNWorklets: bc32c788b41ef5f9ee519d6bf3f495b73fb7741b
   Yoga: c0b3f2c7e8d3e327e450223a2414ca3fa296b9a2

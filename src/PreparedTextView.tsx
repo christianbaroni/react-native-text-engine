@@ -1,5 +1,6 @@
 import React from 'react';
-import { Platform, requireNativeComponent, type StyleProp, type ViewProps, type ViewStyle } from 'react-native';
+import { Platform, type StyleProp, type ViewProps, type ViewStyle } from 'react-native';
+import NativePreparedTextView from './specs/RNPretextPreparedTextViewNativeComponent';
 
 /**
  * Props for the native prepared-handle render surface.
@@ -13,8 +14,6 @@ export type PreparedTextViewProps = ViewProps & {
   selectable?: boolean;
   style?: StyleProp<ViewStyle>;
 };
-
-const NativePreparedTextView = requireNativeComponent<PreparedTextViewProps>('RNPretextPreparedTextView');
 
 // `requireNativeComponent` exposes a HostComponent type that is incompatible
 // with this package's React type surface in TS, even though it is the correct
