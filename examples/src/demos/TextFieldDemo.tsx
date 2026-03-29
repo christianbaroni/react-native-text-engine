@@ -1,59 +1,63 @@
-import React, { useLayoutEffect, useMemo } from 'react';
-import {
-  SafeAreaView,
-  StyleSheet,
-  Text,
-  View,
-  useWindowDimensions,
-  type LayoutChangeEvent,
-} from 'react-native';
+import React, { useEffect, useLayoutEffect, useMemo } from 'react';
+import { StyleSheet, Text, View, useWindowDimensions, type LayoutChangeEvent } from 'react-native';
 import { useStableValue } from '@storesjs/stores';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { useFrameCallback, useSharedValue } from 'react-native-reanimated';
-import type { TextMeasureRun } from 'react-native-pretext';
-import { WorkletText } from '../pretext/WorkletText';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { GlyphFieldView, createGlyphField, releaseGlyphField, updateGlyphField } from 'react-native-pretext';
+import { installRNPretextInUIRuntime, updateGlyphFieldInRuntime } from 'react-native-pretext/worklets';
 import {
-  createTextFieldRuntimeInput,
   FIELD_STYLE,
+  FIELD_VARIANTS,
+  createTextFieldFrameBuffer,
+  createTextFieldRuntimeInput,
   resolveTextFieldConfig,
   stepTextFieldRuntime,
+  type TextFieldFrameBuffer,
   type TextFieldPointer,
 } from './textFieldEngine';
 import { demoTheme } from '../theme/demoTheme';
 
 export function TextFieldDemo({ isActive = true }: { isActive?: boolean }) {
   const { height, width } = useWindowDimensions();
-  const config = useMemo(
-    () => resolveTextFieldConfig(width, height),
-    [height, width],
-  );
-  const runtimeInput = useMemo(
-    () => createTextFieldRuntimeInput(config),
-    [config],
-  );
-  const initialFrame = useMemo(
-    () => stepTextFieldRuntime(runtimeInput, 0, { active: false, x: 0, y: 0 }),
-    [runtimeInput],
+  const config = useMemo(() => resolveTextFieldConfig(width, height), [height, width]);
+  const runtimeInput = useMemo(() => createTextFieldRuntimeInput(config), [config]);
+  const frameBuffer = useStableValue<TextFieldFrameBuffer>(() => createTextFieldFrameBuffer(config.rows * config.cols));
+  const field = useMemo(
+    () =>
+      createGlyphField({
+        columns: config.cols,
+        fontFamily: FIELD_STYLE.fontFamily,
+        fontSize: FIELD_STYLE.fontSize ?? 18,
+        letterSpacing: FIELD_STYLE.letterSpacing,
+        lineHeight: FIELD_STYLE.lineHeight ?? 20,
+        rows: config.rows,
+        textAlign: 'center',
+        variants: FIELD_VARIANTS,
+      }),
+    [config.cols, config.rows]
   );
 
   const active = useSharedValue(isActive ? 1 : 0);
-  const fieldText = useSharedValue(initialFrame.text);
-  const fieldRuns = useSharedValue<readonly TextMeasureRun[]>(
-    initialFrame.runs,
-  );
   const fieldFrame = useSharedValue({
     height: config.artHeight,
     width: config.artWidth,
     x: 0,
     y: 0,
   });
+
   const phase = useSharedValue(0);
   const pointer = useSharedValue<TextFieldPointer>({
     active: false,
     x: 0,
     y: 0,
   });
-  const runtimeInputValue = useSharedValue(runtimeInput);
+
+  useEffect(() => {
+    installRNPretextInUIRuntime();
+  }, []);
+
+  useEffect(() => () => releaseGlyphField(field), [field]);
 
   useLayoutEffect(() => {
     active.value = isActive ? 1 : 0;
@@ -61,58 +65,31 @@ export function TextFieldDemo({ isActive = true }: { isActive?: boolean }) {
 
   useLayoutEffect(() => {
     phase.value = 0;
-    runtimeInputValue.value = runtimeInput;
-
-    const next = stepTextFieldRuntime(runtimeInput, 0, pointer.value);
-    fieldText.value = next.text;
-    fieldRuns.value = next.runs;
     fieldFrame.value = {
       height: config.artHeight,
       width: config.artWidth,
       x: 0,
       y: 0,
     };
-  }, [
-    config.artHeight,
-    config.artWidth,
-    fieldFrame,
-    fieldRuns,
-    fieldText,
-    phase,
-    pointer,
-    runtimeInput,
-    runtimeInputValue,
-  ]);
+
+    const frame = stepTextFieldRuntime(runtimeInput, frameBuffer, 0, { active: false, x: 0, y: 0 });
+    updateGlyphField(field, frame.glyphs, frame.variantIndices);
+  }, [config.artHeight, config.artWidth, field, fieldFrame, frameBuffer, phase, runtimeInput]);
 
   const updateFieldFrame = (event: LayoutChangeEvent) => {
-    const {
-      height: layoutHeight,
-      width: layoutWidth,
-      x,
-      y,
-    } = event.nativeEvent.layout;
+    const { height: layoutHeight, width: layoutWidth, x, y } = event.nativeEvent.layout;
     fieldFrame.value = { height: layoutHeight, width: layoutWidth, x, y };
   };
 
-  const onFrame = useStableValue(
-    () => (frameInfo: { timeSincePreviousFrame: number | null }) => {
-      'worklet';
+  useFrameCallback(frameInfo => {
+    'worklet';
 
-      if (active.value === 0) return;
+    if (active.value === 0) return;
 
-      phase.value += (frameInfo.timeSincePreviousFrame ?? 16.67) / 1000;
-
-      const next = stepTextFieldRuntime(
-        runtimeInputValue.value,
-        phase.value,
-        pointer.value,
-      );
-      fieldText.value = next.text;
-      fieldRuns.value = next.runs;
-    },
-  );
-
-  useFrameCallback(onFrame);
+    phase.value += (frameInfo.timeSincePreviousFrame ?? 16.67) / 1000;
+    const frame = stepTextFieldRuntime(runtimeInput, frameBuffer, phase.value, pointer.value);
+    updateGlyphFieldInRuntime(field.id, frame.glyphs, frame.variantIndices);
+  });
 
   const dragGesture = useMemo(
     () =>
@@ -141,54 +118,29 @@ export function TextFieldDemo({ isActive = true }: { isActive?: boolean }) {
             y: pointer.value.y,
           };
         }),
-    [fieldFrame, pointer],
+    [fieldFrame, pointer]
   );
 
   return (
     <SafeAreaView style={styles.root}>
       <GestureDetector gesture={dragGesture}>
         <View style={styles.stage}>
-          <View
-            onLayout={updateFieldFrame}
-            style={[
-              styles.textField,
-              { height: config.artHeight, width: config.artWidth },
-            ]}>
-            <WorkletText
-              ellipsizeMode="clip"
-              numberOfLines={config.rows}
-              runs={fieldRuns}
-              style={[
-                styles.fieldText,
-                {
-                  height: config.artHeight,
-                  width: config.artWidth,
-                },
-              ]}>
-              {fieldText}
-            </WorkletText>
+          <View onLayout={updateFieldFrame} style={[styles.textField, { height: config.artHeight, width: config.artWidth }]}>
+            <GlyphFieldView handle={field.id} style={[styles.fieldSurface, { height: config.artHeight, width: config.artWidth }]} />
           </View>
         </View>
       </GestureDetector>
 
       <View pointerEvents="none" style={styles.footer}>
-        <Text style={styles.footerText}>
-          {config.rows * config.cols} characters
-        </Text>
+        <Text style={styles.footerText}>{config.rows * config.cols} characters</Text>
       </View>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  fieldText: {
-    color: FIELD_STYLE.color,
-    fontFamily: FIELD_STYLE.fontFamily,
-    fontSize: FIELD_STYLE.fontSize,
-    fontWeight: '300',
-    letterSpacing: FIELD_STYLE.letterSpacing,
-    lineHeight: FIELD_STYLE.lineHeight,
-    textAlign: 'center',
+  fieldSurface: {
+    flex: 1,
   },
   footer: {
     alignItems: 'center',

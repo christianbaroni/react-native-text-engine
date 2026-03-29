@@ -1,28 +1,85 @@
 # React Native Pretext Example
 
-This example app exists to prove two concrete use cases:
+This app shows the package running in real React Native UI.
 
-1. `TextFieldDemo`
-   A dark, continuously changing text field driven by one Shared Value string on
-   the UI runtime, with measured proportional glyph lookup precomputed once.
+It focuses on the two main primitives in `react-native-pretext`:
 
-2. `ChatDemo`
-   A long-conversation surface that uses exact `measureBatch` geometry for the
-   active width and feeds that directly into a Shared Value recycled list built
-   from the real worklet-list architecture. It renders from prepared handles
-   and uses the selectable native text path for chat message text.
+- prepared text for flowing text
+- glyph fields for fixed-grid text surfaces
+
+## What the demos show
+
+### Text Field
+
+The text field demo is a fixed-grid text surface driven by a live simulation on the UI runtime.
+
+It uses a native glyph field, not a normal text view. Each frame updates:
+
+- the glyph in each cell
+- the style variant index for each cell
+
+The native field owns drawing and style caches.
+
+This is the package’s example of a text surface where the changing value is cell content, not paragraph layout.
+
+### AI Chat
+
+The chat demo is a long conversation surface built around prepared text.
+
+It prepares message text once, measures layout for the active width, and feeds those exact heights into a worklet-driven list. Rows render from prepared text handles instead of rebuilding normal React text layout on demand.
+
+This is the package’s example of flowing text whose layout needs to be known before rows mount.
 
 ## Run
 
+Use Node 22 or newer.
+
 ```sh
+cd examples
 yarn install
 yarn start
+
+# in another terminal
 yarn ios
 # or
 yarn android
 ```
 
-The app depends on the local package via `portal:..`, so edits in the package
-are visible directly from the example workspace. Metro is pinned to the app's
-own React / React Native / Reanimated / Worklets copies so the linked package
-does not load duplicate runtime peers.
+If iOS native dependencies change:
+
+```sh
+cd ios
+pod install
+```
+
+## Local package setup
+
+The example depends on the package through `portal:..`.
+
+That means:
+
+- edits in the root package are visible directly inside the example app
+- you do not need to publish or pack the library to try a change
+- Metro must keep React, React Native, Reanimated, and Worklets owned by the app copy rather than the linked package copy
+
+That last part is already handled in the example’s Metro config.
+
+## App structure
+
+The app has one shell with a floating switch between:
+
+- `Text Field`
+- `AI Chat`
+
+The shell keeps the chat demo mounted after first entry so switching back and forth does not rebuild the whole chat surface each time.
+
+## When to use this app
+
+Use the example app when you need to verify:
+
+- package changes in real React Native UI
+- native view behavior on iOS and Android
+- worklet installation and runtime behavior
+- text measurement or glyph-field behavior under live interaction
+
+If you only need the public package surface, read the root [`README.md`](../README.md) first.

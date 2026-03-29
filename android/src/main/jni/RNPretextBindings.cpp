@@ -12,6 +12,7 @@
 #endif
 
 #if RNPRETEXT_HAS_WORKLETS
+#include <worklets/Compat/StableApi.h>
 #include <worklets/WorkletRuntime/WorkletRuntime.h>
 #endif
 
@@ -85,17 +86,37 @@ struct LayoutArgs {
   std::string ellipsizeMode;
 };
 
+struct GlyphFieldVariantArgs {
+  std::string color;
+  std::string fontStyle;
+  std::string fontWeight;
+};
+
+struct GlyphFieldArgs {
+  int columns = 0;
+  double fontSize = std::numeric_limits<double>::quiet_NaN();
+  double letterSpacing = std::numeric_limits<double>::quiet_NaN();
+  double lineHeight = std::numeric_limits<double>::quiet_NaN();
+  int rows = 0;
+  std::string fontFamily;
+  std::string textAlign;
+  std::vector<GlyphFieldVariantArgs> variants;
+};
+
 JavaVM* jvm_ = nullptr;
 jclass bindingsClass_ = nullptr;
 
 jmethodID initializeMethod_ = nullptr;
 jmethodID cleanupMethod_ = nullptr;
+jmethodID createGlyphFieldMethod_ = nullptr;
 jmethodID prepareMethod_ = nullptr;
 jmethodID prepareWithRunsMethod_ = nullptr;
 jmethodID prepareBatchMethod_ = nullptr;
 jmethodID prepareBatchWithRunsMethod_ = nullptr;
 jmethodID releaseMethod_ = nullptr;
+jmethodID releaseGlyphFieldMethod_ = nullptr;
 jmethodID releaseManyMethod_ = nullptr;
+jmethodID updateGlyphFieldMethod_ = nullptr;
 jmethodID measureWidthMethod_ = nullptr;
 jmethodID measureWidthWithRunsMethod_ = nullptr;
 jmethodID measureMethod_ = nullptr;
@@ -153,6 +174,10 @@ void initializeIfNeeded(JNIEnv* env, jobject context) {
 
   initializeMethod_ = env->GetStaticMethodID(bindingsClass_, "initialize", "(Lcom/facebook/react/bridge/ReactApplicationContext;)V");
   cleanupMethod_ = env->GetStaticMethodID(bindingsClass_, "cleanup", "()V");
+  createGlyphFieldMethod_ = env->GetStaticMethodID(
+      bindingsClass_,
+      "createGlyphField",
+      "(IILjava/lang/String;DDDLjava/lang/String;[Ljava/lang/String;[Ljava/lang/String;[Ljava/lang/String;)J");
   prepareMethod_ = env->GetStaticMethodID(
       bindingsClass_,
       "prepare",
@@ -170,7 +195,9 @@ void initializeIfNeeded(JNIEnv* env, jobject context) {
       "prepareBatchWithRuns",
       "([Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;DLjava/lang/String;Ljava/lang/String;DDZZZLjava/lang/String;[I[I[I[I[Ljava/lang/String;[Ljava/lang/String;[D[Ljava/lang/String;[Ljava/lang/String;[D[D[Z)[J");
   releaseMethod_ = env->GetStaticMethodID(bindingsClass_, "release", "(J)V");
+  releaseGlyphFieldMethod_ = env->GetStaticMethodID(bindingsClass_, "releaseGlyphField", "(J)V");
   releaseManyMethod_ = env->GetStaticMethodID(bindingsClass_, "releaseMany", "([J)V");
+  updateGlyphFieldMethod_ = env->GetStaticMethodID(bindingsClass_, "updateGlyphField", "(JLjava/lang/String;[B)V");
   measureWidthMethod_ = env->GetStaticMethodID(
       bindingsClass_,
       "measureWidth",
@@ -245,6 +272,120 @@ StyleArgs parseStyle(Runtime& runtime, const Value* arguments, size_t index, siz
   readString("textBreakStrategy", style.textBreakStrategy);
 
   return style;
+}
+
+GlyphFieldArgs parseGlyphField(Runtime& runtime, const Value& value) {
+  if (!value.isObject()) {
+    throwJSError(runtime, "RNPretext: glyph field config must be an object.");
+  }
+
+  Object object = value.asObject(runtime);
+  GlyphFieldArgs field;
+
+  auto requireNumber = [&](const char* name, double& target) {
+    if (!object.hasProperty(runtime, name)) {
+      throwJSError(runtime, ("RNPretext: glyph field config must include `" + std::string(name) + "`.").c_str());
+    }
+    Value property = object.getProperty(runtime, name);
+    if (!property.isNumber()) {
+      throwJSError(runtime, ("RNPretext: glyph field `" + std::string(name) + "` must be numeric.").c_str());
+    }
+    target = property.asNumber();
+  };
+
+  double columns = 0;
+  double rows = 0;
+  requireNumber("columns", columns);
+  requireNumber("rows", rows);
+  requireNumber("fontSize", field.fontSize);
+  requireNumber("lineHeight", field.lineHeight);
+
+  field.columns = static_cast<int>(columns);
+  field.rows = static_cast<int>(rows);
+  if (field.columns <= 0 || field.rows <= 0) {
+    throwJSError(runtime, "RNPretext: glyph field columns and rows must be positive.");
+  }
+  if (!(field.fontSize > 0) || !(field.lineHeight > 0)) {
+    throwJSError(runtime, "RNPretext: glyph field fontSize and lineHeight must be positive.");
+  }
+
+  if (object.hasProperty(runtime, "fontFamily")) {
+    Value fontFamily = object.getProperty(runtime, "fontFamily");
+    if (!fontFamily.isString()) {
+      throwJSError(runtime, "RNPretext: glyph field fontFamily must be a string.");
+    }
+    field.fontFamily = fontFamily.asString(runtime).utf8(runtime);
+  }
+
+  if (object.hasProperty(runtime, "letterSpacing")) {
+    Value letterSpacing = object.getProperty(runtime, "letterSpacing");
+    if (!letterSpacing.isNumber()) {
+      throwJSError(runtime, "RNPretext: glyph field letterSpacing must be numeric.");
+    }
+    field.letterSpacing = letterSpacing.asNumber();
+  }
+
+  if (object.hasProperty(runtime, "textAlign")) {
+    Value textAlign = object.getProperty(runtime, "textAlign");
+    if (!textAlign.isString()) {
+      throwJSError(runtime, "RNPretext: glyph field textAlign must be a string.");
+    }
+    field.textAlign = textAlign.asString(runtime).utf8(runtime);
+  }
+
+  if (!object.hasProperty(runtime, "variants")) {
+    throwJSError(runtime, "RNPretext: glyph field config must include variants.");
+  }
+  Value variantsValue = object.getProperty(runtime, "variants");
+  if (!variantsValue.isObject() || !variantsValue.asObject(runtime).isArray(runtime)) {
+    throwJSError(runtime, "RNPretext: glyph field variants must be an array.");
+  }
+
+  Array variantsArray = variantsValue.asObject(runtime).asArray(runtime);
+  if (variantsArray.size(runtime) == 0 || variantsArray.size(runtime) > 255) {
+    throwJSError(runtime, "RNPretext: glyph field variants must contain between 1 and 255 entries.");
+  }
+
+  field.variants.reserve(variantsArray.size(runtime));
+  for (size_t index = 0; index < variantsArray.size(runtime); index++) {
+    Value item = variantsArray.getValueAtIndex(runtime, index);
+    if (!item.isObject()) {
+      throwJSError(runtime, "RNPretext: each glyph field variant must be an object.");
+    }
+
+    Object variantObject = item.asObject(runtime);
+    if (!variantObject.hasProperty(runtime, "color")) {
+      throwJSError(runtime, "RNPretext: each glyph field variant must include a color.");
+    }
+
+    Value color = variantObject.getProperty(runtime, "color");
+    if (!color.isString()) {
+      throwJSError(runtime, "RNPretext: glyph field variant color must be a string.");
+    }
+
+    GlyphFieldVariantArgs variant;
+    variant.color = color.asString(runtime).utf8(runtime);
+
+    if (variantObject.hasProperty(runtime, "fontStyle")) {
+      Value fontStyle = variantObject.getProperty(runtime, "fontStyle");
+      if (!fontStyle.isString()) {
+        throwJSError(runtime, "RNPretext: glyph field variant fontStyle must be a string.");
+      }
+      variant.fontStyle = fontStyle.asString(runtime).utf8(runtime);
+    }
+
+    if (variantObject.hasProperty(runtime, "fontWeight")) {
+      Value fontWeight = variantObject.getProperty(runtime, "fontWeight");
+      if (!fontWeight.isString()) {
+        throwJSError(runtime, "RNPretext: glyph field variant fontWeight must be a string.");
+      }
+      variant.fontWeight = fontWeight.asString(runtime).utf8(runtime);
+    }
+
+    field.variants.push_back(std::move(variant));
+  }
+
+  return field;
 }
 
 RunStyleArgs parseRunStyle(Runtime& runtime, const Object& object) {
@@ -516,6 +657,46 @@ std::vector<Handle> parseHandleArray(Runtime& runtime, const Value& value) {
   return handles;
 }
 
+std::vector<uint8_t> parseUint8Array(Runtime& runtime, const Value& value, size_t expectedLength) {
+  if (!value.isObject()) {
+    throwJSError(runtime, "RNPretext: glyph field variantIndices must be a Uint8Array.");
+  }
+
+  Object object = value.asObject(runtime);
+  if (!object.hasProperty(runtime, "buffer")) {
+    throwJSError(runtime, "RNPretext: glyph field variantIndices must be a Uint8Array.");
+  }
+
+  Value bufferValue = object.getProperty(runtime, "buffer");
+  Value byteOffsetValue = object.getProperty(runtime, "byteOffset");
+  Value lengthValue = object.getProperty(runtime, "length");
+  Value bytesPerElementValue = object.getProperty(runtime, "BYTES_PER_ELEMENT");
+  if (!bufferValue.isObject() || !byteOffsetValue.isNumber() || !lengthValue.isNumber() || !bytesPerElementValue.isNumber()) {
+    throwJSError(runtime, "RNPretext: glyph field variantIndices must be a Uint8Array.");
+  }
+  if (static_cast<int>(bytesPerElementValue.asNumber()) != 1) {
+    throwJSError(runtime, "RNPretext: glyph field variantIndices must be a Uint8Array.");
+  }
+
+  Object bufferObject = bufferValue.asObject(runtime);
+  if (!bufferObject.isArrayBuffer(runtime)) {
+    throwJSError(runtime, "RNPretext: glyph field variantIndices must be backed by an ArrayBuffer.");
+  }
+
+  ArrayBuffer buffer = bufferObject.getArrayBuffer(runtime);
+  size_t byteOffset = static_cast<size_t>(byteOffsetValue.asNumber());
+  size_t length = static_cast<size_t>(lengthValue.asNumber());
+  if (length != expectedLength || byteOffset + length > buffer.size(runtime)) {
+    throwJSError(runtime, "RNPretext: glyph field variantIndices length must match columns * rows.");
+  }
+
+  std::vector<uint8_t> values(length);
+  if (!values.empty()) {
+    std::memcpy(values.data(), buffer.data(runtime) + byteOffset, length);
+  }
+  return values;
+}
+
 jobjectArray makeJavaStringArray(JNIEnv* env, const std::vector<std::string>& values) {
   jclass stringClass = env->FindClass("java/lang/String");
   jobjectArray array = env->NewObjectArray(static_cast<jsize>(values.size()), stringClass, nullptr);
@@ -556,6 +737,18 @@ jbooleanArray makeJavaBooleanArray(JNIEnv* env, const std::vector<bool>& values)
     data[index] = values[index] ? JNI_TRUE : JNI_FALSE;
   }
   env->SetBooleanArrayRegion(array, 0, static_cast<jsize>(data.size()), data.data());
+  return array;
+}
+
+jbyteArray makeJavaByteArray(JNIEnv* env, const std::vector<uint8_t>& values) {
+  jbyteArray array = env->NewByteArray(static_cast<jsize>(values.size()));
+  if (values.empty()) return array;
+
+  std::vector<jbyte> data(values.size());
+  for (size_t index = 0; index < values.size(); index++) {
+    data[index] = static_cast<jbyte>(values[index]);
+  }
+  env->SetByteArrayRegion(array, 0, static_cast<jsize>(data.size()), data.data());
   return array;
 }
 
@@ -739,8 +932,12 @@ void install(Runtime& runtime, JNIEnv* env, jobject context) {
 
         std::shared_ptr<worklets::WorkletRuntime> workletRuntime;
         try {
-          workletRuntime =
-              worklets::extractWorkletRuntime(runtime, arguments[0]);
+          Object runtimeObject = arguments[0].asObject(runtime);
+          if (runtimeObject.isHostObject<worklets::WorkletRuntime>(runtime)) {
+            workletRuntime = worklets::extractWorkletRuntime(runtime, arguments[0]);
+          } else {
+            workletRuntime = worklets::getWorkletRuntimeFromHolder(runtime, runtimeObject);
+          }
         } catch (...) {
           throwJSError(
               runtime,
@@ -753,6 +950,107 @@ void install(Runtime& runtime, JNIEnv* env, jobject context) {
         return Value(true);
       });
 #endif
+
+  installFunction(
+      "__RNPretextCreateGlyphField",
+      1,
+      [](Runtime& runtime, const Value&, const Value* arguments, size_t count) -> Value {
+        if (count == 0) {
+          throwJSError(runtime, "RNPretext: createGlyphField() requires a config object.");
+        }
+
+        GlyphFieldArgs field = parseGlyphField(runtime, arguments[0]);
+        bool needsDetach = false;
+        JNIEnv* env = getEnv(needsDetach);
+        if (env == nullptr) throwJSError(runtime, "RNPretext: failed to access JNI environment.");
+
+        jstring fontFamily = toJString(env, field.fontFamily);
+        jstring textAlign = toJString(env, field.textAlign);
+        std::vector<std::string> colors;
+        std::vector<std::string> fontWeights;
+        std::vector<std::string> fontStyles;
+        colors.reserve(field.variants.size());
+        fontWeights.reserve(field.variants.size());
+        fontStyles.reserve(field.variants.size());
+
+        for (const GlyphFieldVariantArgs& variant : field.variants) {
+          colors.push_back(variant.color);
+          fontWeights.push_back(variant.fontWeight);
+          fontStyles.push_back(variant.fontStyle);
+        }
+
+        jobjectArray variantColors = makeJavaStringArray(env, colors);
+        jobjectArray variantFontWeights = makeJavaOptionalStringArray(env, fontWeights);
+        jobjectArray variantFontStyles = makeJavaOptionalStringArray(env, fontStyles);
+        jlong handle = env->CallStaticLongMethod(
+            bindingsClass_,
+            createGlyphFieldMethod_,
+            field.columns,
+            field.rows,
+            fontFamily,
+            field.fontSize,
+            std::isnan(field.letterSpacing) ? 0.0 : field.letterSpacing,
+            field.lineHeight,
+            textAlign,
+            variantColors,
+            variantFontWeights,
+            variantFontStyles);
+
+        if (fontFamily) env->DeleteLocalRef(fontFamily);
+        if (textAlign) env->DeleteLocalRef(textAlign);
+        env->DeleteLocalRef(variantColors);
+        env->DeleteLocalRef(variantFontWeights);
+        env->DeleteLocalRef(variantFontStyles);
+
+        clearPendingException(env, runtime, "RNPretext: native createGlyphField() failed.");
+        if (needsDetach) jvm_->DetachCurrentThread();
+        return static_cast<double>(handle);
+      });
+
+  installFunction(
+      "__RNPretextUpdateGlyphField",
+      3,
+      [](Runtime& runtime, const Value&, const Value* arguments, size_t count) -> Value {
+        if (count < 3 || !arguments[0].isNumber() || !arguments[1].isString()) {
+          throwJSError(runtime, "RNPretext: updateGlyphField() requires a handle, glyph string, and Uint8Array.");
+        }
+
+        bool needsDetach = false;
+        JNIEnv* env = getEnv(needsDetach);
+        if (env == nullptr) throwJSError(runtime, "RNPretext: failed to access JNI environment.");
+
+        jlong handle = static_cast<jlong>(arguments[0].asNumber());
+        std::string glyphsValue = arguments[1].asString(runtime).utf8(runtime);
+        std::vector<uint8_t> variantIndices = parseUint8Array(runtime, arguments[2], glyphsValue.size());
+        jstring glyphs = env->NewStringUTF(glyphsValue.c_str());
+        jbyteArray variantIndicesArray = makeJavaByteArray(env, variantIndices);
+
+        env->CallStaticVoidMethod(bindingsClass_, updateGlyphFieldMethod_, handle, glyphs, variantIndicesArray);
+
+        env->DeleteLocalRef(glyphs);
+        env->DeleteLocalRef(variantIndicesArray);
+        clearPendingException(env, runtime, "RNPretext: native updateGlyphField() failed.");
+        if (needsDetach) jvm_->DetachCurrentThread();
+        return Value::undefined();
+      });
+
+  installFunction(
+      "__RNPretextReleaseGlyphField",
+      1,
+      [](Runtime& runtime, const Value&, const Value* arguments, size_t count) -> Value {
+        if (count == 0 || !arguments[0].isNumber()) {
+          throwJSError(runtime, "RNPretext: releaseGlyphField() requires a glyph field handle.");
+        }
+
+        bool needsDetach = false;
+        JNIEnv* env = getEnv(needsDetach);
+        if (env == nullptr) throwJSError(runtime, "RNPretext: failed to access JNI environment.");
+
+        env->CallStaticVoidMethod(bindingsClass_, releaseGlyphFieldMethod_, static_cast<jlong>(arguments[0].asNumber()));
+        clearPendingException(env, runtime, "RNPretext: native releaseGlyphField() failed.");
+        if (needsDetach) jvm_->DetachCurrentThread();
+        return Value::undefined();
+      });
 
   installFunction(
       "__RNPretextPrepare",

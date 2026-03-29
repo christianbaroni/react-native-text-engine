@@ -4969,6 +4969,7 @@ __metadata:
     react-native-nitro-modules: "npm:^0.35.2"
     react-native-pretext: "portal:.."
     react-native-reanimated: "npm:4.3.0"
+    react-native-safe-area-context: "npm:5.6.1"
     react-native-worklets: "npm:0.8.1"
     react-test-renderer: "npm:19.2.3"
     typescript: "npm:^5.8.3"
@@ -7996,6 +7997,16 @@ __metadata:
     react-native: 0.81 - 0.85
     react-native-worklets: 0.8.x
   checksum: 10c0/e882660f8876b5571b4cb6fe99cbf123f7329e1282376cd92fb4b45991a765aa364b295781acea2658bee1b0196ea122b624be63b3a906c06a72c2a67ab56486
+  languageName: node
+  linkType: hard
+
+"react-native-safe-area-context@npm:5.6.1":
+  version: 5.6.1
+  resolution: "react-native-safe-area-context@npm:5.6.1"
+  peerDependencies:
+    react: "*"
+    react-native: "*"
+  checksum: 10c0/797ad7d749bd42cbec8e504d969de13e17ed48506c2fd5a639d05d78d88194c21d72b9dc4608e08a2e8edac23341802e7b4661875242dc3bdce3008cfda5bcbe
   languageName: node
   linkType: hard
 

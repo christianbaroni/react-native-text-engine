@@ -1,5 +1,5 @@
 import { Platform } from 'react-native';
-import { measureWidth, type TextMeasureRun, type TextMeasureStyle } from 'react-native-pretext';
+import { measureWidth, type TextMeasureStyle } from 'react-native-pretext';
 
 type FontStyleVariant = 'italic' | 'normal';
 
@@ -26,10 +26,26 @@ export type TextFieldRuntimeInput = {
   width: number;
 };
 
-export type TextFieldFrame = {
-  text: string;
-  runs: readonly TextMeasureRun[];
+type WorkletContextValue<T> = {
+  __workletContextObject: true;
+  current: T;
 };
+
+export type TextFieldVariant = {
+  color: string;
+  fontStyle: FontStyleVariant;
+  fontWeight: string;
+  key: string;
+};
+
+export type TextFieldFrame = {
+  glyphs: string;
+  variantIndices: Uint8Array;
+};
+
+export type TextFieldFrameBuffer = WorkletContextValue<{
+  variantIndices: Uint8Array;
+}>;
 
 type Emitter = {
   opacity: number;
@@ -48,26 +64,36 @@ type PaletteEntry = {
 
 type LookupEntry = {
   char: string;
-  color: string | null;
-  fontStyle: FontStyleVariant;
-  fontWeight: string;
+  variantIndex: number;
 };
 
 const FONT_FAMILY = Platform.OS === 'ios' ? 'Georgia' : 'serif';
 const CHARSET = ' .,:;!+-=*#@%&abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
 const WEIGHTS = ['300', '500', '800'] as const;
 const STYLES = ['normal', 'italic'] as const;
-const AMBIENT_DIM_COLOR = '#F0C785';
-const BRIGHTNESS_COLORS = ['#8B6841', '#B58349', '#DDA261', '#F0C785', '#FFF1CA'] as const;
+const BASE_COLOR = 'rgba(196,163,90,0.18)';
+const ALPHAS = [0.18, 0.36, 0.62, 0.92] as const;
+const VARIANT_COUNT = WEIGHTS.length * STYLES.length;
 
 export const FIELD_STYLE: TextMeasureStyle = {
-  color: AMBIENT_DIM_COLOR,
+  color: BASE_COLOR,
   fontFamily: FONT_FAMILY,
   fontSize: 18,
   fontWeight: '300',
   letterSpacing: 0.04,
   lineHeight: 20,
 };
+
+export const FIELD_VARIANTS: readonly TextFieldVariant[] = ALPHAS.flatMap((alpha, alphaIndex) =>
+  STYLES.flatMap(fontStyle =>
+    WEIGHTS.map(fontWeight => ({
+      color: `rgba(196,163,90,${alpha})`,
+      fontStyle,
+      fontWeight,
+      key: `${alphaIndex}-${fontWeight}-${fontStyle}`,
+    }))
+  )
+);
 
 function clampNumber(value: number, min: number, max: number): number {
   'worklet';
@@ -130,6 +156,15 @@ export function createTextFieldRuntimeInput(config: TextFieldConfig): TextFieldR
   };
 }
 
+export function createTextFieldFrameBuffer(cellCount: number): TextFieldFrameBuffer {
+  return {
+    __workletContextObject: true,
+    current: {
+      variantIndices: new Uint8Array(cellCount),
+    },
+  };
+}
+
 function createPalette(): readonly PaletteEntry[] {
   const entries: PaletteEntry[] = [];
   const brightnessDivisor = Math.max(1, CHARSET.length - 1);
@@ -148,6 +183,7 @@ function createPalette(): readonly PaletteEntry[] {
           fontStyle,
           fontWeight,
         });
+
         if (width <= 0) continue;
 
         entries.push({
@@ -174,20 +210,19 @@ function createLookup(targetCellWidth?: number): readonly LookupEntry[] {
     if (brightness < 0.035) {
       values[byte] = {
         char: ' ',
-        color: null,
-        fontStyle: 'normal',
-        fontWeight: FIELD_STYLE.fontWeight ?? '300',
+        variantIndex: 0,
       };
       continue;
     }
 
     const match = findBestGlyph(brightness, cellWidth);
-    const band = resolveBrightnessBand(brightness);
+    const band = resolveAlphaBand(brightness);
+    const weightIndex = resolveWeightVariantIndex(match.fontWeight);
+    const styleIndex = STYLES.indexOf(match.fontStyle);
+    const variantIndex = styleIndex * WEIGHTS.length + weightIndex;
     values[byte] = {
       char: match.char,
-      color: BRIGHTNESS_COLORS[band] ?? BRIGHTNESS_COLORS[BRIGHTNESS_COLORS.length - 1],
-      fontStyle: match.fontStyle,
-      fontWeight: match.fontWeight,
+      variantIndex: band * VARIANT_COUNT + variantIndex,
     };
   }
 
@@ -203,6 +238,7 @@ function findBestGlyph(targetBrightness: number, targetCellWidth: number): Palet
     const brightnessError = Math.abs(entry.brightness - targetBrightness) * 2.35;
     const widthError = Math.abs(entry.width - targetCellWidth) / targetCellWidth;
     const score = brightnessError + widthError;
+
     if (score < bestScore) {
       best = entry;
       bestScore = score;
@@ -212,13 +248,19 @@ function findBestGlyph(targetBrightness: number, targetCellWidth: number): Palet
   return best;
 }
 
-function resolveBrightnessBand(brightness: number): number {
+function resolveWeightVariantIndex(fontWeight: string): number {
   'worklet';
-  if (brightness < 0.18) return 0;
-  if (brightness < 0.34) return 1;
-  if (brightness < 0.52) return 2;
-  if (brightness < 0.72) return 3;
-  return 4;
+  if (fontWeight === '300') return 0;
+  if (fontWeight === '500') return 1;
+  return 2;
+}
+
+function resolveAlphaBand(brightness: number): number {
+  'worklet';
+  if (brightness < 0.22) return 0;
+  if (brightness < 0.44) return 1;
+  if (brightness < 0.68) return 2;
+  return 3;
 }
 
 function createEmitters(width: number, height: number, phase: number, pointer: TextFieldPointer): readonly Emitter[] {
@@ -293,33 +335,29 @@ function sampleBrightness(x: number, y: number, width: number, height: number, e
   return clampNumber(brightness + wave, 0, 1);
 }
 
-export function stepTextFieldRuntime(input: TextFieldRuntimeInput, phase: number, pointer: TextFieldPointer): TextFieldFrame {
+function ensureFrameBuffer(frameBuffer: TextFieldFrameBuffer, cellCount: number): Uint8Array {
+  'worklet';
+
+  const current = frameBuffer.current.variantIndices;
+  if (current.length === cellCount) return current;
+
+  const next = new Uint8Array(cellCount);
+  frameBuffer.current = { variantIndices: next };
+  return next;
+}
+
+export function stepTextFieldRuntime(
+  input: TextFieldRuntimeInput,
+  frameBuffer: TextFieldFrameBuffer,
+  phase: number,
+  pointer: TextFieldPointer
+): TextFieldFrame {
   'worklet';
 
   const emitters = createEmitters(input.width, input.height, phase, pointer);
-  const chars = new Array<string>(input.rows * (input.cols + 1));
-  const runs: TextMeasureRun[] = [];
-  let charIndex = 0;
-  let runStart = -1;
-  let runColor = '';
-  let runWeight = '';
-  let runFontStyle: FontStyleVariant = 'normal';
-  const baseFontWeight = FIELD_STYLE.fontWeight ?? '300';
-
-  const flushRun = (end: number) => {
-    'worklet';
-    if (runStart < 0 || end <= runStart) return;
-
-    const usesOverride = runColor !== AMBIENT_DIM_COLOR || runWeight !== baseFontWeight || runFontStyle !== 'normal';
-    if (usesOverride) {
-      const style: TextMeasureRun['style'] = {};
-      if (runColor !== AMBIENT_DIM_COLOR) style.color = runColor;
-      if (runWeight !== baseFontWeight) style.fontWeight = runWeight;
-      if (runFontStyle !== 'normal') style.fontStyle = runFontStyle;
-      runs.push({ end, start: runStart, style });
-    }
-    runStart = -1;
-  };
+  const variantIndices = ensureFrameBuffer(frameBuffer, input.rows * input.cols);
+  let cellIndex = 0;
+  let glyphs = '';
 
   for (let rowIndex = 0; rowIndex < input.rows; rowIndex += 1) {
     const y = input.sampleYs[rowIndex] ?? 0;
@@ -329,41 +367,11 @@ export function stepTextFieldRuntime(input: TextFieldRuntimeInput, phase: number
       const brightness = sampleBrightness(x, y, input.width, input.height, emitters, phase);
       const lookupIndex = clampInt(brightness * 255, 0, 255);
       const entry = input.lookup[lookupIndex]!;
-
-      chars[charIndex] = entry.char;
-
-      const hasAccent = entry.color != null && entry.char !== ' ';
-      const nextColor = hasAccent ? entry.color! : AMBIENT_DIM_COLOR;
-      const nextWeight = hasAccent ? entry.fontWeight : baseFontWeight;
-      const nextFontStyle = hasAccent ? entry.fontStyle : 'normal';
-
-      if (!hasAccent) {
-        flushRun(charIndex);
-      } else if (runStart < 0) {
-        runStart = charIndex;
-        runColor = nextColor;
-        runWeight = nextWeight;
-        runFontStyle = nextFontStyle;
-      } else if (nextColor !== runColor || nextWeight !== runWeight || nextFontStyle !== runFontStyle) {
-        flushRun(charIndex);
-        runStart = charIndex;
-        runColor = nextColor;
-        runWeight = nextWeight;
-        runFontStyle = nextFontStyle;
-      }
-
-      charIndex += 1;
-    }
-
-    flushRun(charIndex);
-    if (rowIndex < input.rows - 1) {
-      chars[charIndex] = '\n';
-      charIndex += 1;
+      glyphs += entry.char;
+      variantIndices[cellIndex] = entry.variantIndex;
+      cellIndex += 1;
     }
   }
 
-  return {
-    runs,
-    text: chars.slice(0, charIndex).join(''),
-  };
+  return { glyphs, variantIndices };
 }

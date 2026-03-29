@@ -1,6 +1,7 @@
 import React, { useLayoutEffect, useState } from 'react';
 import { Platform, StatusBar, StyleSheet, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ChatDemo } from './src/demos/ChatDemo';
 import { TextFieldDemo } from './src/demos/TextFieldDemo';
 import { PillSwitch } from './src/components/PillSwitch';
@@ -24,29 +25,31 @@ function App(): React.JSX.Element {
   return (
     <>
       <StatusBar barStyle="light-content" />
-      <GestureHandlerRootView style={styles.root}>
-        <View style={styles.shell}>
-          <View pointerEvents="box-none" style={[styles.nav, demo === 'chat' ? styles.navRaised : null]}>
-            <PillSwitch options={DEMO_OPTIONS} onChange={uiActions.setDemo} value={demo} />
-          </View>
-          <View style={styles.content}>
-            <View
-              pointerEvents={demo === 'field' ? 'auto' : 'none'}
-              style={[styles.demoLayer, demo === 'field' ? styles.visible : styles.hidden]}
-            >
-              <TextFieldDemo isActive={demo === 'field'} />
+      <SafeAreaProvider>
+        <GestureHandlerRootView style={styles.root}>
+          <View style={styles.shell}>
+            <View pointerEvents="box-none" style={[styles.nav, demo === 'chat' ? styles.navRaised : null]}>
+              <PillSwitch options={DEMO_OPTIONS} onChange={uiActions.setDemo} value={demo} />
             </View>
-            {hasMountedChat ? (
+            <View style={styles.content}>
               <View
-                pointerEvents={demo === 'chat' ? 'auto' : 'none'}
-                style={[styles.demoLayer, demo === 'chat' ? styles.visible : styles.hidden]}
+                pointerEvents={demo === 'field' ? 'auto' : 'none'}
+                style={[styles.demoLayer, demo === 'field' ? styles.visible : styles.hidden]}
               >
-                <ChatDemo isActive={demo === 'chat'} />
+                <TextFieldDemo isActive={demo === 'field'} />
               </View>
-            ) : null}
+              {hasMountedChat ? (
+                <View
+                  pointerEvents={demo === 'chat' ? 'auto' : 'none'}
+                  style={[styles.demoLayer, demo === 'chat' ? styles.visible : styles.hidden]}
+                >
+                  <ChatDemo isActive={demo === 'chat'} />
+                </View>
+              ) : null}
+            </View>
           </View>
-        </View>
-      </GestureHandlerRootView>
+        </GestureHandlerRootView>
+      </SafeAreaProvider>
     </>
   );
 }

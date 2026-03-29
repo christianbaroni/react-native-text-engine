@@ -1,4 +1,5 @@
 #import "RNPretextBindings.h"
+#import "RNPretextColorUtils.h"
 
 #import <CoreText/SFNTLayoutTypes.h>
 #import <React/RCTConvert.h>
@@ -12,6 +13,7 @@
 
 #if __has_include(<worklets/WorkletRuntime/WorkletRuntime.h>)
 #import <worklets/WorkletRuntime/WorkletRuntime.h>
+#import <worklets/Compat/StableApi.h>
 #define RNPRETEXT_HAS_WORKLETS 1
 #else
 #define RNPRETEXT_HAS_WORKLETS 0
@@ -24,6 +26,51 @@
 @end
 
 @implementation RNPretextPreparedText
+@end
+
+@interface RNPretextGlyphFieldVariant : NSObject
+@property (nonatomic, strong) NSDictionary<NSAttributedStringKey, id> *attributes;
+@property (nonatomic, strong) UIFont *font;
+@property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *widthCache;
+@end
+
+@implementation RNPretextGlyphFieldVariant
+
+- (instancetype)init
+{
+  if ((self = [super init])) {
+    _widthCache = [[NSMutableDictionary alloc] init];
+  }
+
+  return self;
+}
+
+@end
+
+@interface RNPretextGlyphField : NSObject
+@property (nonatomic, assign) NSInteger columns;
+@property (nonatomic, assign) CGFloat lineHeight;
+@property (nonatomic, assign) NSInteger rows;
+@property (nonatomic, assign) NSTextAlignment textAlign;
+@property (nonatomic, copy) NSString *glyphs;
+@property (nonatomic, copy) NSData *variantIndices;
+@property (nonatomic, copy) NSArray<RNPretextGlyphFieldVariant *> *variants;
+@property (nonatomic, strong) NSHashTable<UIView *> *views;
+@end
+
+@implementation RNPretextGlyphField
+
+- (instancetype)init
+{
+  if ((self = [super init])) {
+    _glyphs = @"";
+    _variantIndices = [NSData data];
+    _views = [NSHashTable weakObjectsHashTable];
+  }
+
+  return self;
+}
+
 @end
 
 using namespace facebook::jsi;
@@ -89,9 +136,32 @@ struct LayoutOptions {
   double width = 0;
 };
 
+struct GlyphFieldVariantConfig {
+  std::string color;
+  std::string fontStyle;
+  std::string fontWeight;
+  bool hasFontStyle = false;
+  bool hasFontWeight = false;
+};
+
+struct GlyphFieldConfig {
+  NSInteger columns = 0;
+  bool hasFontFamily = false;
+  double fontSize = 14;
+  double letterSpacing = 0;
+  double lineHeight = 0;
+  NSInteger rows = 0;
+  std::string fontFamily;
+  std::string textAlign;
+  std::vector<GlyphFieldVariantConfig> variants;
+};
+
 static std::mutex preparedMutex;
 static NSMutableDictionary<NSNumber *, RNPretextPreparedText *> *preparedTexts;
 static Handle nextHandle = 1;
+static std::mutex glyphFieldMutex;
+static NSMutableDictionary<NSNumber *, RNPretextGlyphField *> *glyphFields;
+static Handle nextGlyphFieldHandle = 1;
 
 NSNumber *toKey(Handle handle) {
   return [NSNumber numberWithUnsignedLongLong:handle];
@@ -282,6 +352,165 @@ LayoutOptions parseLayoutOptions(Runtime& runtime, const Value* value, size_t in
   return options;
 }
 
+GlyphFieldConfig parseGlyphFieldConfig(Runtime& runtime, const Value& value) {
+  if (!value.isObject()) {
+    throw JSError(runtime, "RNPretext: glyph field config must be an object.");
+  }
+
+  Object object = value.asObject(runtime);
+  GlyphFieldConfig config;
+
+  auto requireNumber = [&](const char *name, double& target) {
+    if (!object.hasProperty(runtime, name)) {
+      throw JSError(runtime, ("RNPretext: glyph field config must include `" + std::string(name) + "`.").c_str());
+    }
+    Value field = object.getProperty(runtime, name);
+    if (!field.isNumber()) {
+      throw JSError(runtime, ("RNPretext: glyph field `" + std::string(name) + "` must be numeric.").c_str());
+    }
+    target = field.asNumber();
+  };
+
+  double columns = 0;
+  double rows = 0;
+  requireNumber("columns", columns);
+  requireNumber("rows", rows);
+  requireNumber("fontSize", config.fontSize);
+  requireNumber("lineHeight", config.lineHeight);
+
+  config.columns = static_cast<NSInteger>(columns);
+  config.rows = static_cast<NSInteger>(rows);
+  if (config.columns <= 0 || config.rows <= 0) {
+    throw JSError(runtime, "RNPretext: glyph field columns and rows must be positive.");
+  }
+  if (config.fontSize <= 0 || config.lineHeight <= 0) {
+    throw JSError(runtime, "RNPretext: glyph field fontSize and lineHeight must be positive.");
+  }
+
+  if (object.hasProperty(runtime, "fontFamily")) {
+    Value fontFamily = object.getProperty(runtime, "fontFamily");
+    if (!fontFamily.isString()) {
+      throw JSError(runtime, "RNPretext: glyph field fontFamily must be a string.");
+    }
+    config.hasFontFamily = true;
+    config.fontFamily = fontFamily.asString(runtime).utf8(runtime);
+  }
+
+  if (object.hasProperty(runtime, "letterSpacing")) {
+    Value letterSpacing = object.getProperty(runtime, "letterSpacing");
+    if (!letterSpacing.isNumber()) {
+      throw JSError(runtime, "RNPretext: glyph field letterSpacing must be numeric.");
+    }
+    config.letterSpacing = letterSpacing.asNumber();
+  }
+
+  if (object.hasProperty(runtime, "textAlign")) {
+    Value textAlign = object.getProperty(runtime, "textAlign");
+    if (!textAlign.isString()) {
+      throw JSError(runtime, "RNPretext: glyph field textAlign must be a string.");
+    }
+    config.textAlign = textAlign.asString(runtime).utf8(runtime);
+  }
+
+  if (!object.hasProperty(runtime, "variants")) {
+    throw JSError(runtime, "RNPretext: glyph field config must include variants.");
+  }
+
+  Value variantsValue = object.getProperty(runtime, "variants");
+  if (!variantsValue.isObject() || !variantsValue.asObject(runtime).isArray(runtime)) {
+    throw JSError(runtime, "RNPretext: glyph field variants must be an array.");
+  }
+
+  Array variantsArray = variantsValue.asObject(runtime).asArray(runtime);
+  if (variantsArray.size(runtime) == 0 || variantsArray.size(runtime) > 255) {
+    throw JSError(runtime, "RNPretext: glyph field variants must contain between 1 and 255 entries.");
+  }
+
+  config.variants.reserve(variantsArray.size(runtime));
+  for (size_t index = 0; index < variantsArray.size(runtime); index++) {
+    Value item = variantsArray.getValueAtIndex(runtime, index);
+    if (!item.isObject()) {
+      throw JSError(runtime, "RNPretext: each glyph field variant must be an object.");
+    }
+
+    Object variantObject = item.asObject(runtime);
+    if (!variantObject.hasProperty(runtime, "color")) {
+      throw JSError(runtime, "RNPretext: each glyph field variant must include a color.");
+    }
+
+    Value colorValue = variantObject.getProperty(runtime, "color");
+    if (!colorValue.isString()) {
+      throw JSError(runtime, "RNPretext: glyph field variant color must be a string.");
+    }
+
+    GlyphFieldVariantConfig variant;
+    variant.color = colorValue.asString(runtime).utf8(runtime);
+
+    if (variantObject.hasProperty(runtime, "fontStyle")) {
+      Value fontStyle = variantObject.getProperty(runtime, "fontStyle");
+      if (!fontStyle.isString()) {
+        throw JSError(runtime, "RNPretext: glyph field variant fontStyle must be a string.");
+      }
+      variant.hasFontStyle = true;
+      variant.fontStyle = fontStyle.asString(runtime).utf8(runtime);
+    }
+
+    if (variantObject.hasProperty(runtime, "fontWeight")) {
+      Value fontWeight = variantObject.getProperty(runtime, "fontWeight");
+      if (!fontWeight.isString()) {
+        throw JSError(runtime, "RNPretext: glyph field variant fontWeight must be a string.");
+      }
+      variant.hasFontWeight = true;
+      variant.fontWeight = fontWeight.asString(runtime).utf8(runtime);
+    }
+
+    config.variants.push_back(std::move(variant));
+  }
+
+  return config;
+}
+
+std::vector<uint8_t> parseUint8Array(Runtime& runtime, const Value& value, size_t expectedLength) {
+  if (!value.isObject()) {
+    throw JSError(runtime, "RNPretext: glyph field variantIndices must be a Uint8Array.");
+  }
+
+  Object object = value.asObject(runtime);
+  if (!object.hasProperty(runtime, "buffer")) {
+    throw JSError(runtime, "RNPretext: glyph field variantIndices must be a Uint8Array.");
+  }
+
+  Value bufferValue = object.getProperty(runtime, "buffer");
+  Value byteOffsetValue = object.getProperty(runtime, "byteOffset");
+  Value lengthValue = object.getProperty(runtime, "length");
+  Value bytesPerElementValue = object.getProperty(runtime, "BYTES_PER_ELEMENT");
+  if (!bufferValue.isObject() || !byteOffsetValue.isNumber() || !lengthValue.isNumber() || !bytesPerElementValue.isNumber()) {
+    throw JSError(runtime, "RNPretext: glyph field variantIndices must be a Uint8Array.");
+  }
+
+  if (static_cast<int>(bytesPerElementValue.asNumber()) != 1) {
+    throw JSError(runtime, "RNPretext: glyph field variantIndices must be a Uint8Array.");
+  }
+
+  Object bufferObject = bufferValue.asObject(runtime);
+  if (!bufferObject.isArrayBuffer(runtime)) {
+    throw JSError(runtime, "RNPretext: glyph field variantIndices must be backed by an ArrayBuffer.");
+  }
+
+  ArrayBuffer buffer = bufferObject.getArrayBuffer(runtime);
+  size_t byteOffset = static_cast<size_t>(byteOffsetValue.asNumber());
+  size_t length = static_cast<size_t>(lengthValue.asNumber());
+  if (length != expectedLength || byteOffset + length > buffer.size(runtime)) {
+    throw JSError(runtime, "RNPretext: glyph field variantIndices length must match columns * rows.");
+  }
+
+  std::vector<uint8_t> values(length);
+  if (length > 0) {
+    std::memcpy(values.data(), buffer.data(runtime) + byteOffset, length);
+  }
+  return values;
+}
+
 UIFont *applyTabularNumbers(UIFont *font) {
   NSDictionary *featureSettings = @{
     UIFontFeatureTypeIdentifierKey: @(kNumberSpacingType),
@@ -322,41 +551,7 @@ CGFloat resolveLineHeight(const TextMeasureStyle& style, UIFont *font) {
 }
 
 UIColor *resolveColorString(const std::string& value) {
-  NSString *string = toNSString(value);
-  if (string.length == 0) return nil;
-
-  if ([string hasPrefix:@"#"]) {
-    NSString *hex = [string substringFromIndex:1];
-    unsigned long long parsed = 0;
-    NSScanner *scanner = [NSScanner scannerWithString:hex];
-    if (![scanner scanHexLongLong:&parsed]) return nil;
-
-    CGFloat alpha = 1;
-    CGFloat red = 0;
-    CGFloat green = 0;
-    CGFloat blue = 0;
-
-    if (hex.length == 3) {
-      red = ((parsed >> 8) & 0xF) / 15.0;
-      green = ((parsed >> 4) & 0xF) / 15.0;
-      blue = (parsed & 0xF) / 15.0;
-    } else if (hex.length == 6) {
-      red = ((parsed >> 16) & 0xFF) / 255.0;
-      green = ((parsed >> 8) & 0xFF) / 255.0;
-      blue = (parsed & 0xFF) / 255.0;
-    } else if (hex.length == 8) {
-      alpha = ((parsed >> 24) & 0xFF) / 255.0;
-      red = ((parsed >> 16) & 0xFF) / 255.0;
-      green = ((parsed >> 8) & 0xFF) / 255.0;
-      blue = (parsed & 0xFF) / 255.0;
-    } else {
-      return nil;
-    }
-
-    return [UIColor colorWithRed:red green:green blue:blue alpha:alpha];
-  }
-
-  return [RCTConvert UIColor:string];
+  return RNPretextResolveColorValue(toNSString(value));
 }
 
 ResolvedTextStyle resolveTextStyle(const TextMeasureStyle& style) {
@@ -430,6 +625,175 @@ TextMeasureStyle mergeRunStyle(const TextMeasureStyle& baseStyle, const TextMeas
   }
 
   return merged;
+}
+
+CGFloat measureAttributedWidth(NSAttributedString *attributedText);
+
+NSTextAlignment resolveGlyphFieldTextAlignment(const std::string& value) {
+  if (value == "right") return NSTextAlignmentRight;
+  if (value == "center") return NSTextAlignmentCenter;
+  return NSTextAlignmentLeft;
+}
+
+RNPretextGlyphFieldVariant *buildGlyphFieldVariant(const GlyphFieldConfig& config, const GlyphFieldVariantConfig& variantConfig) {
+  TextMeasureStyle style;
+  style.hasColor = true;
+  style.color = variantConfig.color;
+  style.hasFontSize = true;
+  style.fontSize = config.fontSize;
+  style.hasLineHeight = true;
+  style.lineHeight = config.lineHeight;
+  style.hasLetterSpacing = config.letterSpacing != 0;
+  style.letterSpacing = config.letterSpacing;
+
+  if (config.hasFontFamily) {
+    style.hasFontFamily = true;
+    style.fontFamily = config.fontFamily;
+  }
+  if (variantConfig.hasFontStyle) {
+    style.hasFontStyle = true;
+    style.fontStyle = variantConfig.fontStyle;
+  }
+  if (variantConfig.hasFontWeight) {
+    style.hasFontWeight = true;
+    style.fontWeight = variantConfig.fontWeight;
+  }
+
+  ResolvedTextStyle resolvedStyle = resolveTextStyle(style);
+  RNPretextGlyphFieldVariant *variant = [[RNPretextGlyphFieldVariant alloc] init];
+  variant.attributes = resolvedStyle.attributes;
+  variant.font = resolvedStyle.attributes[NSFontAttributeName];
+  return variant;
+}
+
+CGFloat measureGlyphWidth(RNPretextGlyphFieldVariant *variant, NSString *glyph) {
+  NSNumber *cachedWidth = variant.widthCache[@(glyph.length == 0 ? 0 : [glyph characterAtIndex:0])];
+  if (cachedWidth != nil) return cachedWidth.doubleValue;
+
+  NSAttributedString *attributedGlyph = [[NSAttributedString alloc] initWithString:glyph attributes:variant.attributes];
+  CGFloat width = measureAttributedWidth(attributedGlyph);
+  variant.widthCache[@(glyph.length == 0 ? 0 : [glyph characterAtIndex:0])] = @(width);
+  return width;
+}
+
+NSString *glyphStringForCharacter(unichar character) {
+  static NSMutableDictionary<NSNumber *, NSString *> *cache;
+  static dispatch_once_t onceToken;
+  dispatch_once(&onceToken, ^{
+    cache = [[NSMutableDictionary alloc] init];
+  });
+
+  NSNumber *key = @(character);
+  NSString *glyph = cache[key];
+  if (glyph != nil) return glyph;
+
+  unichar value = character;
+  glyph = [[NSString alloc] initWithCharacters:&value length:1];
+  cache[key] = glyph;
+  return glyph;
+}
+
+Handle storeGlyphField(const GlyphFieldConfig& config) {
+  RNPretextGlyphField *field = [[RNPretextGlyphField alloc] init];
+  field.columns = config.columns;
+  field.rows = config.rows;
+  field.lineHeight = config.lineHeight;
+  field.textAlign = resolveGlyphFieldTextAlignment(config.textAlign);
+
+  NSMutableArray<RNPretextGlyphFieldVariant *> *variants = [NSMutableArray arrayWithCapacity:config.variants.size()];
+  for (const GlyphFieldVariantConfig& variantConfig : config.variants) {
+    [variants addObject:buildGlyphFieldVariant(config, variantConfig)];
+  }
+  field.variants = variants;
+
+  std::lock_guard<std::mutex> lock(glyphFieldMutex);
+  if (glyphFields == nil) glyphFields = [[NSMutableDictionary alloc] init];
+  Handle handle = nextGlyphFieldHandle++;
+  glyphFields[toKey(handle)] = field;
+  return handle;
+}
+
+RNPretextGlyphField *getGlyphField(Runtime& runtime, Handle handle) {
+  std::lock_guard<std::mutex> lock(glyphFieldMutex);
+  RNPretextGlyphField *field = glyphFields[toKey(handle)];
+  if (field == nil) {
+    throw JSError(runtime, "RNPretext: attempted to use an invalid glyph field handle.");
+  }
+  return field;
+}
+
+RNPretextGlyphField *getGlyphFieldIfPresent(Handle handle) {
+  std::lock_guard<std::mutex> lock(glyphFieldMutex);
+  return glyphFields[toKey(handle)];
+}
+
+void invalidateGlyphFieldViews(RNPretextGlyphField *field) {
+  NSArray<UIView *> *views = field.views.allObjects;
+  if (views.count == 0) return;
+
+  dispatch_block_t invalidate = ^{
+    for (UIView *view in views) {
+      [view setNeedsDisplay];
+    }
+  };
+
+  if ([NSThread isMainThread]) {
+    invalidate();
+  } else {
+    dispatch_async(dispatch_get_main_queue(), invalidate);
+  }
+}
+
+Handle createGlyphField(const GlyphFieldConfig& config) {
+  return storeGlyphField(config);
+}
+
+void updateGlyphField(Runtime& runtime, Handle handle, const std::string& glyphsValue, const std::vector<uint8_t>& variantIndices) {
+  RNPretextGlyphField *field = getGlyphField(runtime, handle);
+  size_t cellCount = static_cast<size_t>(field.columns * field.rows);
+  NSString *glyphs = toNSString(glyphsValue);
+  if (glyphs.length != static_cast<NSInteger>(cellCount)) {
+    throw JSError(runtime, "RNPretext: glyph field glyphs length must match columns * rows.");
+  }
+  if (variantIndices.size() != cellCount) {
+    throw JSError(runtime, "RNPretext: glyph field variantIndices length must match columns * rows.");
+  }
+
+  for (uint8_t variantIndex : variantIndices) {
+    if (variantIndex >= field.variants.count) {
+      throw JSError(runtime, "RNPretext: glyph field variant index exceeded the configured variant count.");
+    }
+  }
+
+  field.glyphs = glyphs;
+  field.variantIndices = [NSData dataWithBytes:variantIndices.data() length:variantIndices.size()];
+  invalidateGlyphFieldViews(field);
+}
+
+void releaseGlyphFieldHandle(Handle handle) {
+  std::lock_guard<std::mutex> lock(glyphFieldMutex);
+  [glyphFields removeObjectForKey:toKey(handle)];
+}
+
+CGFloat glyphFieldRowWidth(RNPretextGlyphField *field, NSUInteger rowIndex) {
+  const uint8_t *variantIndices = static_cast<const uint8_t *>(field.variantIndices.bytes);
+  if (variantIndices == nullptr) return 0;
+
+  CGFloat width = 0;
+  NSUInteger rowStart = rowIndex * field.columns;
+  for (NSInteger column = 0; column < field.columns; column += 1) {
+    NSUInteger cellIndex = rowStart + column;
+    unichar glyphCharacter = [field.glyphs characterAtIndex:cellIndex];
+    RNPretextGlyphFieldVariant *variant = field.variants[variantIndices[cellIndex]];
+    width += measureGlyphWidth(variant, glyphStringForCharacter(glyphCharacter));
+  }
+  return width;
+}
+
+CGFloat glyphFieldRowOriginX(RNPretextGlyphField *field, CGRect bounds, CGFloat rowWidth) {
+  if (field.textAlign == NSTextAlignmentRight) return CGRectGetWidth(bounds) - rowWidth;
+  if (field.textAlign == NSTextAlignmentCenter) return (CGRectGetWidth(bounds) - rowWidth) * 0.5;
+  return 0;
 }
 
 NSString *trimTrailingWhitespace(NSString *text) {
@@ -703,11 +1067,64 @@ NSAttributedString *preparedAttributedTextForHandle(uint64_t handle) {
   return preparedAttributedTextForHandleLocked(static_cast<Handle>(handle));
 }
 
+void registerGlyphFieldView(uint64_t handle, UIView *view) {
+  if (handle == 0 || view == nil) return;
+
+  std::lock_guard<std::mutex> lock(glyphFieldMutex);
+  RNPretextGlyphField *field = glyphFields[toKey(static_cast<Handle>(handle))];
+  [field.views addObject:view];
+}
+
+void unregisterGlyphFieldView(uint64_t handle, UIView *view) {
+  if (handle == 0 || view == nil) return;
+
+  std::lock_guard<std::mutex> lock(glyphFieldMutex);
+  RNPretextGlyphField *field = glyphFields[toKey(static_cast<Handle>(handle))];
+  [field.views removeObject:view];
+}
+
+void drawGlyphFieldHandle(uint64_t handle, CGContextRef context, CGRect bounds) {
+  if (handle == 0 || context == nullptr) return;
+
+  RNPretextGlyphField *field = getGlyphFieldIfPresent(static_cast<Handle>(handle));
+  if (field == nil || field.glyphs.length == 0 || field.variantIndices.length == 0) return;
+
+  CGFloat contentHeight = field.rows * field.lineHeight;
+  CGFloat topInset = MAX(0, (CGRectGetHeight(bounds) - contentHeight) * 0.5);
+  const uint8_t *variantIndices = static_cast<const uint8_t *>(field.variantIndices.bytes);
+  if (variantIndices == nullptr) return;
+
+  for (NSInteger row = 0; row < field.rows; row += 1) {
+    CGFloat rowWidth = glyphFieldRowWidth(field, row);
+    CGFloat x = glyphFieldRowOriginX(field, bounds, rowWidth);
+    NSUInteger rowStart = static_cast<NSUInteger>(row * field.columns);
+
+    for (NSInteger column = 0; column < field.columns; column += 1) {
+      NSUInteger cellIndex = rowStart + static_cast<NSUInteger>(column);
+      unichar glyphCharacter = [field.glyphs characterAtIndex:cellIndex];
+      RNPretextGlyphFieldVariant *variant = field.variants[variantIndices[cellIndex]];
+      NSString *glyph = glyphStringForCharacter(glyphCharacter);
+      CGFloat glyphWidth = measureGlyphWidth(variant, glyph);
+      CGFloat y = topInset + row * field.lineHeight + MAX(0, (field.lineHeight - variant.font.lineHeight) * 0.5);
+      [glyph drawAtPoint:CGPointMake(x, y) withAttributes:variant.attributes];
+      x += glyphWidth;
+    }
+  }
+}
+
 void cleanup() {
-  std::lock_guard<std::mutex> lock(preparedMutex);
-  [preparedTexts removeAllObjects];
-  preparedTexts = nil;
-  nextHandle = 1;
+  {
+    std::lock_guard<std::mutex> lock(preparedMutex);
+    [preparedTexts removeAllObjects];
+    preparedTexts = nil;
+    nextHandle = 1;
+  }
+  {
+    std::lock_guard<std::mutex> lock(glyphFieldMutex);
+    [glyphFields removeAllObjects];
+    glyphFields = nil;
+    nextGlyphFieldHandle = 1;
+  }
 }
 
 void install(Runtime& runtime) {
@@ -750,8 +1167,12 @@ void install(Runtime& runtime) {
 
         std::shared_ptr<worklets::WorkletRuntime> workletRuntime;
         try {
-          workletRuntime =
-              worklets::extractWorkletRuntime(runtime, arguments[0]);
+          Object runtimeObject = arguments[0].asObject(runtime);
+          if (runtimeObject.isHostObject<worklets::WorkletRuntime>(runtime)) {
+            workletRuntime = worklets::extractWorkletRuntime(runtime, arguments[0]);
+          } else {
+            workletRuntime = worklets::getWorkletRuntimeFromHolder(runtime, runtimeObject);
+          }
         } catch (...) {
           throw JSError(
               runtime,
@@ -764,6 +1185,45 @@ void install(Runtime& runtime) {
         return Value(true);
       });
 #endif
+
+  installFunction(
+      "__RNPretextCreateGlyphField",
+      1,
+      [](Runtime& runtime, const Value&, const Value* arguments, size_t count) -> Value {
+        if (count == 0) {
+          throw JSError(runtime, "RNPretext: createGlyphField() requires a config object.");
+        }
+        return static_cast<double>(createGlyphField(parseGlyphFieldConfig(runtime, arguments[0])));
+      });
+
+  installFunction(
+      "__RNPretextUpdateGlyphField",
+      3,
+      [](Runtime& runtime, const Value&, const Value* arguments, size_t count) -> Value {
+        if (count < 3 || !arguments[0].isNumber() || !arguments[1].isString()) {
+          throw JSError(runtime, "RNPretext: updateGlyphField() requires a handle, glyph string, and Uint8Array.");
+        }
+
+        Handle handle = static_cast<Handle>(arguments[0].asNumber());
+        std::string glyphs = arguments[1].asString(runtime).utf8(runtime);
+        RNPretextGlyphField *field = getGlyphField(runtime, handle);
+        size_t cellCount = static_cast<size_t>(field.columns * field.rows);
+        std::vector<uint8_t> variantIndices = parseUint8Array(runtime, arguments[2], cellCount);
+        updateGlyphField(runtime, handle, glyphs, variantIndices);
+        return Value::undefined();
+      });
+
+  installFunction(
+      "__RNPretextReleaseGlyphField",
+      1,
+      [](Runtime& runtime, const Value&, const Value* arguments, size_t count) -> Value {
+        if (count == 0 || !arguments[0].isNumber()) {
+          throw JSError(runtime, "RNPretext: releaseGlyphField() requires a glyph field handle.");
+        }
+
+        releaseGlyphFieldHandle(static_cast<Handle>(arguments[0].asNumber()));
+        return Value::undefined();
+      });
 
   installFunction(
       "__RNPretextPrepare",

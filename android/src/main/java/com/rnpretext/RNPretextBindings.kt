@@ -1,6 +1,6 @@
 package com.rnpretext
 
-import android.graphics.Color
+import android.graphics.Canvas
 import android.graphics.Typeface
 import android.os.Build
 import android.text.Layout
@@ -16,7 +16,9 @@ import com.facebook.react.common.assets.ReactFontManager
 import com.facebook.react.uimanager.DisplayMetricsHolder
 import com.facebook.react.uimanager.PixelUtil
 import com.facebook.react.views.text.ReactTypefaceUtils.parseFontWeight
+import java.lang.ref.WeakReference
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.ceil
 import kotlin.math.floor
@@ -25,7 +27,9 @@ import kotlin.math.min
 
 internal object RNPretextBindings {
     private val nextHandle = AtomicLong(1)
+    private val nextGlyphFieldHandle = AtomicLong(1)
     private val preparedTexts = ConcurrentHashMap<Long, PreparedTextData>()
+    private val glyphFields = ConcurrentHashMap<Long, GlyphFieldData>()
     private lateinit var reactContext: ReactApplicationContext
 
     private data class ResolvedTextStyle(
@@ -75,6 +79,23 @@ internal object RNPretextBindings {
         val textPaint: TextPaint,
     )
 
+    internal data class GlyphFieldVariantData(
+        val textPaint: TextPaint,
+        val widthCache: MutableMap<Int, Float> = HashMap(),
+        val yOffset: Float,
+    )
+
+    private data class GlyphFieldData(
+        val columns: Int,
+        val lineHeightPx: Float,
+        val rows: Int,
+        val textAlign: String?,
+        val variants: List<GlyphFieldVariantData>,
+        val views: CopyOnWriteArrayList<WeakReference<android.view.View>> = CopyOnWriteArrayList(),
+        @Volatile var glyphs: String = "",
+        @Volatile var variantIndices: ByteArray = ByteArray(0),
+    )
+
     @JvmStatic
     fun initialize(context: ReactApplicationContext) {
         reactContext = context
@@ -83,7 +104,128 @@ internal object RNPretextBindings {
     @JvmStatic
     fun cleanup() {
         preparedTexts.clear()
+        glyphFields.clear()
         nextHandle.set(1)
+        nextGlyphFieldHandle.set(1)
+    }
+
+    @JvmStatic
+    fun createGlyphField(
+        columns: Int,
+        rows: Int,
+        fontFamily: String?,
+        fontSize: Double,
+        letterSpacing: Double,
+        lineHeight: Double,
+        textAlign: String?,
+        variantColors: Array<String>,
+        variantFontWeights: Array<String?>,
+        variantFontStyles: Array<String?>,
+    ): Long {
+        require(columns > 0 && rows > 0) { "RNPretext: glyph field columns and rows must be positive." }
+        require(fontSize > 0 && lineHeight > 0) { "RNPretext: glyph field fontSize and lineHeight must be positive." }
+        require(variantColors.isNotEmpty() && variantColors.size <= 255) {
+            "RNPretext: glyph field variants must contain between 1 and 255 entries."
+        }
+        require(variantColors.size == variantFontWeights.size && variantColors.size == variantFontStyles.size) {
+            "RNPretext: glyph field variant arrays must stay aligned."
+        }
+
+        val variants =
+            List(variantColors.size) { index ->
+                val style =
+                    resolveTextStyle(
+                        color = variantColors[index],
+                        fontFamily = fontFamily,
+                        fontSize = fontSize,
+                        fontWeight = variantFontWeights[index],
+                        fontStyle = variantFontStyles[index],
+                        letterSpacing = letterSpacing,
+                        lineHeight = lineHeight,
+                        allowFontScaling = false,
+                        includeFontPadding = false,
+                        tabularNumbers = false,
+                        textBreakStrategy = null,
+                    )
+                val metrics = style.textPaint.fontMetrics
+                GlyphFieldVariantData(
+                    textPaint = style.textPaint,
+                    yOffset = ((style.lineHeightPx ?: 0f) - (metrics.descent - metrics.ascent)) * 0.5f - metrics.ascent,
+                )
+            }
+
+        val handle = nextGlyphFieldHandle.getAndIncrement()
+        glyphFields[handle] =
+            GlyphFieldData(
+                columns = columns,
+                lineHeightPx = PixelUtil.toPixelFromDIP(lineHeight.toFloat()),
+                rows = rows,
+                textAlign = textAlign,
+                variants = variants,
+            )
+        return handle
+    }
+
+    @JvmStatic
+    fun updateGlyphField(handle: Long, glyphs: String, variantIndices: ByteArray) {
+        val field = glyphFields[handle] ?: error("RNPretext: attempted to use an invalid glyph field handle.")
+        val cellCount = field.columns * field.rows
+        require(glyphs.length == cellCount) { "RNPretext: glyph field glyphs length must match columns * rows." }
+        require(variantIndices.size == cellCount) { "RNPretext: glyph field variantIndices length must match columns * rows." }
+        variantIndices.forEach { variantIndex ->
+            require((variantIndex.toInt() and 0xFF) < field.variants.size) {
+                "RNPretext: glyph field variant index exceeded the configured variant count."
+            }
+        }
+
+        field.glyphs = glyphs
+        field.variantIndices = variantIndices.copyOf()
+        invalidateGlyphFieldViews(field)
+    }
+
+    @JvmStatic
+    fun releaseGlyphField(handle: Long) {
+        glyphFields.remove(handle)
+    }
+
+    internal fun registerGlyphFieldView(handle: Long, view: android.view.View) {
+        if (handle <= 0L) return
+        glyphFields[handle]?.views?.add(WeakReference(view))
+    }
+
+    internal fun unregisterGlyphFieldView(handle: Long, view: android.view.View) {
+        if (handle <= 0L) return
+        glyphFields[handle]?.views?.removeAll { reference ->
+            val candidate = reference.get()
+            candidate == null || candidate === view
+        }
+    }
+
+    internal fun drawGlyphField(handle: Long, canvas: Canvas, width: Float, height: Float) {
+        val field = glyphFields[handle] ?: return
+        if (field.glyphs.isEmpty() || field.variantIndices.isEmpty()) return
+
+        val topInset = max(0f, (height - field.rows * field.lineHeightPx) * 0.5f)
+        for (row in 0 until field.rows) {
+            val rowWidth = glyphFieldRowWidth(field, row)
+            var x =
+                when (field.textAlign) {
+                    "right" -> width - rowWidth
+                    "center" -> (width - rowWidth) * 0.5f
+                    else -> 0f
+                }
+            val rowStart = row * field.columns
+
+            for (column in 0 until field.columns) {
+                val cellIndex = rowStart + column
+                val glyph = field.glyphs[cellIndex].toString()
+                val variant = field.variants[field.variantIndices[cellIndex].toInt() and 0xFF]
+                val glyphWidth = measureGlyphWidth(variant, glyph)
+                val baseline = topInset + row * field.lineHeightPx + variant.yOffset
+                canvas.drawText(glyph, x, baseline, variant.textPaint)
+                x += glyphWidth
+            }
+        }
     }
 
     @JvmStatic
@@ -715,6 +857,37 @@ internal object RNPretextBindings {
         return doubleArrayOf(line.start, line.end, line.width, line.bottom)
     }
 
+    private fun invalidateGlyphFieldViews(field: GlyphFieldData) {
+        field.views.removeAll { reference ->
+            val view = reference.get()
+            if (view == null) {
+                true
+            } else {
+                view.postInvalidateOnAnimation()
+                false
+            }
+        }
+    }
+
+    private fun measureGlyphWidth(variant: GlyphFieldVariantData, glyph: String): Float {
+        val codePoint = glyph.firstOrNull()?.code ?: 0
+        return variant.widthCache.getOrPut(codePoint) {
+            variant.textPaint.measureText(glyph)
+        }
+    }
+
+    private fun glyphFieldRowWidth(field: GlyphFieldData, row: Int): Float {
+        var width = 0f
+        val rowStart = row * field.columns
+        for (column in 0 until field.columns) {
+            val cellIndex = rowStart + column
+            val glyph = field.glyphs[cellIndex].toString()
+            val variant = field.variants[field.variantIndices[cellIndex].toInt() and 0xFF]
+            width += measureGlyphWidth(variant, glyph)
+        }
+        return width
+    }
+
     private fun resolveTextStyle(
         color: String?,
         fontFamily: String?,
@@ -1216,8 +1389,7 @@ internal object RNPretextBindings {
     }
 
     private fun resolveTextColor(value: String?): Int? {
-        if (value.isNullOrBlank()) return null
-        return runCatching { Color.parseColor(value) }.getOrNull()
+        return RNPretextColorParser.parse(value)
     }
 
     private fun resolveEllipsize(mode: String?, maxLines: Int): TextUtils.TruncateAt? {

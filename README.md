@@ -1,101 +1,109 @@
 # React Native Pretext
 
-Prepared text measurement and layout for React Native.
+Native text measurement and rendering primitives for React Native.
 
-`react-native-pretext` gives React Native a `prepare` / `layout` text API backed by the platform’s native text engines.
+Use `react-native-pretext` when you need text work to happen natively instead of inside normal React text rendering. In practice, that usually means one of two things:
 
-It is built for cases where React components should not own text measurement:
+1. You need exact text layout before render.
+2. You need a fixed-grid text surface whose content changes cell by cell.
 
-- large AI chat conversations
-- exact text-driven virtualization
-- Shared Value UI that still needs width or line-count facts
-- custom layout surfaces that need line metadata
+This package gives you a native primitive for each case.
 
-## Model
+## What it provides
 
-The package has one core idea:
+### Prepared text
 
-1. `prepare(text, style)` creates a prepared native text handle.
-2. `layout(handle, options)` measures that prepared text at a width.
-3. `layoutNextLine(handle, start, width)` steps through the text one visible line at a time when width changes per line.
+Prepared text is for normal flowing text.
 
-That keeps one fact in one place:
+You prepare text and typography once, get back a native handle, and ask the native text engine to lay that handle out at different widths later.
 
-- text + typography live in the prepared handle
-- width-specific layout lives in the layout call
+Use it for:
 
-React can consume those facts, but it does not have to create them.
+- chat bubbles
+- exact virtualization
+- worklet-driven layout
+- custom UI that needs line counts or widths before render
+
+### Glyph fields
+
+Glyph fields are for fixed-grid text surfaces.
+
+You create a field with stable geometry and a stable style palette, then replace the current glyphs and style indices later.
+
+Use it for:
+
+- proportional ASCII
+- terminal-like surfaces
+- text art driven by simulation
+- any effect where the changing value is which glyph appears in each cell
+
+Prepared text and glyph fields are different on purpose.
+
+- Prepared text owns flowing text.
+- Glyph fields own cell content.
+
+If you try to force one through the other, you pay for the wrong work.
 
 ## Installation
 
+Install the package:
+
 ```sh
 yarn add react-native-pretext
-cd ios && pod install
 ```
 
-## API
+If you want the worklet helpers, also install `react-native-worklets`:
 
-### Prepare
+```sh
+yarn add react-native-worklets
+```
+
+On iOS:
+
+```sh
+cd ios
+pod install
+```
+
+## Prepared text
+
+### Prepare once, layout many times
 
 ```ts
-import { prepare, release, type PreparedTextHandle, type TextMeasureStyle } from 'react-native-pretext';
+import { layout, prepare, release, type TextMeasureStyle } from 'react-native-pretext';
 
 const style: TextMeasureStyle = {
   fontFamily: 'SF Pro Rounded',
   fontSize: 17,
   fontWeight: '600',
-  letterSpacing: 0.56,
+  letterSpacing: 0.5,
   lineHeight: 24,
 };
 
-const prepared: PreparedTextHandle = prepare('Hello world', style);
+const message = prepare('Hello world', style);
 
-// Later:
-release(prepared);
-```
-
-### Layout
-
-```ts
-import { layout } from 'react-native-pretext';
-
-const metrics = layout(prepared, {
+const metrics = layout(message, {
   width: 320,
   maxLines: 3,
   ellipsizeMode: 'tail',
 });
 
+metrics.width;
 metrics.height;
 metrics.lineCount;
-metrics.width;
 metrics.lastLineWidth;
+
+release(message);
 ```
 
-### Per-line geometry
+The split is simple:
 
-```ts
-import { layoutLines, layoutNextLine } from 'react-native-pretext';
-
-const result = layoutLines(prepared, { width: 320 });
-
-result.lines[0];
-// {
-//   index: 0,
-//   start: 0,
-//   end: 14,
-//   width: 118.5,
-//   bottom: 24,
-// }
-
-const next = layoutNextLine(prepared, 0, 220);
-if (next) {
-  next.start;
-  next.end;
-  next.width;
-}
-```
+- `prepare()` owns text and typography.
+- `layout()` owns width-dependent results.
 
 ### One-shot measurement
+
+If you do not need a persistent handle:
 
 ```ts
 import { measure, measureWidth } from 'react-native-pretext';
@@ -106,184 +114,196 @@ const width = measureWidth('123.45', {
   tabularNumbers: true,
 });
 
-const block = measure('Long paragraph...', style, { width: 320 });
+const block = measure('Long paragraph...', { fontSize: 17, lineHeight: 24 }, { width: 320 });
 ```
 
 ### Inline runs
 
+Prepared text can include inline style overrides inside one string:
+
 ```ts
-import { measure, prepare, type TextMeasureRun } from 'react-native-pretext';
+import { prepare, type TextMeasureRun } from 'react-native-pretext';
 
 const text = 'Ship bold code exactly';
-const style = { fontSize: 17, lineHeight: 24 };
 const runs: readonly TextMeasureRun[] = [
   { start: 5, end: 9, style: { fontWeight: '700' } },
-  { start: 10, end: 14, style: { fontFamily: 'Menlo', tabularNumbers: true } },
+  { start: 10, end: 14, style: { fontFamily: 'Menlo' } },
 ];
 
-const prepared = prepare(text, style, runs);
-const layout = measure(text, style, { width: 320 }, runs);
+const prepared = prepare(text, { fontSize: 17, lineHeight: 24 }, runs);
 ```
 
-Runs are UTF-16 offsets into the source string.
-They must be sorted and non-overlapping.
-When passed to `measureWidth`, the returned width reflects the combined
-single-line effect of the base style plus all inline runs.
+Runs are UTF-16 ranges into the source string. They must be sorted and non-overlapping.
 
 ### Batch work
 
+For large collections:
+
 ```ts
-import { prepareBatch, layoutBatch, releaseMany } from 'react-native-pretext';
+import { layoutBatch, prepareBatch, releaseMany } from 'react-native-pretext';
 
-const preparedMessages = prepareBatch(messages, style);
-const layouts = layoutBatch(preparedMessages, { width: contentWidth });
+const prepared = prepareBatch(messages, style);
+const layouts = layoutBatch(prepared, { width: contentWidth });
 
-// When the list is discarded:
-releaseMany(preparedMessages);
+releaseMany(prepared);
 ```
 
-## Worklets
+### Per-line geometry
 
-The public API is React-free and sync, so it can be used from Reanimated worklets as long as the caller only moves serializable values across the boundary.
+If you need exact line metadata:
 
 ```ts
-import { layout, prepare } from 'react-native-pretext';
-import { useDerivedValue } from 'react-native-reanimated';
+import { layoutLines, layoutNextLine } from 'react-native-pretext';
 
-const prepared = prepare(message, style);
+const lines = layoutLines(message, { width: 320 });
+const next = layoutNextLine(message, 0, 220);
+```
 
-const measurement = useDerivedValue(() => {
-  return layout(prepared, {
-    width: bubbleWidth.value,
-    maxLines: 2,
-    ellipsizeMode: 'tail',
-  });
+Use `layoutLines()` when one width applies to the whole block. Use `layoutNextLine()` when width changes line by line.
+
+## Glyph fields
+
+Create a glyph field when you have a fixed cell grid and a small style palette.
+
+```ts
+import { GlyphFieldView, createGlyphField, releaseGlyphField, updateGlyphField, type GlyphFieldVariant } from 'react-native-pretext';
+
+const variants: readonly GlyphFieldVariant[] = [
+  { color: 'rgba(196,163,90,0.18)', fontWeight: '300' },
+  { color: 'rgba(196,163,90,0.92)', fontWeight: '800', fontStyle: 'italic' },
+];
+
+const field = createGlyphField({
+  columns: 40,
+  rows: 24,
+  fontFamily: 'Georgia',
+  fontSize: 18,
+  lineHeight: 20,
+  textAlign: 'center',
+  variants,
 });
+
+const cellCount = 40 * 24;
+const glyphs = ' '.repeat(cellCount);
+const variantIndices = new Uint8Array(cellCount);
+
+updateGlyphField(field, glyphs, variantIndices);
+
+// Later:
+releaseGlyphField(field);
 ```
 
-For dedicated Worklets runtimes, use the `react-native-pretext/worklets` entry:
+Render the field from its handle:
 
-```ts
-import { createRNPretextWorkletRuntime, layoutBatchInRuntime, prepareBatchInRuntime } from 'react-native-pretext/worklets';
-
-const runtime = createRNPretextWorkletRuntime({ name: 'pretext-layout' });
+```tsx
+<GlyphFieldView handle={field.id} style={{ width: 360, height: 480 }} />
 ```
 
-That installs the native bindings into the created runtime before any caller initializer runs.
+The update contract is strict:
 
-## Native text surfaces
+- `glyphs.length` must equal `columns * rows`
+- `variantIndices.length` must equal `columns * rows`
+- each `variantIndices[i]` must point at one entry in `variants`
 
-The package also exposes minimal native text views for render paths that should stay outside React-owned text layout:
+That is the whole model. The native field owns drawing and style caches. Your code only owns the current cell content.
+
+## Native render surfaces
+
+The package also exposes two minimal native text views:
 
 ```ts
 import { PreparedTextView, TextView } from 'react-native-pretext';
 ```
 
-- `TextView` renders direct text props on iOS and Android.
-- `PreparedTextView` renders directly from a prepared handle on iOS and Android.
-- `selectable` opts into the interaction-oriented native text owner.
-- leaving `selectable` off keeps the cheaper display-oriented path.
+- `TextView` renders direct text props.
+- `PreparedTextView` renders from a prepared handle.
 
-The split is intentional: selection and display have different runtime costs, so the package does not force the interaction path on every render surface.
+Use them when you want a native text surface but do not want React’s `<Text>` component to own layout on that path.
+
+`selectable` opts into the interaction-oriented native owner. Leaving it off keeps the cheaper display path.
+
+## Worklets
+
+The core API is synchronous and React-free, so it can be used from worklets after the current runtime has been installed.
+
+### Install into the UI runtime
+
+If UI worklets will call pretext directly, do this once during startup:
+
+```ts
+import { installRNPretextInUIRuntime } from 'react-native-pretext/worklets';
+
+installRNPretextInUIRuntime();
+```
+
+### Dedicated worklet runtime
+
+If you want a separate runtime for text-heavy work:
+
+```ts
+import { createRNPretextWorkletRuntime } from 'react-native-pretext/worklets';
+
+const runtime = createRNPretextWorkletRuntime({ name: 'pretext-layout' });
+```
+
+### Worklet helpers
+
+The worklet entry currently exposes:
+
+- `prepareBatchInRuntime()`
+- `measureBatchInRuntime()`
+- `layoutBatchInRuntime()`
+- `updateGlyphFieldInRuntime()`
+
+Example:
+
+```ts
+import { updateGlyphFieldInRuntime } from 'react-native-pretext/worklets';
+
+updateGlyphFieldInRuntime(field.id, glyphs, variantIndices);
+```
+
+## Lifecycle
+
+Handles own native memory, so cleanup is explicit:
+
+- `release()` for one prepared text handle
+- `releaseMany()` for many prepared text handles
+- `releaseGlyphField()` for one glyph field handle
 
 ## Style surface
 
-`TextMeasureStyle` intentionally exposes the small, high-value subset of RN text style that materially affects exact layout or prepared-handle rendering:
+`TextMeasureStyle` is intentionally small. It includes the text properties that materially affect layout or native rendering:
 
-```ts
-type TextMeasureStyle = {
-  allowFontScaling?: boolean;
-  color?: string;
-  fontFamily?: string;
-  fontSize?: number;
-  fontStyle?: 'italic' | 'normal';
-  fontWeight?: string;
-  includeFontPadding?: boolean;
-  letterSpacing?: number;
-  lineHeight?: number;
-  tabularNumbers?: boolean;
-  textBreakStrategy?: 'balanced' | 'highQuality' | 'simple';
-};
-```
+- font family
+- font size
+- font weight
+- font style
+- letter spacing
+- line height
+- color
+- tabular numbers
+- font scaling, font padding, and break strategy where relevant
 
-This is not meant to mirror the entire Text style API.
-Only layout-relevant or prepared-render-relevant facts belong here.
+This package is not trying to mirror the full React Native text style API.
 
-Inline overrides use the run-local subset:
+## When to use this package
 
-```ts
-type TextMeasureRunStyle = Pick<
-  TextMeasureStyle,
-  'color' | 'fontFamily' | 'fontSize' | 'fontStyle' | 'fontWeight' | 'letterSpacing' | 'lineHeight' | 'tabularNumbers'
->;
-```
+Use it when React should consume native text results instead of owning the whole text problem itself.
 
-Block-level layout policy such as `allowFontScaling`, `includeFontPadding`, and
-`textBreakStrategy` remains owned by the base `TextMeasureStyle`.
+That includes:
 
-## Handle lifecycle
+- exact text measurement before render
+- chat and feed virtualization
+- worklet-driven layout
+- custom text surfaces outside `<Text>`
+- fixed-grid glyph effects
 
-Prepared handles own native memory.
+Do not use it when normal React Native text layout is already good enough.
 
-That means:
+## Example app
 
-- call `release(handle)` when one prepared block is no longer needed
-- call `releaseMany(handles)` for bulk cleanup
+The example app in [`examples/`](./examples) demonstrates both primitives:
 
-The package keeps lifecycle explicit on purpose.
-
-## What the package owns
-
-- prepared native text state
-- exact width/height/line-count measurement
-- optional line metadata
-- variable-width line stepping
-- worklet-safe sync calls
-
-## What the package does not own
-
-- React state management
-- markdown parsing
-- mixed-style attributed text runs
-- custom truncation token rendering beyond native ellipsize behavior
-
-Those can sit above this package.
-
-## Architecture
-
-The package uses:
-
-- old/new architecture-compatible native module install path
-- JSI globals for sync calls
-- native registry-backed prepared handles
-- native text engines as the source of truth on iOS and Android
-
-The design artifacts for the package live in:
-
-- [brief.md](./brief.md)
-- [journal.md](./journal.md)
-- [implementation-plan.md](./implementation-plan.md)
-- [worklets-evaluation.md](./worklets-evaluation.md)
-
-The example app lives in:
-
-- [examples/App.tsx](./examples/App.tsx)
-- [examples/src/demos/TextFieldDemo.tsx](./examples/src/demos/TextFieldDemo.tsx)
-- [examples/src/demos/ChatDemo.tsx](./examples/src/demos/ChatDemo.tsx)
-
-Those demos currently prove two intended RN surfaces:
-
-- a continuously changing dark text field built from measured proportional glyph lookup and one Shared Value text owner on the UI runtime
-- a long AI chat surface where exact text geometry feeds a transplanted Shared Value recycled list instead of React-owned row measurement
-
-## Verification
-
-Current verified checks in this repo:
-
-- TypeScript surface passes `yarn typescript`
-- publish build passes `yarn build`
-- package artifact passes `npm pack --dry-run`
-- example app source passes `yarn exec tsc --noEmit` in `examples/`
-- example app source passes `yarn eslint App.tsx "src/**/*.{ts,tsx}"` in `examples/`
-
-Native runtime still deserves an explicit old/new-architecture verification matrix, but the current repo is now coherent at the package layer and at the example app source layer.
+- prepared text for chat measurement and rendering
+- glyph fields for the ASCII demo

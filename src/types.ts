@@ -9,6 +9,16 @@ export type PreparedTextHandle = Readonly<{
 }>;
 
 /**
+ * Opaque identifier for a native glyph-field surface.
+ *
+ * Handles are returned by `createGlyphField()` and must be released when the
+ * caller no longer needs the field.
+ */
+export type GlyphFieldHandle = Readonly<{
+  id: number;
+}>;
+
+/**
  * Small, high-value subset of RN text style used for prepared text ownership.
  *
  * The same style object feeds exact measurement and the prepared-handle render
@@ -102,4 +112,34 @@ export type NextTextLine = {
  */
 export type TextLayoutLines = TextLayout & {
   lines: TextLine[];
+};
+
+/**
+ * Stable per-variant drawing override inside a glyph field.
+ *
+ * Glyph fields own geometry separately from text layout, so variants only
+ * describe how one cell draws, not how lines break.
+ */
+export type GlyphFieldVariant = {
+  color: string;
+  fontStyle?: 'italic' | 'normal';
+  fontWeight?: string;
+};
+
+/**
+ * Stable geometry and styling contract for a native glyph field.
+ *
+ * `columns` × `rows` defines the fixed cell count. Each cell is updated later
+ * through `updateGlyphField()` with one UTF-16 code unit in `glyphs` and one
+ * variant index in `variantIndices`.
+ */
+export type GlyphFieldConfig = {
+  columns: number;
+  fontFamily?: string;
+  fontSize: number;
+  letterSpacing?: number;
+  lineHeight: number;
+  rows: number;
+  textAlign?: 'center' | 'left' | 'right';
+  variants: readonly GlyphFieldVariant[];
 };

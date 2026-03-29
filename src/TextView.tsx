@@ -2,6 +2,21 @@ import React from 'react';
 import { Platform, requireNativeComponent, type ColorValue, type StyleProp, type ViewProps, type ViewStyle } from 'react-native';
 import type { TextMeasureRun } from './types';
 
+export type TextViewRunPayload = Readonly<{
+  runColors?: readonly (string | null)[];
+  runCount?: number;
+  runEnds: readonly number[];
+  runFontFamilies?: readonly (string | null)[];
+  runFontSizes?: readonly number[];
+  runFontStyles?: readonly (string | null)[];
+  runFontWeights?: readonly (string | null)[];
+  runLetterSpacings?: readonly number[];
+  runLineHeights?: readonly number[];
+  runStarts: readonly number[];
+  runStyleMasks?: readonly number[];
+  runTabularNumbers?: readonly boolean[];
+}>;
+
 /**
  * Props for the native text display surface.
  *
@@ -18,6 +33,18 @@ export type TextViewProps = ViewProps & {
   letterSpacing?: number;
   lineHeight?: number;
   numberOfLines?: number;
+  runColors?: readonly (string | null)[];
+  runCount?: number;
+  runEnds?: readonly number[];
+  runFontFamilies?: readonly (string | null)[];
+  runFontSizes?: readonly number[];
+  runFontStyles?: readonly (string | null)[];
+  runFontWeights?: readonly (string | null)[];
+  runLetterSpacings?: readonly number[];
+  runLineHeights?: readonly number[];
+  runStarts?: readonly number[];
+  runStyleMasks?: readonly number[];
+  runTabularNumbers?: readonly boolean[];
   runs?: readonly TextMeasureRun[];
   selectable?: boolean;
   style?: StyleProp<ViewStyle>;

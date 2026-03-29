@@ -17,6 +17,7 @@ class RNPretextPackage : BaseReactPackage() {
 
     override fun getViewManagers(reactContext: ReactApplicationContext): List<ModuleSpec> {
         return listOf(
+            ModuleSpec.viewManagerSpec { RNPretextGlyphFieldViewManager() },
             ModuleSpec.viewManagerSpec { RNPretextTextViewManager() },
             ModuleSpec.viewManagerSpec { RNPretextPreparedTextViewManager() },
         )

@@ -1,10 +1,11 @@
-import { createWorkletRuntime, runOnUISync, scheduleOnRuntime, type WorkletRuntime } from 'react-native-worklets';
+import { createWorkletRuntime, getUIRuntimeHolder, runOnUISync, scheduleOnRuntime, type WorkletRuntime } from 'react-native-worklets';
 import { getRNPretextRuntime } from './initModule';
-import type { LayoutOptions, PreparedTextHandle, TextLayout, TextMeasureRun, TextMeasureStyle } from './types';
+import type { GlyphFieldHandle, LayoutOptions, PreparedTextHandle, TextLayout, TextMeasureRun, TextMeasureStyle } from './types';
 
 declare global {
   var _WORKLET_RUNTIME: ArrayBuffer;
-  var __RNPretextInstallWorkletRuntime: ((workletRuntime: WorkletRuntime) => boolean) | undefined;
+  var __RNPretextInstallWorkletRuntime: ((workletRuntime: object) => boolean) | undefined;
+  var __RNPretextUpdateGlyphField: ((handle: number, glyphs: string, variantIndices: Uint8Array) => void) | undefined;
 }
 
 export type PretextWorkletRuntimeConfig = {
@@ -28,11 +29,19 @@ function buildHandle(id: number): PreparedTextHandle {
  * worklets.
  */
 export function installRNPretextInUIRuntime(): void {
+  const installWorkletRuntime = globalThis.__RNPretextInstallWorkletRuntime;
+  if (installWorkletRuntime) {
+    const didInstall = installWorkletRuntime(getUIRuntimeHolder());
+    if (!didInstall) {
+      throw new Error('RNPretext: Failed to install bindings into the UI runtime.');
+    }
+    return;
+  }
+
   const runtimeToken = runOnUISync(() => {
     'worklet';
     return globalThis._WORKLET_RUNTIME;
   });
-
   getRNPretextRuntime().installRuntime(runtimeToken);
 }
 
@@ -131,4 +140,22 @@ export function layoutBatchInRuntime(handles: readonly PreparedTextHandle[], opt
   }
 
   return layoutBatch(ids, options);
+}
+
+/**
+ * Worklet-safe glyph-field update against the current installed runtime.
+ */
+export function updateGlyphFieldInRuntime(
+  handle: GlyphFieldHandle | number,
+  glyphs: string,
+  variantIndices: Uint8Array
+): void {
+  'worklet';
+
+  const updateGlyphField = globalThis.__RNPretextUpdateGlyphField;
+  if (!updateGlyphField) {
+    throw new Error('RNPretext: updateGlyphFieldInRuntime() was called before the current runtime was installed.');
+  }
+
+  updateGlyphField(typeof handle === 'number' ? handle : handle.id, glyphs, variantIndices);
 }

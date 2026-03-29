@@ -1,16 +1,73 @@
 import { getRNPretextRuntime } from './initModule';
+import { GlyphFieldView } from './GlyphFieldView';
 import { PreparedTextView } from './PreparedTextView';
 import { TextView } from './TextView';
-import type { LayoutOptions, NextTextLine, PreparedTextHandle, TextLayout, TextLayoutLines, TextMeasureRun, TextMeasureStyle } from './types';
+import type {
+  GlyphFieldConfig,
+  GlyphFieldHandle,
+  LayoutOptions,
+  NextTextLine,
+  PreparedTextHandle,
+  TextLayout,
+  TextLayoutLines,
+  TextMeasureRun,
+  TextMeasureStyle,
+} from './types';
 
-export type { LayoutOptions, NextTextLine, PreparedTextHandle, TextLayout, TextLayoutLines, TextLine, TextMeasureRun, TextMeasureRunStyle, TextMeasureStyle } from './types';
+export type {
+  GlyphFieldConfig,
+  GlyphFieldHandle,
+  GlyphFieldVariant,
+  LayoutOptions,
+  NextTextLine,
+  PreparedTextHandle,
+  TextLayout,
+  TextLayoutLines,
+  TextLine,
+  TextMeasureRun,
+  TextMeasureRunStyle,
+  TextMeasureStyle,
+} from './types';
+export type { GlyphFieldViewProps } from './GlyphFieldView';
 export type { PreparedTextViewProps } from './PreparedTextView';
-export type { TextViewProps } from './TextView';
+export type { TextViewProps, TextViewRunPayload } from './TextView';
+export { GlyphFieldView };
 export { PreparedTextView };
 export { TextView };
 
 function buildHandle(id: number): PreparedTextHandle {
   return { id };
+}
+
+function buildGlyphFieldHandle(id: number): GlyphFieldHandle {
+  return { id };
+}
+
+/**
+ * Creates a native glyph field with stable geometry and stable style variants.
+ *
+ * The returned handle owns the field's native caches and draw state. Update its
+ * current cells later through `updateGlyphField()`.
+ */
+export function createGlyphField(config: GlyphFieldConfig): GlyphFieldHandle {
+  return buildGlyphFieldHandle(getRNPretextRuntime().createGlyphField(config));
+}
+
+/**
+ * Replaces the current glyph cells in a native glyph field.
+ *
+ * `glyphs` must contain exactly `columns * rows` UTF-16 code units, and
+ * `variantIndices.length` must match that same cell count.
+ */
+export function updateGlyphField(handle: GlyphFieldHandle, glyphs: string, variantIndices: Uint8Array): void {
+  getRNPretextRuntime().updateGlyphField(handle.id, glyphs, variantIndices);
+}
+
+/**
+ * Releases one native glyph field handle.
+ */
+export function releaseGlyphField(handle: GlyphFieldHandle): void {
+  getRNPretextRuntime().releaseGlyphField(handle.id);
 }
 
 /**

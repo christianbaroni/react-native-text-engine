@@ -1,14 +1,27 @@
 import React, { useCallback, useEffect, useRef } from 'react';
-import { Pressable, SafeAreaView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
-import { releaseMany, type PreparedTextHandle, type TextLayout, type TextMeasureStyle } from 'react-native-pretext';
+import { Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import {
+  PreparedTextView,
+  TextView,
+  releaseMany,
+  type PreparedTextHandle,
+  type TextLayout,
+  type TextMeasureStyle,
+} from 'react-native-pretext';
 import { layoutBatchInRuntime, measureBatchInRuntime, prepareBatchInRuntime } from 'react-native-pretext/worklets';
-import Animated, { type DerivedValue, type SharedValue, useAnimatedStyle, useDerivedValue, useSharedValue } from 'react-native-reanimated';
+import Animated, {
+  type DerivedValue,
+  type SharedValue,
+  useAnimatedProps,
+  useAnimatedStyle,
+  useDerivedValue,
+  useSharedValue,
+} from 'react-native-reanimated';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { runOnRuntimeAsync } from 'react-native-worklets';
 import { PillSwitch } from '../components/PillSwitch';
 import { buildConversation } from '../data/chatData';
-import { PreparedHandleText } from '../pretext/PreparedHandleText';
 import { getChatPretextRuntime } from '../pretext/runtimes';
-import { WorkletText } from '../pretext/WorkletText';
 import { uiActions, useUiStore, type WidthMode } from '../state/uiStore';
 import { demoTheme } from '../theme/demoTheme';
 import { AnimatedList, type RenderItemProps } from '../worklet-list';
@@ -61,6 +74,12 @@ const EMPTY_LAYOUT: TextLayout = {
   width: 0,
 };
 
+const METRIC_VALUE_TEXT_STYLE = {
+  color: demoTheme.textPrimary,
+  fontSize: 15,
+  fontWeight: '800' as const,
+};
+
 const WIDTH_FACTORS: Record<WidthMode, number> = {
   compact: 0.56,
   phone: 0.72,
@@ -74,6 +93,8 @@ const WIDTH_OPTIONS: ReadonlyArray<{ label: string; value: WidthMode }> = [
 ];
 
 const EMPTY_HANDLES: PreparedTextHandle[] = [];
+const AnimatedTextView = Animated.createAnimatedComponent(TextView as React.ComponentType<Record<string, unknown>>);
+const AnimatedPreparedTextView = Animated.createAnimatedComponent(PreparedTextView as React.ComponentType<Record<string, unknown>>);
 
 export function ChatDemo({ isActive = true }: { isActive?: boolean }) {
   const { height, width } = useWindowDimensions();
@@ -423,7 +444,11 @@ function ChatBubble({
 }
 
 function PreparedBubbleText({ handle }: { handle: DerivedValue<number> }) {
-  return <PreparedHandleText ellipsizeMode="clip" handle={handle} selectable style={styles.preparedTextFrame} />;
+  const animatedProps = useAnimatedProps(() => ({
+    handle: handle.value,
+  }));
+
+  return <AnimatedPreparedTextView animatedProps={animatedProps} ellipsizeMode="clip" selectable style={styles.preparedTextFrame} />;
 }
 
 function useBubbleStyle(
@@ -463,8 +488,24 @@ function Metric({ label, value }: { label: string; value: SharedValue<string> | 
   return (
     <View style={styles.metric}>
       <Text style={styles.metricLabel}>{label}</Text>
-      <WorkletText style={styles.metricValue}>{value}</WorkletText>
+      {typeof value === 'string' ? <Text style={styles.metricValue}>{value}</Text> : <MetricValueText value={value} />}
     </View>
+  );
+}
+
+function MetricValueText({ value }: { value: SharedValue<string> }) {
+  const animatedProps = useAnimatedProps(() => ({
+    text: value.value,
+  }));
+
+  return (
+    <AnimatedTextView
+      animatedProps={animatedProps}
+      color={METRIC_VALUE_TEXT_STYLE.color}
+      fontSize={METRIC_VALUE_TEXT_STYLE.fontSize}
+      fontWeight={METRIC_VALUE_TEXT_STYLE.fontWeight}
+      style={styles.metricValueFill}
+    />
   );
 }
 
@@ -595,9 +636,10 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   metricValue: {
-    color: demoTheme.textPrimary,
-    fontSize: 15,
-    fontWeight: '800',
+    ...METRIC_VALUE_TEXT_STYLE,
+  },
+  metricValueFill: {
+    flex: 1,
   },
   overlayStrip: {
     alignItems: 'center',

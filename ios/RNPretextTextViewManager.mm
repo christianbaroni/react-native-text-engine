@@ -1,3 +1,4 @@
+#import "RNPretextColorUtils.h"
 #import <CoreText/SFNTLayoutTypes.h>
 #import <React/RCTConvert.h>
 #import <React/RCTFont.h>
@@ -26,6 +27,25 @@
 @implementation RNPretextTextRun
 @end
 
+static const NSInteger RNPretextRunStyleHasColor = 1 << 0;
+static const NSInteger RNPretextRunStyleHasFontFamily = 1 << 1;
+static const NSInteger RNPretextRunStyleHasFontSize = 1 << 2;
+static const NSInteger RNPretextRunStyleHasFontStyle = 1 << 3;
+static const NSInteger RNPretextRunStyleHasFontWeight = 1 << 4;
+static const NSInteger RNPretextRunStyleHasLetterSpacing = 1 << 5;
+static const NSInteger RNPretextRunStyleHasLineHeight = 1 << 6;
+static const NSInteger RNPretextRunStyleHasTabularNumbers = 1 << 7;
+
+static NSNumber *RNPretextNumberOrNil(id value)
+{
+  return [value isKindOfClass:[NSNumber class]] ? (NSNumber *)value : nil;
+}
+
+static NSString *RNPretextStringOrNil(id value)
+{
+  return [value isKindOfClass:[NSString class]] ? (NSString *)value : nil;
+}
+
 @interface RNPretextTextView : UIView
 @property (nonatomic, strong) UIColor *color;
 @property (nonatomic, copy) NSString *ellipsizeMode;
@@ -36,6 +56,18 @@
 @property (nonatomic, assign) CGFloat letterSpacing;
 @property (nonatomic, assign) CGFloat lineHeight;
 @property (nonatomic, assign) NSInteger numberOfLines;
+@property (nonatomic, copy) NSArray<NSString *> *runColors;
+@property (nonatomic, assign) NSInteger runCount;
+@property (nonatomic, copy) NSArray<NSNumber *> *runEnds;
+@property (nonatomic, copy) NSArray<NSString *> *runFontFamilies;
+@property (nonatomic, copy) NSArray<NSNumber *> *runFontSizes;
+@property (nonatomic, copy) NSArray<NSString *> *runFontStyles;
+@property (nonatomic, copy) NSArray<NSString *> *runFontWeights;
+@property (nonatomic, copy) NSArray<NSNumber *> *runLetterSpacings;
+@property (nonatomic, copy) NSArray<NSNumber *> *runLineHeights;
+@property (nonatomic, copy) NSArray<NSNumber *> *runStarts;
+@property (nonatomic, copy) NSArray<NSNumber *> *runStyleMasks;
+@property (nonatomic, copy) NSArray<NSNumber *> *runTabularNumbers;
 @property (nonatomic, copy) NSArray<RNPretextTextRun *> *runs;
 @property (nonatomic, assign) BOOL selectable;
 @property (nonatomic, copy) NSString *text;
@@ -44,45 +76,8 @@
 
 @implementation RNPretextTextView {
   UILabel *_label;
+  BOOL _textDisplayDirty;
   UITextView *_textView;
-}
-
-+ (UIColor *)resolveColorString:(NSString *)value
-{
-  if (value.length == 0) return nil;
-
-  if ([value hasPrefix:@"#"]) {
-    NSString *hex = [value substringFromIndex:1];
-    unsigned long long parsed = 0;
-    NSScanner *scanner = [NSScanner scannerWithString:hex];
-    if (![scanner scanHexLongLong:&parsed]) return nil;
-
-    CGFloat alpha = 1;
-    CGFloat red = 0;
-    CGFloat green = 0;
-    CGFloat blue = 0;
-
-    if (hex.length == 3) {
-      red = ((parsed >> 8) & 0xF) / 15.0;
-      green = ((parsed >> 4) & 0xF) / 15.0;
-      blue = (parsed & 0xF) / 15.0;
-    } else if (hex.length == 6) {
-      red = ((parsed >> 16) & 0xFF) / 255.0;
-      green = ((parsed >> 8) & 0xFF) / 255.0;
-      blue = (parsed & 0xFF) / 255.0;
-    } else if (hex.length == 8) {
-      alpha = ((parsed >> 24) & 0xFF) / 255.0;
-      red = ((parsed >> 16) & 0xFF) / 255.0;
-      green = ((parsed >> 8) & 0xFF) / 255.0;
-      blue = (parsed & 0xFF) / 255.0;
-    } else {
-      return nil;
-    }
-
-    return [UIColor colorWithRed:red green:green blue:blue alpha:alpha];
-  }
-
-  return [RCTConvert UIColor:value];
 }
 
 - (UIFont *)resolveFontWithFamily:(NSString *)fontFamily
@@ -152,10 +147,68 @@
   return attributes;
 }
 
+- (NSArray<RNPretextTextRun *> *)resolvedRuns
+{
+  if (_runStarts.count == 0 || _runEnds.count == 0 || _runStyleMasks.count == 0) {
+    return _runs;
+  }
+
+  NSInteger runCount = _runCount > 0 ? _runCount : MIN(_runStarts.count, MIN(_runEnds.count, _runStyleMasks.count));
+  runCount = MIN(runCount, MIN(_runStarts.count, MIN(_runEnds.count, _runStyleMasks.count)));
+  NSMutableArray<RNPretextTextRun *> *resolvedRuns = [NSMutableArray arrayWithCapacity:runCount];
+
+  for (NSInteger index = 0; index < runCount; index += 1) {
+    NSNumber *styleMaskValue = RNPretextNumberOrNil(_runStyleMasks[index]);
+    NSNumber *startValue = RNPretextNumberOrNil(_runStarts[index]);
+    NSNumber *endValue = RNPretextNumberOrNil(_runEnds[index]);
+    if (styleMaskValue == nil || startValue == nil || endValue == nil) continue;
+
+    NSInteger styleMask = styleMaskValue.integerValue;
+    RNPretextTextRunStyle *style = [RNPretextTextRunStyle new];
+
+    if ((styleMask & RNPretextRunStyleHasColor) != 0 && index < _runColors.count) {
+      NSString *color = RNPretextStringOrNil(_runColors[index]);
+      if (color != nil) {
+        style.color = RNPretextResolveColorValue(color);
+      }
+    }
+    if ((styleMask & RNPretextRunStyleHasFontFamily) != 0 && index < _runFontFamilies.count) {
+      style.fontFamily = RNPretextStringOrNil(_runFontFamilies[index]);
+    }
+    if ((styleMask & RNPretextRunStyleHasFontSize) != 0 && index < _runFontSizes.count) {
+      style.fontSize = RNPretextNumberOrNil(_runFontSizes[index]);
+    }
+    if ((styleMask & RNPretextRunStyleHasFontStyle) != 0 && index < _runFontStyles.count) {
+      style.fontStyle = RNPretextStringOrNil(_runFontStyles[index]);
+    }
+    if ((styleMask & RNPretextRunStyleHasFontWeight) != 0 && index < _runFontWeights.count) {
+      style.fontWeight = RNPretextStringOrNil(_runFontWeights[index]);
+    }
+    if ((styleMask & RNPretextRunStyleHasLetterSpacing) != 0 && index < _runLetterSpacings.count) {
+      style.letterSpacing = RNPretextNumberOrNil(_runLetterSpacings[index]);
+    }
+    if ((styleMask & RNPretextRunStyleHasLineHeight) != 0 && index < _runLineHeights.count) {
+      style.lineHeight = RNPretextNumberOrNil(_runLineHeights[index]);
+    }
+    if ((styleMask & RNPretextRunStyleHasTabularNumbers) != 0 && index < _runTabularNumbers.count) {
+      style.tabularNumbers = RNPretextNumberOrNil(_runTabularNumbers[index]);
+    }
+
+    RNPretextTextRun *run = [RNPretextTextRun new];
+    run.start = startValue.integerValue;
+    run.end = endValue.integerValue;
+    run.style = style;
+    [resolvedRuns addObject:run];
+  }
+
+  return resolvedRuns;
+}
+
 - (instancetype)init
 {
   if ((self = [super init])) {
     self.backgroundColor = UIColor.clearColor;
+    _textDisplayDirty = YES;
 
     _fontSize = 14;
     _label = [[UILabel alloc] initWithFrame:self.bounds];
@@ -190,60 +243,143 @@
   _label.preferredMaxLayoutWidth = CGRectGetWidth(self.bounds);
   _textView.frame = self.bounds;
   _textView.textContainer.size = self.bounds.size;
+
+  if (_textDisplayDirty) {
+    _textDisplayDirty = NO;
+    [self updateTextDisplay];
+  }
+}
+
+- (void)invalidateTextDisplay
+{
+  _textDisplayDirty = YES;
+  [self setNeedsLayout];
 }
 
 - (void)setText:(NSString *)text
 {
   _text = [text copy];
-  [self updateTextDisplay];
+  [self invalidateTextDisplay];
 }
 
 - (void)setColor:(UIColor *)color
 {
   _color = color;
-  [self updateTextDisplay];
+  [self invalidateTextDisplay];
 }
 
 - (void)setFontFamily:(NSString *)fontFamily
 {
   _fontFamily = [fontFamily copy];
-  [self updateTextDisplay];
+  [self invalidateTextDisplay];
 }
 
 - (void)setFontSize:(CGFloat)fontSize
 {
   _fontSize = fontSize;
-  [self updateTextDisplay];
+  [self invalidateTextDisplay];
 }
 
 - (void)setFontStyle:(NSString *)fontStyle
 {
   _fontStyle = [fontStyle copy];
-  [self updateTextDisplay];
+  [self invalidateTextDisplay];
 }
 
 - (void)setFontWeight:(NSString *)fontWeight
 {
   _fontWeight = [fontWeight copy];
-  [self updateTextDisplay];
+  [self invalidateTextDisplay];
 }
 
 - (void)setLetterSpacing:(CGFloat)letterSpacing
 {
   _letterSpacing = letterSpacing;
-  [self updateTextDisplay];
+  [self invalidateTextDisplay];
 }
 
 - (void)setLineHeight:(CGFloat)lineHeight
 {
   _lineHeight = lineHeight;
-  [self updateTextDisplay];
+  [self invalidateTextDisplay];
 }
 
 - (void)setRuns:(NSArray<RNPretextTextRun *> *)runs
 {
   _runs = [runs copy];
-  [self updateTextDisplay];
+  [self invalidateTextDisplay];
+}
+
+- (void)setRunStarts:(NSArray<NSNumber *> *)runStarts
+{
+  _runStarts = [runStarts copy];
+  [self invalidateTextDisplay];
+}
+
+- (void)setRunCount:(NSInteger)runCount
+{
+  _runCount = runCount;
+  [self invalidateTextDisplay];
+}
+
+- (void)setRunEnds:(NSArray<NSNumber *> *)runEnds
+{
+  _runEnds = [runEnds copy];
+  [self invalidateTextDisplay];
+}
+
+- (void)setRunStyleMasks:(NSArray<NSNumber *> *)runStyleMasks
+{
+  _runStyleMasks = [runStyleMasks copy];
+  [self invalidateTextDisplay];
+}
+
+- (void)setRunColors:(NSArray<NSString *> *)runColors
+{
+  _runColors = [runColors copy];
+  [self invalidateTextDisplay];
+}
+
+- (void)setRunFontFamilies:(NSArray<NSString *> *)runFontFamilies
+{
+  _runFontFamilies = [runFontFamilies copy];
+  [self invalidateTextDisplay];
+}
+
+- (void)setRunFontSizes:(NSArray<NSNumber *> *)runFontSizes
+{
+  _runFontSizes = [runFontSizes copy];
+  [self invalidateTextDisplay];
+}
+
+- (void)setRunFontWeights:(NSArray<NSString *> *)runFontWeights
+{
+  _runFontWeights = [runFontWeights copy];
+  [self invalidateTextDisplay];
+}
+
+- (void)setRunFontStyles:(NSArray<NSString *> *)runFontStyles
+{
+  _runFontStyles = [runFontStyles copy];
+  [self invalidateTextDisplay];
+}
+
+- (void)setRunLetterSpacings:(NSArray<NSNumber *> *)runLetterSpacings
+{
+  _runLetterSpacings = [runLetterSpacings copy];
+  [self invalidateTextDisplay];
+}
+
+- (void)setRunLineHeights:(NSArray<NSNumber *> *)runLineHeights
+{
+  _runLineHeights = [runLineHeights copy];
+  [self invalidateTextDisplay];
+}
+
+- (void)setRunTabularNumbers:(NSArray<NSNumber *> *)runTabularNumbers
+{
+  _runTabularNumbers = [runTabularNumbers copy];
+  [self invalidateTextDisplay];
 }
 
 - (void)setNumberOfLines:(NSInteger)numberOfLines
@@ -285,7 +421,7 @@
 
   _label.textAlignment = alignment;
   _textView.textAlignment = alignment;
-  [self updateTextDisplay];
+  [self invalidateTextDisplay];
 }
 
 - (void)setSelectable:(BOOL)selectable
@@ -301,7 +437,8 @@
 {
   NSString *text = _text ?: @"";
   NSDictionary<NSAttributedStringKey, id> *baseAttributes = [self buildRunAttributes:[RNPretextTextRunStyle new]];
-  if (_runs.count == 0) {
+  NSArray<RNPretextTextRun *> *runs = [self resolvedRuns];
+  if (runs.count == 0) {
     return [[NSAttributedString alloc] initWithString:text attributes:baseAttributes];
   }
 
@@ -309,7 +446,7 @@
       [[NSMutableAttributedString alloc] initWithString:text attributes:baseAttributes];
   NSInteger previousEnd = 0;
 
-  for (RNPretextTextRun *run in _runs) {
+  for (RNPretextTextRun *run in runs) {
     if (run == nil || run.style == nil) continue;
     NSInteger start = run.start;
     NSInteger end = run.end;
@@ -358,6 +495,18 @@ RCT_EXPORT_VIEW_PROPERTY(fontWeight, NSString)
 RCT_EXPORT_VIEW_PROPERTY(letterSpacing, CGFloat)
 RCT_EXPORT_VIEW_PROPERTY(lineHeight, CGFloat)
 RCT_EXPORT_VIEW_PROPERTY(numberOfLines, NSInteger)
+RCT_EXPORT_VIEW_PROPERTY(runColors, NSArray)
+RCT_EXPORT_VIEW_PROPERTY(runCount, NSInteger)
+RCT_EXPORT_VIEW_PROPERTY(runEnds, NSArray)
+RCT_EXPORT_VIEW_PROPERTY(runFontFamilies, NSArray)
+RCT_EXPORT_VIEW_PROPERTY(runFontSizes, NSArray)
+RCT_EXPORT_VIEW_PROPERTY(runFontStyles, NSArray)
+RCT_EXPORT_VIEW_PROPERTY(runFontWeights, NSArray)
+RCT_EXPORT_VIEW_PROPERTY(runLetterSpacings, NSArray)
+RCT_EXPORT_VIEW_PROPERTY(runLineHeights, NSArray)
+RCT_EXPORT_VIEW_PROPERTY(runStarts, NSArray)
+RCT_EXPORT_VIEW_PROPERTY(runStyleMasks, NSArray)
+RCT_EXPORT_VIEW_PROPERTY(runTabularNumbers, NSArray)
 RCT_CUSTOM_VIEW_PROPERTY(runs, NSArray, RNPretextTextView)
 {
   NSArray *rawRuns = json == nil || json == (id)kCFNull ? nil : [RCTConvert NSArray:json];
@@ -378,7 +527,7 @@ RCT_CUSTOM_VIEW_PROPERTY(runs, NSArray, RNPretextTextView)
     RNPretextTextRunStyle *style = [RNPretextTextRunStyle new];
     id rawColor = styleDictionary[@"color"];
     if ([rawColor isKindOfClass:[NSString class]]) {
-      style.color = [RNPretextTextView resolveColorString:(NSString *)rawColor];
+      style.color = RNPretextResolveColorValue((NSString *)rawColor);
     }
     style.fontFamily = [RCTConvert NSString:styleDictionary[@"fontFamily"]];
     style.fontSize = [RCTConvert NSNumber:styleDictionary[@"fontSize"]];

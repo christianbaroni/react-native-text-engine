@@ -1,8 +1,17 @@
 import { NativeModules } from 'react-native';
 import RNPretextModule from './NativeRNPretext';
-import type { LayoutOptions, NextTextLine, TextLayout, TextLayoutLines, TextMeasureRun, TextMeasureStyle } from './types';
+import type {
+  GlyphFieldConfig,
+  LayoutOptions,
+  NextTextLine,
+  TextLayout,
+  TextLayoutLines,
+  TextMeasureRun,
+  TextMeasureStyle,
+} from './types';
 
 declare global {
+  var __RNPretextCreateGlyphField: ((config: GlyphFieldConfig) => number) | undefined;
   var __RNPretextInstallRuntime: ((runtimeToken: ArrayBuffer) => boolean) | undefined;
   var __RNPretextLayout: ((handle: number, options: LayoutOptions) => TextLayout) | undefined;
   var __RNPretextLayoutBatch:
@@ -38,11 +47,14 @@ declare global {
         runsByText?: readonly (readonly TextMeasureRun[] | undefined)[]
       ) => number[])
     | undefined;
+  var __RNPretextReleaseGlyphField: ((handle: number) => void) | undefined;
   var __RNPretextRelease: ((handle: number) => void) | undefined;
   var __RNPretextReleaseMany: ((handles: readonly number[]) => void) | undefined;
+  var __RNPretextUpdateGlyphField: ((handle: number, glyphs: string, variantIndices: Uint8Array) => void) | undefined;
 }
 
 type RNPretextRuntime = {
+  readonly createGlyphField: (config: GlyphFieldConfig) => number;
   readonly installRuntime: (runtimeToken: ArrayBuffer) => void;
   readonly layout: (handle: number, options: LayoutOptions) => TextLayout;
   readonly layoutBatch: (handles: readonly number[], options: LayoutOptions) => TextLayout[];
@@ -62,8 +74,10 @@ type RNPretextRuntime = {
     style: TextMeasureStyle | undefined,
     runsByText?: readonly (readonly TextMeasureRun[] | undefined)[]
   ) => number[];
+  readonly releaseGlyphField: (handle: number) => void;
   readonly release: (handle: number) => void;
   readonly releaseMany: (handles: readonly number[]) => void;
+  readonly updateGlyphField: (handle: number, glyphs: string, variantIndices: Uint8Array) => void;
 };
 
 let cachedRuntime: RNPretextRuntime | null = null;
@@ -83,11 +97,14 @@ function resolveInstallModule(): { install: () => boolean } | null {
 }
 
 function buildRuntime(): RNPretextRuntime {
+  const createGlyphField = globalThis.__RNPretextCreateGlyphField;
   const installRuntime = globalThis.__RNPretextInstallRuntime;
   const prepare = globalThis.__RNPretextPrepare;
   const prepareBatch = globalThis.__RNPretextPrepareBatch;
+  const releaseGlyphField = globalThis.__RNPretextReleaseGlyphField;
   const release = globalThis.__RNPretextRelease;
   const releaseMany = globalThis.__RNPretextReleaseMany;
+  const updateGlyphField = globalThis.__RNPretextUpdateGlyphField;
   const measureWidth = globalThis.__RNPretextMeasureWidth;
   const measure = globalThis.__RNPretextMeasure;
   const measureBatch = globalThis.__RNPretextMeasureBatch;
@@ -96,11 +113,28 @@ function buildRuntime(): RNPretextRuntime {
   const layoutNextLine = globalThis.__RNPretextLayoutNextLine;
   const layoutLines = globalThis.__RNPretextLayoutLines;
 
-  if (!installRuntime || !prepare || !prepareBatch || !release || !releaseMany || !measureWidth || !measure || !measureBatch || !layout || !layoutBatch || !layoutNextLine || !layoutLines) {
+  if (
+    !createGlyphField ||
+    !installRuntime ||
+    !prepare ||
+    !prepareBatch ||
+    !releaseGlyphField ||
+    !release ||
+    !releaseMany ||
+    !updateGlyphField ||
+    !measureWidth ||
+    !measure ||
+    !measureBatch ||
+    !layout ||
+    !layoutBatch ||
+    !layoutNextLine ||
+    !layoutLines
+  ) {
     throw new Error('RNPretext: Native runtime installed incompletely. Expected all JSI bindings to be present.');
   }
 
   return {
+    createGlyphField: config => createGlyphField(config),
     installRuntime: runtimeToken => {
       const didInstall = installRuntime(runtimeToken);
       if (!didInstall) {
@@ -116,8 +150,10 @@ function buildRuntime(): RNPretextRuntime {
     measureWidth: (text, style, runs) => measureWidth(text, style, runs),
     prepare: (text, style, runs) => prepare(text, style, runs),
     prepareBatch: (texts, style, runsByText) => prepareBatch(texts, style, runsByText),
+    releaseGlyphField: handle => releaseGlyphField(handle),
     release: handle => release(handle),
     releaseMany: handles => releaseMany(handles),
+    updateGlyphField: (handle, glyphs, variantIndices) => updateGlyphField(handle, glyphs, variantIndices),
   };
 }
 
