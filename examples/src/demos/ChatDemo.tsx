@@ -1,10 +1,9 @@
 import React, { useCallback, useEffect, useRef } from 'react';
 import { Platform, Pressable, SafeAreaView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
-import { useStableValue } from '@storesjs/stores';
 import { releaseMany, type PreparedTextHandle, type TextLayout, type TextMeasureStyle } from 'react-native-pretext';
 import { layoutBatchInRuntime, measureBatchInRuntime, prepareBatchInRuntime } from 'react-native-pretext/worklets';
 import Animated, { type DerivedValue, type SharedValue, useAnimatedStyle, useDerivedValue, useSharedValue } from 'react-native-reanimated';
-import { runOnUI, scheduleOnRN, scheduleOnRuntime } from 'react-native-worklets';
+import { runOnRuntimeAsync } from 'react-native-worklets';
 import { PillSwitch } from '../components/PillSwitch';
 import { buildConversation } from '../data/chatData';
 import { PreparedHandleText } from '../pretext/PreparedHandleText';
@@ -96,115 +95,6 @@ export function ChatDemo({ isActive = true }: { isActive?: boolean }) {
   const bubbleMaxWidth = Math.max(220, Math.floor((listWidth - EDGE_INSET * 2) * WIDTH_FACTORS[widthMode]));
   const textWidth = Math.max(180, bubbleMaxWidth - BUBBLE_PADDING_X * 2 - BUBBLE_BORDER_WIDTH * 2);
 
-  const applyPreview = useStableValue(() => (jobId: number, handles: HandleBuffer, widths: LayoutBuffer, heights: LayoutBuffer) => {
-    if (jobId !== jobRef.current) return;
-
-    runOnUI(
-      (
-        nextHandles: HandleBuffer,
-        nextWidths: LayoutBuffer,
-        nextHeights: LayoutBuffer,
-        nextIndices: readonly number[],
-        metricText: SharedValue<string>,
-        handlesValue: SharedValue<HandleBuffer>,
-        widthsValue: SharedValue<LayoutBuffer>,
-        heightsValue: SharedValue<LayoutBuffer>,
-        dataValue: SharedValue<number[]>,
-        versionValue: SharedValue<number>
-      ) => {
-        'worklet';
-        handlesValue.value = nextHandles;
-        widthsValue.value = nextWidths;
-        heightsValue.value = nextHeights;
-        dataValue.modify(indices => {
-          writeIndices(indices, nextIndices);
-          return indices;
-        });
-        versionValue.value += 1;
-        metricText.value = '...';
-      }
-    )(
-      handles,
-      widths,
-      heights,
-      PREVIEW_MESSAGE_INDICES,
-      layoutMetricText,
-      messageHandles,
-      bubbleWidths,
-      bubbleHeights,
-      data,
-      itemMetricsVersion
-    );
-  });
-
-  const applyRows = useStableValue(
-    () =>
-      (
-        jobId: number,
-        nextHandles: PreparedTextHandle[] | null,
-        handleIds: HandleBuffer,
-        widths: LayoutBuffer,
-        heights: LayoutBuffer,
-        measuredTextWidth: number,
-        nextLayoutMs: number
-      ) => {
-        if (jobId !== jobRef.current) {
-          if (nextHandles && nextHandles.length > 0) releaseMany(nextHandles);
-          return;
-        }
-
-        if (nextHandles && nextHandles.length > 0) {
-          const previousHandles = handlesRef.current;
-          if (previousHandles && previousHandles !== nextHandles) {
-            releaseMany(previousHandles);
-          }
-          handlesRef.current = nextHandles;
-        }
-
-        const nextMetric = `${nextLayoutMs.toFixed(1)}ms`;
-        runOnUI(
-          (
-            nextHandleIds: HandleBuffer,
-            nextWidths: LayoutBuffer,
-            nextHeights: LayoutBuffer,
-            nextIndices: readonly number[],
-            metricText: SharedValue<string>,
-            metricValue: string,
-            handlesValue: SharedValue<HandleBuffer>,
-            widthsValue: SharedValue<LayoutBuffer>,
-            heightsValue: SharedValue<LayoutBuffer>,
-            dataValue: SharedValue<number[]>,
-            versionValue: SharedValue<number>
-          ) => {
-            'worklet';
-            handlesValue.value = nextHandleIds;
-            widthsValue.value = nextWidths;
-            heightsValue.value = nextHeights;
-            dataValue.modify(indices => {
-              writeIndices(indices, nextIndices);
-              return indices;
-            });
-            versionValue.value += 1;
-            metricText.value = metricValue;
-          }
-        )(
-          handleIds,
-          widths,
-          heights,
-          FULL_MESSAGE_INDICES,
-          layoutMetricText,
-          nextMetric,
-          messageHandles,
-          bubbleWidths,
-          bubbleHeights,
-          data,
-          itemMetricsVersion
-        );
-
-        lastMeasuredTextWidthRef.current = measuredTextWidth;
-      }
-  );
-
   useEffect(() => {
     return () => {
       const handles = handlesRef.current;
@@ -227,9 +117,9 @@ export function ChatDemo({ isActive = true }: { isActive?: boolean }) {
     const handles = handlesRef.current;
 
     if (!handles && data.value.length === 0) {
-      scheduleOnRuntime(
+      runOnRuntimeAsync(
         workletRuntime,
-        (currentJobId, texts, roles, currentTextWidth, currentBubbleMaxWidth, previewCount, onPreview) => {
+        (texts, roles, currentTextWidth, currentBubbleMaxWidth, previewCount) => {
           'worklet';
 
           const previewTexts = texts.slice(0, previewCount);
@@ -241,49 +131,98 @@ export function ChatDemo({ isActive = true }: { isActive?: boolean }) {
           const previewHandleIds = buildHandleBufferInRuntime(previewHandles);
           const geometry = buildChatGeometryBuffersInRuntime(previewLayouts, currentBubbleMaxWidth);
 
-          scheduleOnRN(onPreview, currentJobId, previewHandleIds, geometry.widths, geometry.heights);
+          return {
+            handles: previewHandles,
+            handleIds: previewHandleIds,
+            heights: geometry.heights,
+            widths: geometry.widths,
+          };
         },
-        jobId,
         MESSAGE_TEXTS,
         MESSAGE_ROLES,
         textWidth,
         bubbleMaxWidth,
-        PREVIEW_MESSAGE_COUNT,
-        applyPreview
-      );
+        PREVIEW_MESSAGE_COUNT
+      ).then(preview => {
+        if (jobId !== jobRef.current) {
+          if (preview.handles.length > 0) releaseMany(preview.handles);
+          return;
+        }
+
+        const previousHandles = handlesRef.current;
+        if (previousHandles && previousHandles !== preview.handles) {
+          releaseMany(previousHandles);
+        }
+
+        handlesRef.current = preview.handles;
+        messageHandles.value = preview.handleIds;
+        bubbleWidths.value = preview.widths;
+        bubbleHeights.value = preview.heights;
+        data.value = Array.from(PREVIEW_MESSAGE_INDICES);
+        itemMetricsVersion.value += 1;
+        layoutMetricText.value = '...';
+      });
     }
 
-    scheduleOnRuntime(
+    runOnRuntimeAsync(
       workletRuntime,
-      (currentJobId, texts, roles, currentHandles, currentTextWidth, currentBubbleMaxWidth, onRows) => {
+      (texts, roles, currentHandles, currentTextWidth, currentBubbleMaxWidth) => {
         'worklet';
 
-        const start = performance.now();
+        const start = Date.now();
         const handles = currentHandles.length > 0 ? currentHandles : prepareChatHandles(texts, roles);
         const layouts = layoutBatchInRuntime(handles, { width: currentTextWidth });
         const geometry = buildChatGeometryBuffersInRuntime(layouts, currentBubbleMaxWidth);
         const handleIds = buildHandleBufferInRuntime(handles);
 
-        scheduleOnRN(
-          onRows,
-          currentJobId,
-          currentHandles.length > 0 ? null : handles,
+        return {
           handleIds,
-          geometry.widths,
-          geometry.heights,
-          currentTextWidth,
-          performance.now() - start
-        );
+          handles: currentHandles.length > 0 ? null : handles,
+          heights: geometry.heights,
+          measuredTextWidth: currentTextWidth,
+          nextLayoutMs: Date.now() - start,
+          widths: geometry.widths,
+        };
       },
-      jobId,
       MESSAGE_TEXTS,
       MESSAGE_ROLES,
       handles ?? EMPTY_HANDLES,
       textWidth,
-      bubbleMaxWidth,
-      applyRows
-    );
-  }, [applyPreview, applyRows, bubbleMaxWidth, data, isActive, layoutMetricText, textWidth, workletRuntime]);
+      bubbleMaxWidth
+    ).then(rows => {
+      if (jobId !== jobRef.current) {
+        if (rows.handles && rows.handles.length > 0) releaseMany(rows.handles);
+        return;
+      }
+
+      if (rows.handles && rows.handles.length > 0) {
+        const previousHandles = handlesRef.current;
+        if (previousHandles && previousHandles !== rows.handles) {
+          releaseMany(previousHandles);
+        }
+        handlesRef.current = rows.handles;
+      }
+
+      messageHandles.value = rows.handleIds;
+      bubbleWidths.value = rows.widths;
+      bubbleHeights.value = rows.heights;
+      data.value = Array.from(FULL_MESSAGE_INDICES);
+      itemMetricsVersion.value += 1;
+      layoutMetricText.value = `${rows.nextLayoutMs.toFixed(1)}ms`;
+      lastMeasuredTextWidthRef.current = rows.measuredTextWidth;
+    });
+  }, [
+    bubbleHeights,
+    bubbleMaxWidth,
+    bubbleWidths,
+    data,
+    isActive,
+    itemMetricsVersion,
+    layoutMetricText,
+    messageHandles,
+    textWidth,
+    workletRuntime,
+  ]);
 
   const keyExtractor = useCallback((messageIndex: number) => {
     'worklet';
@@ -429,15 +368,6 @@ function buildHandleBufferInRuntime(handles: readonly PreparedTextHandle[]): Han
   return buildHandleBuffer(handles);
 }
 
-function writeIndices(target: number[], source: readonly number[]): void {
-  'worklet';
-  target.length = source.length;
-
-  for (let index = 0; index < source.length; index += 1) {
-    target[index] = source[index] ?? -1;
-  }
-}
-
 function buildChatGeometryBuffersInRuntime(
   layouts: readonly TextLayout[],
   bubbleMaxWidth: number
@@ -513,10 +443,23 @@ function FallbackBubbleText({
     const index = messageIndex.value;
     return messages[index]?.text ?? '';
   });
+  const assistantStyle = useAnimatedStyle(() => ({
+    opacity: role.value === 'assistant' ? 1 : 0,
+  }));
+  const userStyle = useAnimatedStyle(() => ({
+    opacity: role.value === 'user' ? 1 : 0,
+  }));
 
-  const textStyle = useBubbleTextStyle(role);
-
-  return <WorkletText style={[styles.messageText, textStyle]}>{text}</WorkletText>;
+  return (
+    <View style={styles.fallbackTextFrame}>
+      <Animated.View pointerEvents="none" style={[styles.fallbackTextLayer, assistantStyle]}>
+        <WorkletText style={[styles.messageText, styles.assistantMessageText]}>{text}</WorkletText>
+      </Animated.View>
+      <Animated.View pointerEvents="none" style={[styles.fallbackTextLayer, userStyle]}>
+        <WorkletText style={[styles.messageText, styles.userMessageText]}>{text}</WorkletText>
+      </Animated.View>
+    </View>
+  );
 }
 
 function useBubbleStyle(
@@ -550,12 +493,6 @@ function useBubbleStyle(
       width: bubbleWidth,
     };
   }, [listWidth]);
-}
-
-function useBubbleTextStyle(role: DerivedValue<'assistant' | 'user'>) {
-  return useAnimatedStyle(() => ({
-    color: role.value === 'user' ? '#ffffff' : demoTheme.textPrimary,
-  }));
 }
 
 function Metric({ label, value }: { label: string; value: SharedValue<string> | string }) {
@@ -593,6 +530,9 @@ const styles = StyleSheet.create({
     paddingVertical: BUBBLE_PADDING_Y,
     position: 'absolute',
     top: 0,
+  },
+  assistantMessageText: {
+    color: demoTheme.textPrimary,
   },
   composerAction: {
     alignItems: 'center',
@@ -655,6 +595,16 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     marginTop: -1,
   },
+  fallbackTextFrame: {
+    flex: 1,
+  },
+  fallbackTextLayer: {
+    bottom: 0,
+    left: 0,
+    position: 'absolute',
+    right: 0,
+    top: 0,
+  },
   eyebrow: {
     color: demoTheme.accentBlue,
     fontSize: 11,
@@ -715,6 +665,9 @@ const styles = StyleSheet.create({
   root: {
     backgroundColor: demoTheme.root,
     flex: 1,
+  },
+  userMessageText: {
+    color: '#ffffff',
   },
   topOverlay: {
     gap: 12,

@@ -146,7 +146,7 @@ internal object RNPretextBindings {
             tabularNumbers = tabularNumbers,
             textBreakStrategy = textBreakStrategy,
         )
-        return Layout.getDesiredWidth(prepared.textWithLineHeight, prepared.textPaint).toDp()
+        return Layout.getDesiredWidth(prepared.textWithLineHeight, prepared.textPaint).toDouble().toDp()
     }
 
     @JvmStatic

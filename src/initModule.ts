@@ -106,7 +106,11 @@ export function initRNPretext(): RNPretextRuntime {
 
     const didInstall = installModule.install();
     if (!didInstall) {
-      throw new Error('RNPretext: Native install() returned false.');
+      try {
+        return buildRuntime();
+      } catch {
+        throw new Error('RNPretext: Native install() returned false.');
+      }
     }
 
     return buildRuntime();

@@ -3,7 +3,7 @@
 #import <React/RCTViewManager.h>
 
 @interface RNPretextTextView : UIView
-@property (nonatomic, copy) NSString *color;
+@property (nonatomic, strong) UIColor *color;
 @property (nonatomic, copy) NSString *ellipsizeMode;
 @property (nonatomic, copy) NSString *fontFamily;
 @property (nonatomic, assign) CGFloat fontSize;
@@ -50,9 +50,9 @@
   [self updateLabel];
 }
 
-- (void)setColor:(NSString *)color
+- (void)setColor:(UIColor *)color
 {
-  _color = [color copy];
+  _color = color;
   [self updateLabel];
 }
 
@@ -158,9 +158,8 @@
   NSMutableDictionary<NSAttributedStringKey, id> *attributes =
       [NSMutableDictionary dictionaryWithObject:font forKey:NSFontAttributeName];
 
-  if (_color.length > 0) {
-    UIColor *textColor = [RCTConvert UIColor:_color];
-    if (textColor != nil) attributes[NSForegroundColorAttributeName] = textColor;
+  if (_color != nil) {
+    attributes[NSForegroundColorAttributeName] = _color;
   }
 
   if (_letterSpacing != 0) {
@@ -198,7 +197,7 @@ RCT_EXPORT_MODULE(RNPretextTextView)
   return [RNPretextTextView new];
 }
 
-RCT_EXPORT_VIEW_PROPERTY(color, NSString)
+RCT_EXPORT_VIEW_PROPERTY(color, UIColor)
 RCT_EXPORT_VIEW_PROPERTY(ellipsizeMode, NSString)
 RCT_EXPORT_VIEW_PROPERTY(fontFamily, NSString)
 RCT_EXPORT_VIEW_PROPERTY(fontSize, CGFloat)

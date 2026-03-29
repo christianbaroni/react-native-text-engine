@@ -1,7 +1,6 @@
 import React from 'react';
-import { Platform, StyleSheet, View, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
-import AnimateableText from 'react-native-animateable-text';
-import { TextView, type TextViewProps } from 'react-native-pretext';
+import { processColor, StyleSheet, View, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
+import { TextView } from 'react-native-pretext';
 import Animated, { type DerivedValue, type SharedValue, useAnimatedProps } from 'react-native-reanimated';
 
 type SharedTextValue =
@@ -25,47 +24,30 @@ type WorkletTextProps = {
   testID?: string;
 };
 
-const AnimatedNativeTextView =
-  Platform.OS === 'ios' ? Animated.createAnimatedComponent(TextView as React.ComponentType<TextViewProps>) : null;
+const AnimatedNativeTextView = Animated.createAnimatedComponent(TextView as React.ComponentType<Record<string, unknown>>);
 
-export function WorkletText({ children, ellipsizeMode, numberOfLines, selectable, style, testID }: WorkletTextProps) {
+export function WorkletText({ children, ellipsizeMode, numberOfLines, selectable: _selectable, style, testID }: WorkletTextProps) {
   const animatedProps = useAnimatedProps(() => {
     const text = typeof children === 'string' ? children : children == null ? '' : (children.value ?? '');
 
     return { text };
   });
 
-  if (Platform.OS === 'ios') {
-    const flattened = StyleSheet.flatten(style) ?? {};
-    const containerStyle = buildContainerStyle(flattened);
-    const textProps = buildNativeTextProps(flattened);
-
-    if (!AnimatedNativeTextView) return null;
-
-    return (
-      <View style={containerStyle}>
-        <AnimatedNativeTextView
-          animatedProps={animatedProps}
-          {...textProps}
-          ellipsizeMode={ellipsizeMode}
-          numberOfLines={numberOfLines}
-          style={styles.fill}
-          testID={testID}
-        />
-      </View>
-    );
-  }
+  const flattened = StyleSheet.flatten(style) ?? {};
+  const containerStyle = buildContainerStyle(flattened);
+  const textProps = buildNativeTextProps(flattened);
 
   return (
-    <AnimateableText
-      allowFontScaling={false}
-      animatedProps={animatedProps}
-      ellipsizeMode={ellipsizeMode}
-      numberOfLines={numberOfLines}
-      selectable={selectable}
-      style={style}
-      testID={testID}
-    />
+    <View style={containerStyle}>
+      <AnimatedNativeTextView
+        animatedProps={animatedProps}
+        {...textProps}
+        ellipsizeMode={ellipsizeMode}
+        numberOfLines={numberOfLines}
+        style={styles.fill}
+        testID={testID}
+      />
+    </View>
   );
 }
 
@@ -89,9 +71,9 @@ function buildContainerStyle(style: TextStyle): ViewStyle {
   };
 }
 
-function buildNativeTextProps(style: TextStyle): Omit<TextViewProps, 'ellipsizeMode' | 'numberOfLines' | 'style' | 'text'> {
+function buildNativeTextProps(style: TextStyle): Record<string, unknown> {
   return {
-    color: typeof style.color === 'string' ? style.color : undefined,
+    color: style.color == null ? undefined : processColor(style.color),
     fontFamily: style.fontFamily,
     fontSize: typeof style.fontSize === 'number' ? style.fontSize : undefined,
     fontStyle: style.fontStyle,

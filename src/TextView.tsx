@@ -1,8 +1,16 @@
 import React from 'react';
-import { Platform, requireNativeComponent, type StyleProp, type ViewProps, type ViewStyle } from 'react-native';
+import {
+  Platform,
+  processColor,
+  requireNativeComponent,
+  type ColorValue,
+  type StyleProp,
+  type ViewProps,
+  type ViewStyle,
+} from 'react-native';
 
 export type TextViewProps = ViewProps & {
-  color?: string;
+  color?: ColorValue;
   ellipsizeMode?: 'clip' | 'head' | 'middle' | 'tail';
   fontFamily?: string;
   fontSize?: number;
@@ -16,9 +24,12 @@ export type TextViewProps = ViewProps & {
   textAlign?: 'auto' | 'center' | 'justify' | 'left' | 'right';
 };
 
-const IOSTextView = requireNativeComponent<TextViewProps>('RNPretextTextView');
+const NativeTextView = requireNativeComponent<TextViewProps>('RNPretextTextView');
 
 export const TextView: React.ComponentType<TextViewProps> =
-  Platform.OS === 'ios'
-    ? (IOSTextView as unknown as React.ComponentType<TextViewProps>)
-    : () => null;
+  Platform.OS === 'ios' || Platform.OS === 'android' ? (NativeTextView as unknown as React.ComponentType<TextViewProps>) : () => null;
+
+export function resolveTextViewColor(color: ColorValue | undefined): ColorValue | number | undefined {
+  if (color == null) return undefined;
+  return typeof color === 'string' ? (processColor(color) ?? undefined) : color;
+}

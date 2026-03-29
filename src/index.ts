@@ -76,7 +76,10 @@ export function layout(handle: PreparedTextHandle, options: LayoutOptions): Text
  * Lays out many prepared text blocks at the given width in one native call.
  */
 export function layoutBatch(handles: readonly PreparedTextHandle[], options: LayoutOptions): TextLayout[] {
-  return getRNPretextRuntime().layoutBatch(handles.map(handle => handle.id), options);
+  return getRNPretextRuntime().layoutBatch(
+    handles.map(handle => handle.id),
+    options
+  );
 }
 
 /**

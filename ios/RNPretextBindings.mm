@@ -185,6 +185,44 @@ CGFloat resolveLineHeight(const TextMeasureStyle& style, UIFont *font) {
   return lineHeight;
 }
 
+UIColor *resolveColorString(const std::string& value) {
+  NSString *string = toNSString(value);
+  if (string.length == 0) return nil;
+
+  if ([string hasPrefix:@"#"]) {
+    NSString *hex = [string substringFromIndex:1];
+    unsigned long long parsed = 0;
+    NSScanner *scanner = [NSScanner scannerWithString:hex];
+    if (![scanner scanHexLongLong:&parsed]) return nil;
+
+    CGFloat alpha = 1;
+    CGFloat red = 0;
+    CGFloat green = 0;
+    CGFloat blue = 0;
+
+    if (hex.length == 3) {
+      red = ((parsed >> 8) & 0xF) / 15.0;
+      green = ((parsed >> 4) & 0xF) / 15.0;
+      blue = (parsed & 0xF) / 15.0;
+    } else if (hex.length == 6) {
+      red = ((parsed >> 16) & 0xFF) / 255.0;
+      green = ((parsed >> 8) & 0xFF) / 255.0;
+      blue = (parsed & 0xFF) / 255.0;
+    } else if (hex.length == 8) {
+      alpha = ((parsed >> 24) & 0xFF) / 255.0;
+      red = ((parsed >> 16) & 0xFF) / 255.0;
+      green = ((parsed >> 8) & 0xFF) / 255.0;
+      blue = (parsed & 0xFF) / 255.0;
+    } else {
+      return nil;
+    }
+
+    return [UIColor colorWithRed:red green:green blue:blue alpha:alpha];
+  }
+
+  return [RCTConvert UIColor:string];
+}
+
 NSAttributedString *buildAttributedText(NSString *text, const TextMeasureStyle& style, CGFloat *fallbackLineHeight) {
   UIFont *font = resolveFont(style);
   CGFloat lineHeight = resolveLineHeight(style, font);
@@ -194,7 +232,7 @@ NSAttributedString *buildAttributedText(NSString *text, const TextMeasureStyle& 
       [NSMutableDictionary dictionaryWithObject:font forKey:NSFontAttributeName];
 
   if (style.hasColor) {
-    UIColor *color = [RCTConvert UIColor:toNSString(style.color)];
+    UIColor *color = resolveColorString(style.color);
     if (color != nil) attributes[NSForegroundColorAttributeName] = color;
   }
 

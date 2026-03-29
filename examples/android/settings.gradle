@@ -1,6 +1,15 @@
 pluginManagement { includeBuild("../node_modules/@react-native/gradle-plugin") }
 plugins { id("com.facebook.react.settings") }
-extensions.configure(com.facebook.react.ReactSettingsExtension){ ex -> ex.autolinkLibrariesFromCommand() }
+def nodeExecutable = System.getenv("NODE_BINARY") ?: "/Users/christian/.nvm/versions/node/v22.21.1/bin/node"
+def reactNativeCliFile = file("../node_modules/@react-native-community/cli/build/bin.js")
+extensions.configure(com.facebook.react.ReactSettingsExtension){ ex ->
+  ex.autolinkLibrariesFromCommand([
+    nodeExecutable,
+    "--preserve-symlinks",
+    reactNativeCliFile.absolutePath,
+    "config",
+  ])
+}
 rootProject.name = 'example'
 include ':app'
 includeBuild('../node_modules/@react-native/gradle-plugin')
