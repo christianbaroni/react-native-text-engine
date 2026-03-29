@@ -3,12 +3,12 @@ import { Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-na
 import {
   PreparedTextView,
   TextView,
-  releaseMany,
+  releasePreparedText,
   type PreparedTextHandle,
   type TextLayout,
   type TextMeasureStyle,
 } from 'react-native-pretext';
-import { layoutBatchInRuntime, measureBatchInRuntime, prepareBatchInRuntime } from 'react-native-pretext/worklets';
+import { createPreparedTextsInRuntime, layoutPreparedTextsInRuntime, measureTextsInRuntime } from 'react-native-pretext/worklets';
 import Animated, {
   type DerivedValue,
   type SharedValue,
@@ -121,7 +121,7 @@ export function ChatDemo({ isActive = true }: { isActive?: boolean }) {
       const handles = handlesRef.current;
       if (!handles || handles.length === 0) return;
       handlesRef.current = null;
-      releaseMany(handles);
+      releasePreparedText(handles);
     };
   }, []);
 
@@ -145,7 +145,7 @@ export function ChatDemo({ isActive = true }: { isActive?: boolean }) {
 
           const previewTexts = texts.slice(0, previewCount);
           const previewRoles = roles.slice(0, previewCount);
-          const previewLayouts = measureBatchInRuntime(previewTexts, CHAT_STYLE, {
+          const previewLayouts = measureTextsInRuntime(previewTexts, CHAT_STYLE, {
             width: currentTextWidth,
           });
           const previewHandles = prepareChatHandles(previewTexts, previewRoles);
@@ -166,13 +166,13 @@ export function ChatDemo({ isActive = true }: { isActive?: boolean }) {
         PREVIEW_MESSAGE_COUNT
       ).then(preview => {
         if (jobId !== jobRef.current) {
-          if (preview.handles.length > 0) releaseMany(preview.handles);
+          if (preview.handles.length > 0) releasePreparedText(preview.handles);
           return;
         }
 
         const previousHandles = handlesRef.current;
         if (previousHandles && previousHandles !== preview.handles) {
-          releaseMany(previousHandles);
+          releasePreparedText(previousHandles);
         }
 
         handlesRef.current = preview.handles;
@@ -192,7 +192,7 @@ export function ChatDemo({ isActive = true }: { isActive?: boolean }) {
 
         const start = Date.now();
         const handles = currentHandles.length > 0 ? currentHandles : prepareChatHandles(texts, roles);
-        const layouts = layoutBatchInRuntime(handles, { width: currentTextWidth });
+        const layouts = layoutPreparedTextsInRuntime(handles, { width: currentTextWidth });
         const geometry = buildChatGeometryBuffersInRuntime(layouts, currentBubbleMaxWidth);
         const handleIds = buildHandleBufferInRuntime(handles);
 
@@ -212,14 +212,14 @@ export function ChatDemo({ isActive = true }: { isActive?: boolean }) {
       bubbleMaxWidth
     ).then(rows => {
       if (jobId !== jobRef.current) {
-        if (rows.handles && rows.handles.length > 0) releaseMany(rows.handles);
+        if (rows.handles && rows.handles.length > 0) releasePreparedText(rows.handles);
         return;
       }
 
       if (rows.handles && rows.handles.length > 0) {
         const previousHandles = handlesRef.current;
         if (previousHandles && previousHandles !== rows.handles) {
-          releaseMany(previousHandles);
+          releasePreparedText(previousHandles);
         }
         handlesRef.current = rows.handles;
       }
@@ -359,8 +359,8 @@ function prepareChatHandles(texts: readonly string[], roles: readonly number[]):
   }
 
   const handles = new Array<PreparedTextHandle>(texts.length);
-  const assistantHandles = prepareBatchInRuntime(assistantTexts, ASSISTANT_CHAT_STYLE);
-  const userHandles = prepareBatchInRuntime(userTexts, USER_CHAT_STYLE);
+  const assistantHandles = createPreparedTextsInRuntime(assistantTexts, ASSISTANT_CHAT_STYLE);
+  const userHandles = createPreparedTextsInRuntime(userTexts, USER_CHAT_STYLE);
 
   for (let index = 0; index < assistantIndices.length; index += 1) {
     handles[assistantIndices[index] ?? 0] = assistantHandles[index];
@@ -378,7 +378,7 @@ function buildHandleBuffer(handles: readonly PreparedTextHandle[]): HandleBuffer
   const ids = new Float64Array(handles.length);
 
   for (let index = 0; index < handles.length; index += 1) {
-    ids[index] = handles[index]?.id ?? 0;
+    ids[index] = handles[index]?.handle ?? 0;
   }
 
   return ids;

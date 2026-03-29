@@ -15,7 +15,7 @@ This package gives you a native primitive for each case.
 
 Prepared text is for normal flowing text.
 
-You prepare text and typography once, get back a native handle, and ask the native text engine to lay that handle out at different widths later.
+You create a prepared text once, then ask the native text engine to lay that same text out at different widths later.
 
 Use it for:
 
@@ -67,10 +67,10 @@ pod install
 
 ## Prepared text
 
-### Prepare once, layout many times
+### Create once, layout many times
 
 ```ts
-import { layout, prepare, release, type TextMeasureStyle } from 'react-native-pretext';
+import { createPreparedText, type TextMeasureStyle } from 'react-native-pretext';
 
 const style: TextMeasureStyle = {
   fontFamily: 'SF Pro Rounded',
@@ -80,9 +80,9 @@ const style: TextMeasureStyle = {
   lineHeight: 24,
 };
 
-const message = prepare('Hello world', style);
+const message = createPreparedText('Hello world', style);
 
-const metrics = layout(message, {
+const metrics = message.layout({
   width: 320,
   maxLines: 3,
   ellipsizeMode: 'tail',
@@ -93,28 +93,28 @@ metrics.height;
 metrics.lineCount;
 metrics.lastLineWidth;
 
-release(message);
+message.release();
 ```
 
 The split is simple:
 
-- `prepare()` owns text and typography.
-- `layout()` owns width-dependent results.
+- `createPreparedText()` owns text and typography.
+- `message.layout()` owns width-dependent results.
 
 ### One-shot measurement
 
-If you do not need a persistent handle:
+If you do not need a persistent resource:
 
 ```ts
-import { measure, measureWidth } from 'react-native-pretext';
+import { measureText, measureTextWidth } from 'react-native-pretext';
 
-const width = measureWidth('123.45', {
+const width = measureTextWidth('123.45', {
   fontSize: 17,
   fontWeight: '700',
   tabularNumbers: true,
 });
 
-const block = measure('Long paragraph...', { fontSize: 17, lineHeight: 24 }, { width: 320 });
+const block = measureText('Long paragraph...', { fontSize: 17, lineHeight: 24 }, { width: 320 });
 ```
 
 ### Inline runs
@@ -122,7 +122,7 @@ const block = measure('Long paragraph...', { fontSize: 17, lineHeight: 24 }, { w
 Prepared text can include inline style overrides inside one string:
 
 ```ts
-import { prepare, type TextMeasureRun } from 'react-native-pretext';
+import { createPreparedText, type TextMeasureRun } from 'react-native-pretext';
 
 const text = 'Ship bold code exactly';
 const runs: readonly TextMeasureRun[] = [
@@ -130,7 +130,7 @@ const runs: readonly TextMeasureRun[] = [
   { start: 10, end: 14, style: { fontFamily: 'Menlo' } },
 ];
 
-const prepared = prepare(text, { fontSize: 17, lineHeight: 24 }, runs);
+const prepared = createPreparedText(text, { fontSize: 17, lineHeight: 24 }, runs);
 ```
 
 Runs are UTF-16 ranges into the source string. They must be sorted and non-overlapping.
@@ -140,12 +140,12 @@ Runs are UTF-16 ranges into the source string. They must be sorted and non-overl
 For large collections:
 
 ```ts
-import { layoutBatch, prepareBatch, releaseMany } from 'react-native-pretext';
+import { createPreparedText, layoutPreparedText, releasePreparedText } from 'react-native-pretext';
 
-const prepared = prepareBatch(messages, style);
-const layouts = layoutBatch(prepared, { width: contentWidth });
+const prepared = createPreparedText(messages, style);
+const layouts = layoutPreparedText(prepared, { width: contentWidth });
 
-releaseMany(prepared);
+releasePreparedText(prepared);
 ```
 
 ### Per-line geometry
@@ -153,20 +153,18 @@ releaseMany(prepared);
 If you need exact line metadata:
 
 ```ts
-import { layoutLines, layoutNextLine } from 'react-native-pretext';
-
-const lines = layoutLines(message, { width: 320 });
-const next = layoutNextLine(message, 0, 220);
+const lines = message.lines({ width: 320 });
+const next = message.nextLine(0, 220);
 ```
 
-Use `layoutLines()` when one width applies to the whole block. Use `layoutNextLine()` when width changes line by line.
+Use `message.lines()` when one width applies to the whole block. Use `message.nextLine()` when width changes line by line.
 
 ## Glyph fields
 
 Create a glyph field when you have a fixed cell grid and a small style palette.
 
 ```ts
-import { GlyphFieldView, createGlyphField, releaseGlyphField, updateGlyphField, type GlyphFieldVariant } from 'react-native-pretext';
+import { GlyphFieldView, createGlyphField, type GlyphFieldVariant } from 'react-native-pretext';
 
 const variants: readonly GlyphFieldVariant[] = [
   { color: 'rgba(196,163,90,0.18)', fontWeight: '300' },
@@ -187,16 +185,16 @@ const cellCount = 40 * 24;
 const glyphs = ' '.repeat(cellCount);
 const variantIndices = new Uint8Array(cellCount);
 
-updateGlyphField(field, glyphs, variantIndices);
+field.update(glyphs, variantIndices);
 
 // Later:
-releaseGlyphField(field);
+field.release();
 ```
 
 Render the field from its handle:
 
 ```tsx
-<GlyphFieldView handle={field.id} style={{ width: 360, height: 480 }} />
+<GlyphFieldView handle={field.handle} style={{ width: 360, height: 480 }} />
 ```
 
 The update contract is strict:
@@ -231,9 +229,9 @@ The core API is synchronous and React-free, so it can be used from worklets afte
 If UI worklets will call pretext directly, do this once during startup:
 
 ```ts
-import { installRNPretextInUIRuntime } from 'react-native-pretext/worklets';
+import { installPretextInUIRuntime } from 'react-native-pretext/worklets';
 
-installRNPretextInUIRuntime();
+installPretextInUIRuntime();
 ```
 
 ### Dedicated worklet runtime
@@ -241,18 +239,18 @@ installRNPretextInUIRuntime();
 If you want a separate runtime for text-heavy work:
 
 ```ts
-import { createRNPretextWorkletRuntime } from 'react-native-pretext/worklets';
+import { createPretextRuntime } from 'react-native-pretext/worklets';
 
-const runtime = createRNPretextWorkletRuntime({ name: 'pretext-layout' });
+const runtime = createPretextRuntime({ name: 'pretext-layout' });
 ```
 
 ### Worklet helpers
 
-The worklet entry currently exposes:
+The worklet entry uses plain handle tokens so results can move across runtimes. It currently exposes:
 
-- `prepareBatchInRuntime()`
-- `measureBatchInRuntime()`
-- `layoutBatchInRuntime()`
+- `createPreparedTextsInRuntime()`
+- `measureTextsInRuntime()`
+- `layoutPreparedTextsInRuntime()`
 - `updateGlyphFieldInRuntime()`
 
 Example:
@@ -260,16 +258,16 @@ Example:
 ```ts
 import { updateGlyphFieldInRuntime } from 'react-native-pretext/worklets';
 
-updateGlyphFieldInRuntime(field.id, glyphs, variantIndices);
+updateGlyphFieldInRuntime(field.handle, glyphs, variantIndices);
 ```
 
 ## Lifecycle
 
 Handles own native memory, so cleanup is explicit:
 
-- `release()` for one prepared text handle
-- `releaseMany()` for many prepared text handles
-- `releaseGlyphField()` for one glyph field handle
+- `prepared.release()` for one prepared text
+- `releasePreparedText()` for one or many prepared texts
+- `field.release()` for one glyph field
 
 ## Style surface
 

@@ -1,5 +1,5 @@
 import { Platform } from 'react-native';
-import { measureWidth, type TextMeasureStyle } from 'react-native-pretext';
+import { measureTextWidth, type TextMeasureStyle } from 'react-native-pretext';
 
 type FontStyleVariant = 'italic' | 'normal';
 
@@ -178,7 +178,7 @@ function createPalette(): readonly PaletteEntry[] {
         const char = CHARSET[index];
         if (!char || char === ' ') continue;
 
-        const width = measureWidth(char, {
+        const width = measureTextWidth(char, {
           ...FIELD_STYLE,
           fontStyle,
           fontWeight,

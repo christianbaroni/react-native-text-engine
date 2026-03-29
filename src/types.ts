@@ -1,21 +1,21 @@
 /**
- * Opaque identifier for a prepared native text block.
+ * Serializable handle for one prepared native text block.
  *
- * Handles are returned by `prepare()` / `prepareBatch()` and must be released
- * when the caller no longer needs them.
+ * `PreparedText` implements this shape, and the worklet helpers return it for
+ * cross-runtime transport.
  */
 export type PreparedTextHandle = Readonly<{
-  id: number;
+  handle: number;
 }>;
 
 /**
- * Opaque identifier for a native glyph-field surface.
+ * Serializable handle for one native glyph field.
  *
- * Handles are returned by `createGlyphField()` and must be released when the
- * caller no longer needs the field.
+ * `GlyphField` implements this shape, and worklet helpers accept it anywhere a
+ * numeric glyph-field handle is valid.
  */
 export type GlyphFieldHandle = Readonly<{
-  id: number;
+  handle: number;
 }>;
 
 /**
@@ -130,7 +130,7 @@ export type GlyphFieldVariant = {
  * Stable geometry and styling contract for a native glyph field.
  *
  * `columns` × `rows` defines the fixed cell count. Each cell is updated later
- * through `updateGlyphField()` with one UTF-16 code unit in `glyphs` and one
+ * through `GlyphField.update()` with one UTF-16 code unit in `glyphs` and one
  * variant index in `variantIndices`.
  */
 export type GlyphFieldConfig = {

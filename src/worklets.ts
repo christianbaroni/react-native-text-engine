@@ -8,7 +8,7 @@ declare global {
   var __RNPretextUpdateGlyphField: ((handle: number, glyphs: string, variantIndices: Uint8Array) => void) | undefined;
 }
 
-export type PretextWorkletRuntimeConfig = {
+export type PretextRuntimeConfig = {
   animationQueuePollingRate?: number;
   initializer?: () => void;
   name?: string;
@@ -19,7 +19,7 @@ export type PretextWorkletRuntimeConfig = {
 
 function buildHandle(id: number): PreparedTextHandle {
   'worklet';
-  return { id };
+  return { handle: id };
 }
 
 /**
@@ -28,7 +28,7 @@ function buildHandle(id: number): PreparedTextHandle {
  * Call this once during app startup before running pretext calls from UI
  * worklets.
  */
-export function installRNPretextInUIRuntime(): void {
+export function installPretextInUIRuntime(): void {
   const installWorkletRuntime = globalThis.__RNPretextInstallWorkletRuntime;
   if (installWorkletRuntime) {
     const didInstall = installWorkletRuntime(getUIRuntimeHolder());
@@ -49,7 +49,7 @@ export function installRNPretextInUIRuntime(): void {
  * Creates a dedicated Worklets runtime and installs `react-native-pretext`
  * into it before any caller initializer runs.
  */
-export function createRNPretextWorkletRuntime(config?: PretextWorkletRuntimeConfig): WorkletRuntime {
+export function createPretextRuntime(config?: PretextRuntimeConfig): WorkletRuntime {
   getRNPretextRuntime();
 
   const initializer = config?.initializer;
@@ -89,7 +89,7 @@ export function createRNPretextWorkletRuntime(config?: PretextWorkletRuntimeConf
  * This must be called only after `react-native-pretext` has been installed into
  * the current runtime.
  */
-export function measureBatchInRuntime(
+export function measureTextsInRuntime(
   texts: readonly string[],
   style: TextMeasureStyle | undefined,
   options: LayoutOptions,
@@ -99,7 +99,7 @@ export function measureBatchInRuntime(
 
   const measureBatch = globalThis.__RNPretextMeasureBatch;
   if (!measureBatch) {
-    throw new Error('RNPretext: measureBatchInRuntime() was called before the current runtime was installed.');
+    throw new Error('RNPretext: measureTextsInRuntime() was called before the current runtime was installed.');
   }
 
   return measureBatch(texts, style, options, runsByText);
@@ -108,7 +108,7 @@ export function measureBatchInRuntime(
 /**
  * Worklet-safe prepared-text creation against the current installed runtime.
  */
-export function prepareBatchInRuntime(
+export function createPreparedTextsInRuntime(
   texts: readonly string[],
   style?: TextMeasureStyle,
   runsByText?: readonly (readonly TextMeasureRun[] | undefined)[]
@@ -117,7 +117,7 @@ export function prepareBatchInRuntime(
 
   const prepareBatch = globalThis.__RNPretextPrepareBatch;
   if (!prepareBatch) {
-    throw new Error('RNPretext: prepareBatchInRuntime() was called before the current runtime was installed.');
+    throw new Error('RNPretext: createPreparedTextsInRuntime() was called before the current runtime was installed.');
   }
 
   return prepareBatch(texts, style, runsByText).map(buildHandle);
@@ -126,17 +126,17 @@ export function prepareBatchInRuntime(
 /**
  * Worklet-safe prepared-text layout against the current installed runtime.
  */
-export function layoutBatchInRuntime(handles: readonly PreparedTextHandle[], options: LayoutOptions): TextLayout[] {
+export function layoutPreparedTextsInRuntime(handles: readonly PreparedTextHandle[], options: LayoutOptions): TextLayout[] {
   'worklet';
 
   const layoutBatch = globalThis.__RNPretextLayoutBatch;
   if (!layoutBatch) {
-    throw new Error('RNPretext: layoutBatchInRuntime() was called before the current runtime was installed.');
+    throw new Error('RNPretext: layoutPreparedTextsInRuntime() was called before the current runtime was installed.');
   }
 
   const ids = new Array<number>(handles.length);
   for (let index = 0; index < handles.length; index += 1) {
-    ids[index] = handles[index]?.id ?? 0;
+    ids[index] = handles[index]?.handle ?? 0;
   }
 
   return layoutBatch(ids, options);
@@ -157,5 +157,5 @@ export function updateGlyphFieldInRuntime(
     throw new Error('RNPretext: updateGlyphFieldInRuntime() was called before the current runtime was installed.');
   }
 
-  updateGlyphField(typeof handle === 'number' ? handle : handle.id, glyphs, variantIndices);
+  updateGlyphField(typeof handle === 'number' ? handle : handle.handle, glyphs, variantIndices);
 }

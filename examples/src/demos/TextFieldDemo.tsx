@@ -4,8 +4,8 @@ import { useStableValue } from '@storesjs/stores';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { useFrameCallback, useSharedValue } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { GlyphFieldView, createGlyphField, releaseGlyphField, updateGlyphField } from 'react-native-pretext';
-import { installRNPretextInUIRuntime, updateGlyphFieldInRuntime } from 'react-native-pretext/worklets';
+import { GlyphFieldView, createGlyphField } from 'react-native-pretext';
+import { installPretextInUIRuntime, updateGlyphFieldInRuntime } from 'react-native-pretext/worklets';
 import {
   FIELD_STYLE,
   FIELD_VARIANTS,
@@ -54,10 +54,10 @@ export function TextFieldDemo({ isActive = true }: { isActive?: boolean }) {
   });
 
   useEffect(() => {
-    installRNPretextInUIRuntime();
+    installPretextInUIRuntime();
   }, []);
 
-  useEffect(() => () => releaseGlyphField(field), [field]);
+  useEffect(() => () => field.release(), [field]);
 
   useLayoutEffect(() => {
     active.value = isActive ? 1 : 0;
@@ -73,7 +73,7 @@ export function TextFieldDemo({ isActive = true }: { isActive?: boolean }) {
     };
 
     const frame = stepTextFieldRuntime(runtimeInput, frameBuffer, 0, { active: false, x: 0, y: 0 });
-    updateGlyphField(field, frame.glyphs, frame.variantIndices);
+    field.update(frame.glyphs, frame.variantIndices);
   }, [config.artHeight, config.artWidth, field, fieldFrame, frameBuffer, phase, runtimeInput]);
 
   const updateFieldFrame = (event: LayoutChangeEvent) => {
@@ -88,7 +88,7 @@ export function TextFieldDemo({ isActive = true }: { isActive?: boolean }) {
 
     phase.value += (frameInfo.timeSincePreviousFrame ?? 16.67) / 1000;
     const frame = stepTextFieldRuntime(runtimeInput, frameBuffer, phase.value, pointer.value);
-    updateGlyphFieldInRuntime(field.id, frame.glyphs, frame.variantIndices);
+    updateGlyphFieldInRuntime(field.handle, frame.glyphs, frame.variantIndices);
   });
 
   const dragGesture = useMemo(
@@ -126,7 +126,7 @@ export function TextFieldDemo({ isActive = true }: { isActive?: boolean }) {
       <GestureDetector gesture={dragGesture}>
         <View style={styles.stage}>
           <View onLayout={updateFieldFrame} style={[styles.textField, { height: config.artHeight, width: config.artWidth }]}>
-            <GlyphFieldView handle={field.id} style={[styles.fieldSurface, { height: config.artHeight, width: config.artWidth }]} />
+            <GlyphFieldView handle={field.handle} style={[styles.fieldSurface, { height: config.artHeight, width: config.artWidth }]} />
           </View>
         </View>
       </GestureDetector>

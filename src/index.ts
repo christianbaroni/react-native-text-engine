@@ -1,18 +1,15 @@
-import { getRNPretextRuntime } from './initModule';
 import { GlyphFieldView } from './GlyphFieldView';
+import { GlyphField, createGlyphField } from './GlyphField';
 import { PreparedTextView } from './PreparedTextView';
+import {
+  PreparedText,
+  createPreparedText,
+  layoutPreparedText,
+  measureText,
+  measureTextWidth,
+  releasePreparedText,
+} from './PreparedText';
 import { TextView } from './TextView';
-import type {
-  GlyphFieldConfig,
-  GlyphFieldHandle,
-  LayoutOptions,
-  NextTextLine,
-  PreparedTextHandle,
-  TextLayout,
-  TextLayoutLines,
-  TextMeasureRun,
-  TextMeasureStyle,
-} from './types';
 
 export type {
   GlyphFieldConfig,
@@ -31,147 +28,17 @@ export type {
 export type { GlyphFieldViewProps } from './GlyphFieldView';
 export type { PreparedTextViewProps } from './PreparedTextView';
 export type { TextViewProps, TextViewRunPayload } from './TextView';
-export { GlyphFieldView };
-export { PreparedTextView };
-export { TextView };
 
-function buildHandle(id: number): PreparedTextHandle {
-  return { id };
-}
-
-function buildGlyphFieldHandle(id: number): GlyphFieldHandle {
-  return { id };
-}
-
-/**
- * Creates a native glyph field with stable geometry and stable style variants.
- *
- * The returned handle owns the field's native caches and draw state. Update its
- * current cells later through `updateGlyphField()`.
- */
-export function createGlyphField(config: GlyphFieldConfig): GlyphFieldHandle {
-  return buildGlyphFieldHandle(getRNPretextRuntime().createGlyphField(config));
-}
-
-/**
- * Replaces the current glyph cells in a native glyph field.
- *
- * `glyphs` must contain exactly `columns * rows` UTF-16 code units, and
- * `variantIndices.length` must match that same cell count.
- */
-export function updateGlyphField(handle: GlyphFieldHandle, glyphs: string, variantIndices: Uint8Array): void {
-  getRNPretextRuntime().updateGlyphField(handle.id, glyphs, variantIndices);
-}
-
-/**
- * Releases one native glyph field handle.
- */
-export function releaseGlyphField(handle: GlyphFieldHandle): void {
-  getRNPretextRuntime().releaseGlyphField(handle.id);
-}
-
-/**
- * Prepares a text block for repeated native layout queries.
- *
- * The returned handle is opaque and must be released when the caller no longer
- * needs it. `runs` extends the base style within sorted, non-overlapping
- * UTF-16 ranges.
- */
-export function prepare(text: string, style?: TextMeasureStyle, runs?: readonly TextMeasureRun[]): PreparedTextHandle {
-  return buildHandle(getRNPretextRuntime().prepare(text, style, runs));
-}
-
-/**
- * Prepares many text blocks with the same measurement style in one native call.
- *
- * `runsByText` must align with `texts` when provided. Each entry may be
- * omitted when that text uses only the base style.
- */
-export function prepareBatch(
-  texts: readonly string[],
-  style?: TextMeasureStyle,
-  runsByText?: readonly (readonly TextMeasureRun[] | undefined)[]
-): PreparedTextHandle[] {
-  return getRNPretextRuntime().prepareBatch(texts, style, runsByText).map(buildHandle);
-}
-
-/**
- * Releases one prepared text handle.
- */
-export function release(handle: PreparedTextHandle): void {
-  getRNPretextRuntime().release(handle.id);
-}
-
-/**
- * Releases many prepared text handles in one native call.
- */
-export function releaseMany(handles: readonly PreparedTextHandle[]): void {
-  getRNPretextRuntime().releaseMany(handles.map(handle => handle.id));
-}
-
-/**
- * Measures the width of one single-line text run synchronously.
- *
- * When `runs` are provided, the returned width reflects their combined inline
- * styling against the base style.
- */
-export function measureWidth(text: string, style?: TextMeasureStyle, runs?: readonly TextMeasureRun[]): number {
-  return getRNPretextRuntime().measureWidth(text, style, runs);
-}
-
-/**
- * Measures one text block directly without keeping a prepared handle.
- */
-export function measure(
-  text: string,
-  style: TextMeasureStyle | undefined,
-  options: LayoutOptions,
-  runs?: readonly TextMeasureRun[]
-): TextLayout {
-  return getRNPretextRuntime().measure(text, style, options, runs);
-}
-
-/**
- * Measures many text blocks directly without keeping prepared handles.
- */
-export function measureBatch(
-  texts: readonly string[],
-  style: TextMeasureStyle | undefined,
-  options: LayoutOptions,
-  runsByText?: readonly (readonly TextMeasureRun[] | undefined)[]
-): TextLayout[] {
-  return getRNPretextRuntime().measureBatch(texts, style, options, runsByText);
-}
-
-/**
- * Lays out one prepared text block at the given width.
- */
-export function layout(handle: PreparedTextHandle, options: LayoutOptions): TextLayout {
-  return getRNPretextRuntime().layout(handle.id, options);
-}
-
-/**
- * Lays out many prepared text blocks at the given width in one native call.
- */
-export function layoutBatch(handles: readonly PreparedTextHandle[], options: LayoutOptions): TextLayout[] {
-  return getRNPretextRuntime().layoutBatch(
-    handles.map(handle => handle.id),
-    options
-  );
-}
-
-/**
- * Lays out the next visible line beginning at an absolute UTF-16 text offset.
- *
- * Returns `null` when the prepared text is exhausted.
- */
-export function layoutNextLine(handle: PreparedTextHandle, start: number, width: number): NextTextLine | null {
-  return getRNPretextRuntime().layoutNextLine(handle.id, start, width);
-}
-
-/**
- * Lays out one prepared text block and returns per-line geometry.
- */
-export function layoutLines(handle: PreparedTextHandle, options: LayoutOptions): TextLayoutLines {
-  return getRNPretextRuntime().layoutLines(handle.id, options);
-}
+export {
+  createGlyphField,
+  createPreparedText,
+  GlyphField,
+  GlyphFieldView,
+  layoutPreparedText,
+  measureText,
+  measureTextWidth,
+  PreparedText,
+  PreparedTextView,
+  releasePreparedText,
+  TextView,
+};
