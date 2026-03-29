@@ -54,6 +54,9 @@ export function releaseMany(handles: readonly PreparedTextHandle[]): void {
 
 /**
  * Measures the width of one single-line text run synchronously.
+ *
+ * When `runs` are provided, the returned width reflects their combined inline
+ * styling against the base style.
  */
 export function measureWidth(text: string, style?: TextMeasureStyle, runs?: readonly TextMeasureRun[]): number {
   return getRNPretextRuntime().measureWidth(text, style, runs);

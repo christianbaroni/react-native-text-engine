@@ -593,8 +593,17 @@ RNPretextPreparedText *buildPreparedText(
     const TextMeasureStyle& baseStyle,
     const ResolvedTextStyle& resolvedBaseStyle,
     const std::vector<TextMeasureRun>& runs) {
+  NSAttributedString *baseAttributedText = buildAttributedText(text, resolvedBaseStyle);
+  if (runs.empty()) {
+    RNPretextPreparedText *prepared = [[RNPretextPreparedText alloc] init];
+    prepared.text = text;
+    prepared.attributedText = baseAttributedText;
+    prepared.fallbackLineHeight = resolvedBaseStyle.fallbackLineHeight;
+    return prepared;
+  }
+
   NSMutableAttributedString *attributedText =
-      [[NSMutableAttributedString alloc] initWithAttributedString:buildAttributedText(text, resolvedBaseStyle)];
+      [[NSMutableAttributedString alloc] initWithAttributedString:baseAttributedText];
 
   for (const TextMeasureRun& run : runs) {
     TextMeasureStyle mergedStyle = mergeRunStyle(baseStyle, run.style);

@@ -127,6 +127,8 @@ const layout = measure(text, style, { width: 320 }, runs);
 
 Runs are UTF-16 offsets into the source string.
 They must be sorted and non-overlapping.
+When passed to `measureWidth`, the returned width reflects the combined
+single-line effect of the base style plus all inline runs.
 
 ### Batch work
 
