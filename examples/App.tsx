@@ -1,5 +1,5 @@
 import React, { useLayoutEffect, useState } from 'react';
-import { StatusBar, StyleSheet, Text, View } from 'react-native';
+import { Platform, StatusBar, StyleSheet, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { ChatDemo } from './src/demos/ChatDemo';
 import { TextFieldDemo } from './src/demos/TextFieldDemo';
@@ -26,8 +26,7 @@ function App(): React.JSX.Element {
       <StatusBar barStyle="light-content" />
       <GestureHandlerRootView style={styles.root}>
         <View style={styles.shell}>
-          <View pointerEvents="box-none" style={styles.nav}>
-            <Text style={styles.brand}>react-native-pretext</Text>
+          <View pointerEvents="box-none" style={[styles.nav, demo === 'chat' ? styles.navRaised : null]}>
             <PillSwitch options={DEMO_OPTIONS} onChange={uiActions.setDemo} value={demo} />
           </View>
           <View style={styles.content}>
@@ -53,13 +52,6 @@ function App(): React.JSX.Element {
 }
 
 const styles = StyleSheet.create({
-  brand: {
-    color: demoTheme.textTertiary,
-    fontSize: 12,
-    fontWeight: '800',
-    letterSpacing: 0.6,
-    textTransform: 'uppercase',
-  },
   content: {
     flex: 1,
     position: 'relative',
@@ -76,13 +68,15 @@ const styles = StyleSheet.create({
   },
   nav: {
     alignItems: 'center',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    left: 16,
+    bottom: Platform.OS === 'ios' ? 34 : 24,
+    justifyContent: 'center',
+    left: 0,
     position: 'absolute',
-    right: 16,
-    top: 72,
+    right: 0,
     zIndex: 10,
+  },
+  navRaised: {
+    bottom: Platform.OS === 'ios' ? 116 : 104,
   },
   root: {
     flex: 1,

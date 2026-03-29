@@ -1,5 +1,6 @@
 import React from 'react';
 import { Platform, requireNativeComponent, type ColorValue, type StyleProp, type ViewProps, type ViewStyle } from 'react-native';
+import type { TextMeasureRun } from './types';
 
 /**
  * Props for the native text display surface.
@@ -17,6 +18,7 @@ export type TextViewProps = ViewProps & {
   letterSpacing?: number;
   lineHeight?: number;
   numberOfLines?: number;
+  runs?: readonly TextMeasureRun[];
   selectable?: boolean;
   style?: StyleProp<ViewStyle>;
   text?: string;

@@ -1,6 +1,6 @@
 import React from 'react';
 import { processColor, StyleSheet, View, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
-import { TextView } from 'react-native-pretext';
+import { TextView, type TextMeasureRun } from 'react-native-pretext';
 import Animated, { type DerivedValue, type SharedValue, useAnimatedProps } from 'react-native-reanimated';
 
 type SharedTextValue =
@@ -14,11 +14,14 @@ type SharedTextValue =
   | DerivedValue<string | null | undefined>;
 
 export type WorkletTextValue = SharedTextValue | string | null | undefined;
+type SharedRunsValue = SharedValue<readonly TextMeasureRun[]> | DerivedValue<readonly TextMeasureRun[]>;
+type WorkletTextRuns = SharedRunsValue | readonly TextMeasureRun[] | null | undefined;
 
 type WorkletTextProps = {
   children: WorkletTextValue;
   ellipsizeMode?: 'clip' | 'head' | 'middle' | 'tail';
   numberOfLines?: number;
+  runs?: WorkletTextRuns;
   selectable?: boolean;
   style?: StyleProp<TextStyle>;
   testID?: string;
@@ -26,11 +29,12 @@ type WorkletTextProps = {
 
 const AnimatedNativeTextView = Animated.createAnimatedComponent(TextView as React.ComponentType<Record<string, unknown>>);
 
-export function WorkletText({ children, ellipsizeMode, numberOfLines, selectable, style, testID }: WorkletTextProps) {
+export function WorkletText({ children, ellipsizeMode, numberOfLines, runs, selectable, style, testID }: WorkletTextProps) {
   const animatedProps = useAnimatedProps(() => {
     const text = typeof children === 'string' ? children : children == null ? '' : (children.value ?? '');
+    const resolvedRuns = resolveRuns(runs);
 
-    return { text };
+    return { runs: resolvedRuns, text };
   });
 
   const flattened = StyleSheet.flatten(style) ?? {};
@@ -50,6 +54,17 @@ export function WorkletText({ children, ellipsizeMode, numberOfLines, selectable
       />
     </View>
   );
+}
+
+function isSharedRunsValue(runs: WorkletTextRuns): runs is SharedRunsValue {
+  'worklet';
+  return typeof runs === 'object' && runs !== null && 'value' in runs;
+}
+
+function resolveRuns(runs: WorkletTextRuns): readonly TextMeasureRun[] | undefined {
+  'worklet';
+  if (runs == null) return undefined;
+  return isSharedRunsValue(runs) ? runs.value : runs;
 }
 
 function buildContainerStyle(style: TextStyle): ViewStyle {
