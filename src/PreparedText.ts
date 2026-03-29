@@ -1,4 +1,4 @@
-import { getRNPretextRuntime } from './initModule';
+import { getRNTextEngineRuntime } from './initModule';
 import type {
   LayoutOptions,
   NextTextLine,
@@ -64,19 +64,19 @@ export class PreparedText implements PreparedTextHandle {
   }
 
   layout(options: LayoutOptions): TextLayout {
-    return getRNPretextRuntime().layout(this.handle, options);
+    return getRNTextEngineRuntime().layout(this.handle, options);
   }
 
   lines(options: LayoutOptions): TextLayoutLines {
-    return getRNPretextRuntime().layoutLines(this.handle, options);
+    return getRNTextEngineRuntime().layoutLines(this.handle, options);
   }
 
   nextLine(start: number, width: number): NextTextLine | null {
-    return getRNPretextRuntime().layoutNextLine(this.handle, start, width);
+    return getRNTextEngineRuntime().layoutNextLine(this.handle, start, width);
   }
 
   release(): void {
-    getRNPretextRuntime().release(this.handle);
+    getRNTextEngineRuntime().release(this.handle);
   }
 }
 
@@ -87,23 +87,23 @@ export function createPreparedText(
   style?: TextMeasureStyle,
   runs?: readonly TextMeasureRun[] | RunsByText
 ): PreparedText | PreparedText[] {
-  const runtime = getRNPretextRuntime();
+  const runtime = getRNTextEngineRuntime();
 
   if (typeof textOrTexts === 'string') {
     if (runs !== undefined && !isRuns(runs)) {
-      throw new Error('RNPretext: createPreparedText() expected text runs for a single text input.');
+      throw new Error('RNTextEngine: createPreparedText() expected text runs for a single text input.');
     }
     return buildPreparedText(runtime.prepare(textOrTexts, style, runs));
   }
 
   if (runs !== undefined && !isRunsByText(runs)) {
-    throw new Error('RNPretext: createPreparedText() expected runs aligned with the batch text input.');
+    throw new Error('RNTextEngine: createPreparedText() expected runs aligned with the batch text input.');
   }
   return runtime.prepareBatch(textOrTexts, style, runs).map(buildPreparedText);
 }
 
 export function measureTextWidth(text: string, style?: TextMeasureStyle, runs?: readonly TextMeasureRun[]): number {
-  return getRNPretextRuntime().measureWidth(text, style, runs);
+  return getRNTextEngineRuntime().measureWidth(text, style, runs);
 }
 
 export function measureText(
@@ -124,17 +124,17 @@ export function measureText(
   options: LayoutOptions,
   runs?: readonly TextMeasureRun[] | RunsByText
 ): TextLayout | TextLayout[] {
-  const runtime = getRNPretextRuntime();
+  const runtime = getRNTextEngineRuntime();
 
   if (typeof textOrTexts === 'string') {
     if (runs !== undefined && !isRuns(runs)) {
-      throw new Error('RNPretext: measureText() expected text runs for a single text input.');
+      throw new Error('RNTextEngine: measureText() expected text runs for a single text input.');
     }
     return runtime.measure(textOrTexts, style, options, runs);
   }
 
   if (runs !== undefined && !isRunsByText(runs)) {
-    throw new Error('RNPretext: measureText() expected runs aligned with the batch text input.');
+    throw new Error('RNTextEngine: measureText() expected runs aligned with the batch text input.');
   }
   return runtime.measureBatch(textOrTexts, style, options, runs);
 }
@@ -145,7 +145,7 @@ export function layoutPreparedText(
   handleOrHandles: PreparedTextHandle | readonly PreparedTextHandle[],
   options: LayoutOptions
 ): TextLayout | TextLayout[] {
-  const runtime = getRNPretextRuntime();
+  const runtime = getRNTextEngineRuntime();
   if (!isPreparedTextHandleArray(handleOrHandles)) {
     return runtime.layout(handleOrHandles.handle, options);
   }
@@ -156,7 +156,7 @@ export function layoutPreparedText(
 export function releasePreparedText(handle: PreparedTextHandle): void;
 export function releasePreparedText(handles: readonly PreparedTextHandle[]): void;
 export function releasePreparedText(handleOrHandles: PreparedTextHandle | readonly PreparedTextHandle[]): void {
-  const runtime = getRNPretextRuntime();
+  const runtime = getRNTextEngineRuntime();
   if (!isPreparedTextHandleArray(handleOrHandles)) {
     runtime.release(handleOrHandles.handle);
     return;

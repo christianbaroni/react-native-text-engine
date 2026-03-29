@@ -7,8 +7,8 @@ import {
   type PreparedTextHandle,
   type TextLayout,
   type TextMeasureStyle,
-} from 'react-native-pretext';
-import { createPreparedTextsInRuntime, layoutPreparedTextsInRuntime, measureTextsInRuntime } from 'react-native-pretext/worklets';
+} from 'react-native-text-engine';
+import { createPreparedTextsInRuntime, layoutPreparedTextsInRuntime, measureTextsInRuntime } from 'react-native-text-engine/worklets';
 import Animated, {
   type DerivedValue,
   type SharedValue,
@@ -21,7 +21,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { runOnRuntimeAsync } from 'react-native-worklets';
 import { PillSwitch } from '../components/PillSwitch';
 import { buildConversation } from '../data/chatData';
-import { getChatPretextRuntime } from '../pretext/runtimes';
+import { getChatTextEngineRuntime } from '../text-engine/runtimes';
 import { uiActions, useUiStore, type WidthMode } from '../state/uiStore';
 import { demoTheme } from '../theme/demoTheme';
 import { AnimatedList, type RenderItemProps } from '../worklet-list';
@@ -40,11 +40,10 @@ const ROW_GAP = 10;
 const BUBBLE_BORDER_WIDTH = 1;
 const BUBBLE_PADDING_X = 15;
 const BUBBLE_PADDING_Y = 12;
-const TOP_OVERLAY_HEIGHT = 132;
-const COMPOSER_HEIGHT = 98;
+const TOP_OVERLAY_HEIGHT = 188;
 const PREVIEW_MESSAGE_COUNT = 28;
 
-const MESSAGES: readonly ChatMessage[] = buildConversation(1800);
+const MESSAGES: readonly ChatMessage[] = buildConversation(1000);
 const MESSAGE_TEXTS = MESSAGES.map(message => message.text);
 const MESSAGE_ROLES = MESSAGES.map(message => (message.role === 'user' ? 1 : 0));
 const FULL_MESSAGE_INDICES = Array.from({ length: MESSAGES.length }, (_value, index) => index);
@@ -102,7 +101,7 @@ export function ChatDemo({ isActive = true }: { isActive?: boolean }) {
   const jobRef = useRef(0);
   const handlesRef = useRef<PreparedTextHandle[] | null>(null);
   const lastMeasuredTextWidthRef = useRef<number | null>(null);
-  const workletRuntime = getChatPretextRuntime();
+  const workletRuntime = getChatTextEngineRuntime();
 
   const data = useSharedValue<number[]>([]);
   const messageHandles = useSharedValue<HandleBuffer>(new Float64Array(0));
@@ -285,6 +284,7 @@ export function ChatDemo({ isActive = true }: { isActive?: boolean }) {
           listWidth={listWidth}
           renderItem={renderItem}
           rowBuffer={{ above: 10, below: 12 }}
+          scrollIndicatorInsets={{ bottom: 172, top: TOP_OVERLAY_HEIGHT + 20 }}
           style={styles.list}
         />
       </View>
@@ -300,20 +300,6 @@ export function ChatDemo({ isActive = true }: { isActive?: boolean }) {
         </View>
 
         <PillSwitch onChange={uiActions.setChatWidthMode} options={WIDTH_OPTIONS} value={widthMode} />
-      </View>
-
-      <View style={styles.composerDock}>
-        <Pressable style={styles.composerAction}>
-          <Text style={styles.composerActionLabel}>+</Text>
-        </Pressable>
-
-        <View style={styles.composerInput}>
-          <Text style={styles.composerHint}>Prepared input. Exact geometry already known.</Text>
-        </View>
-
-        <Pressable style={styles.composerPrimary}>
-          <Text style={styles.composerPrimaryLabel}>↗</Text>
-        </Pressable>
       </View>
     </SafeAreaView>
   );
@@ -512,6 +498,7 @@ function MetricValueText({ value }: { value: SharedValue<string> }) {
 const styles = StyleSheet.create({
   backgroundGlowLeft: {
     backgroundColor: demoTheme.glowBlue,
+    borderCurve: 'continuous',
     borderRadius: 260,
     height: 360,
     left: -140,
@@ -521,6 +508,7 @@ const styles = StyleSheet.create({
   },
   backgroundGlowRight: {
     backgroundColor: demoTheme.glowPurple,
+    borderCurve: 'continuous',
     borderRadius: 280,
     height: 420,
     position: 'absolute',
@@ -530,72 +518,12 @@ const styles = StyleSheet.create({
   },
   bubble: {
     borderRadius: 24,
+    borderCurve: 'continuous',
     borderWidth: BUBBLE_BORDER_WIDTH,
     paddingHorizontal: BUBBLE_PADDING_X,
     paddingVertical: BUBBLE_PADDING_Y,
     position: 'absolute',
     top: 0,
-  },
-  composerAction: {
-    alignItems: 'center',
-    backgroundColor: '#0d121a',
-    borderColor: demoTheme.borderStrong,
-    borderRadius: 20,
-    borderWidth: 1,
-    height: 48,
-    justifyContent: 'center',
-    width: 48,
-  },
-  composerActionLabel: {
-    color: demoTheme.textPrimary,
-    fontSize: 22,
-    fontWeight: '500',
-    marginTop: -2,
-  },
-  composerDock: {
-    alignItems: 'center',
-    backgroundColor: 'rgba(7, 9, 14, 0.94)',
-    borderTopColor: demoTheme.border,
-    borderTopWidth: 1,
-    bottom: 0,
-    flexDirection: 'row',
-    gap: 10,
-    left: 0,
-    paddingBottom: 16,
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    position: 'absolute',
-    right: 0,
-  },
-  composerHint: {
-    color: demoTheme.textSecondary,
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  composerInput: {
-    backgroundColor: '#0b1017',
-    borderColor: demoTheme.border,
-    borderRadius: 24,
-    borderWidth: 1,
-    flex: 1,
-    minHeight: 58,
-    justifyContent: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-  },
-  composerPrimary: {
-    alignItems: 'center',
-    backgroundColor: '#44425f',
-    borderRadius: 20,
-    height: 48,
-    justifyContent: 'center',
-    width: 48,
-  },
-  composerPrimaryLabel: {
-    color: '#ffffff',
-    fontSize: 18,
-    fontWeight: '800',
-    marginTop: -1,
   },
   eyebrow: {
     color: demoTheme.accentBlue,
@@ -608,8 +536,8 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   listContent: {
-    paddingBottom: COMPOSER_HEIGHT + 18,
-    paddingTop: TOP_OVERLAY_HEIGHT + 18,
+    paddingBottom: TOP_OVERLAY_HEIGHT + 20,
+    paddingTop: TOP_OVERLAY_HEIGHT + 20,
   },
   listShell: {
     flex: 1,
@@ -617,9 +545,11 @@ const styles = StyleSheet.create({
   metric: {
     backgroundColor: 'rgba(12, 16, 23, 0.82)',
     borderColor: demoTheme.border,
+    borderCurve: 'continuous',
     borderRadius: 14,
     borderWidth: 1,
     gap: 2,
+    overflow: 'hidden',
     paddingHorizontal: 10,
     paddingVertical: 8,
   },

@@ -1,4 +1,4 @@
-import { getRNPretextRuntime } from './initModule';
+import { getRNTextEngineRuntime } from './initModule';
 import type { GlyphFieldConfig, GlyphFieldHandle } from './types';
 
 export class GlyphField implements GlyphFieldHandle {
@@ -13,15 +13,15 @@ export class GlyphField implements GlyphFieldHandle {
   }
 
   update(glyphs: string, variantIndices: Uint8Array): void {
-    getRNPretextRuntime().updateGlyphField(this.handle, glyphs, variantIndices);
+    getRNTextEngineRuntime().updateGlyphField(this.handle, glyphs, variantIndices);
   }
 
   release(): void {
-    getRNPretextRuntime().releaseGlyphField(this.handle);
+    getRNTextEngineRuntime().releaseGlyphField(this.handle);
   }
 
   static create(config: GlyphFieldConfig): GlyphField {
-    return GlyphField.fromHandle(getRNPretextRuntime().createGlyphField(config));
+    return GlyphField.fromHandle(getRNTextEngineRuntime().createGlyphField(config));
   }
 }
 

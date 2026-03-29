@@ -13,5 +13,5 @@ export type GlyphFieldViewProps = ViewProps & {
 
 export const GlyphFieldView =
   Platform.OS === 'ios' || Platform.OS === 'android'
-    ? requireNativeComponent<GlyphFieldViewProps>('RNPretextGlyphFieldView')
+    ? requireNativeComponent<GlyphFieldViewProps>('RNTextEngineGlyphFieldView')
     : () => null;

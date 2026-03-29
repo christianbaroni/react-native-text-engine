@@ -33,6 +33,7 @@ export function PillSwitch<T extends string>({ options, value, onChange }: PillS
 const styles = StyleSheet.create({
   item: {
     alignItems: 'center',
+    borderCurve: 'continuous',
     borderRadius: 999,
     justifyContent: 'center',
     minHeight: 44,
@@ -59,17 +60,21 @@ const styles = StyleSheet.create({
   root: {
     backgroundColor: 'rgba(20, 14, 10, 0.78)',
     borderColor: demoTheme.borderStrong,
+    borderCurve: 'continuous',
     borderRadius: 999,
     borderWidth: 1,
     flexDirection: 'row',
     gap: 8,
+    overflow: 'hidden',
     padding: 8,
   },
   shell: {
     backgroundColor: 'rgba(255, 246, 227, 0.04)',
     borderColor: 'rgba(255, 239, 212, 0.08)',
+    borderCurve: 'continuous',
     borderRadius: 999,
     borderWidth: 1,
+    overflow: 'hidden',
     padding: 4,
     shadowColor: '#000000',
     shadowOffset: { height: 18, width: 0 },

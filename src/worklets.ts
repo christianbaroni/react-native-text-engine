@@ -1,14 +1,14 @@
 import { createWorkletRuntime, getUIRuntimeHolder, runOnUISync, scheduleOnRuntime, type WorkletRuntime } from 'react-native-worklets';
-import { getRNPretextRuntime } from './initModule';
+import { getRNTextEngineRuntime } from './initModule';
 import type { GlyphFieldHandle, LayoutOptions, PreparedTextHandle, TextLayout, TextMeasureRun, TextMeasureStyle } from './types';
 
 declare global {
   var _WORKLET_RUNTIME: ArrayBuffer;
-  var __RNPretextInstallWorkletRuntime: ((workletRuntime: object) => boolean) | undefined;
-  var __RNPretextUpdateGlyphField: ((handle: number, glyphs: string, variantIndices: Uint8Array) => void) | undefined;
+  var __RNTextEngineInstallWorkletRuntime: ((workletRuntime: object) => boolean) | undefined;
+  var __RNTextEngineUpdateGlyphField: ((handle: number, glyphs: string, variantIndices: Uint8Array) => void) | undefined;
 }
 
-export type PretextRuntimeConfig = {
+export type TextEngineRuntimeConfig = {
   animationQueuePollingRate?: number;
   initializer?: () => void;
   name?: string;
@@ -23,17 +23,17 @@ function buildHandle(id: number): PreparedTextHandle {
 }
 
 /**
- * Installs `react-native-pretext` into the Reanimated UI runtime.
+ * Installs `react-native-text-engine` into the Reanimated UI runtime.
  *
- * Call this once during app startup before running pretext calls from UI
+ * Call this once during app startup before running text-engine calls from UI
  * worklets.
  */
-export function installPretextInUIRuntime(): void {
-  const installWorkletRuntime = globalThis.__RNPretextInstallWorkletRuntime;
+export function installTextEngineInUIRuntime(): void {
+  const installWorkletRuntime = globalThis.__RNTextEngineInstallWorkletRuntime;
   if (installWorkletRuntime) {
     const didInstall = installWorkletRuntime(getUIRuntimeHolder());
     if (!didInstall) {
-      throw new Error('RNPretext: Failed to install bindings into the UI runtime.');
+      throw new Error('RNTextEngine: Failed to install bindings into the UI runtime.');
     }
     return;
   }
@@ -42,15 +42,15 @@ export function installPretextInUIRuntime(): void {
     'worklet';
     return globalThis._WORKLET_RUNTIME;
   });
-  getRNPretextRuntime().installRuntime(runtimeToken);
+  getRNTextEngineRuntime().installRuntime(runtimeToken);
 }
 
 /**
- * Creates a dedicated Worklets runtime and installs `react-native-pretext`
+ * Creates a dedicated Worklets runtime and installs `react-native-text-engine`
  * into it before any caller initializer runs.
  */
-export function createPretextRuntime(config?: PretextRuntimeConfig): WorkletRuntime {
-  getRNPretextRuntime();
+export function createTextEngineRuntime(config?: TextEngineRuntimeConfig): WorkletRuntime {
+  getRNTextEngineRuntime();
 
   const initializer = config?.initializer;
   const workletRuntime =
@@ -68,14 +68,14 @@ export function createPretextRuntime(config?: PretextRuntimeConfig): WorkletRunt
           name: config?.name,
         });
 
-  const installWorkletRuntime = globalThis.__RNPretextInstallWorkletRuntime;
+  const installWorkletRuntime = globalThis.__RNTextEngineInstallWorkletRuntime;
   if (!installWorkletRuntime) {
-    throw new Error('RNPretext: Native installWorkletRuntime() is unavailable in this build.');
+    throw new Error('RNTextEngine: Native installWorkletRuntime() is unavailable in this build.');
   }
 
   const didInstall = installWorkletRuntime(workletRuntime);
   if (!didInstall) {
-    throw new Error('RNPretext: Failed to install bindings into the created worklet runtime.');
+    throw new Error('RNTextEngine: Failed to install bindings into the created worklet runtime.');
   }
 
   if (initializer) scheduleOnRuntime(workletRuntime, initializer);
@@ -86,7 +86,7 @@ export function createPretextRuntime(config?: PretextRuntimeConfig): WorkletRunt
 /**
  * Worklet-safe exact batch measurement against the current installed runtime.
  *
- * This must be called only after `react-native-pretext` has been installed into
+ * This must be called only after `react-native-text-engine` has been installed into
  * the current runtime.
  */
 export function measureTextsInRuntime(
@@ -97,9 +97,9 @@ export function measureTextsInRuntime(
 ): TextLayout[] {
   'worklet';
 
-  const measureBatch = globalThis.__RNPretextMeasureBatch;
+  const measureBatch = globalThis.__RNTextEngineMeasureBatch;
   if (!measureBatch) {
-    throw new Error('RNPretext: measureTextsInRuntime() was called before the current runtime was installed.');
+    throw new Error('RNTextEngine: measureTextsInRuntime() was called before the current runtime was installed.');
   }
 
   return measureBatch(texts, style, options, runsByText);
@@ -115,9 +115,9 @@ export function createPreparedTextsInRuntime(
 ): PreparedTextHandle[] {
   'worklet';
 
-  const prepareBatch = globalThis.__RNPretextPrepareBatch;
+  const prepareBatch = globalThis.__RNTextEnginePrepareBatch;
   if (!prepareBatch) {
-    throw new Error('RNPretext: createPreparedTextsInRuntime() was called before the current runtime was installed.');
+    throw new Error('RNTextEngine: createPreparedTextsInRuntime() was called before the current runtime was installed.');
   }
 
   return prepareBatch(texts, style, runsByText).map(buildHandle);
@@ -129,9 +129,9 @@ export function createPreparedTextsInRuntime(
 export function layoutPreparedTextsInRuntime(handles: readonly PreparedTextHandle[], options: LayoutOptions): TextLayout[] {
   'worklet';
 
-  const layoutBatch = globalThis.__RNPretextLayoutBatch;
+  const layoutBatch = globalThis.__RNTextEngineLayoutBatch;
   if (!layoutBatch) {
-    throw new Error('RNPretext: layoutPreparedTextsInRuntime() was called before the current runtime was installed.');
+    throw new Error('RNTextEngine: layoutPreparedTextsInRuntime() was called before the current runtime was installed.');
   }
 
   const ids = new Array<number>(handles.length);
@@ -152,9 +152,9 @@ export function updateGlyphFieldInRuntime(
 ): void {
   'worklet';
 
-  const updateGlyphField = globalThis.__RNPretextUpdateGlyphField;
+  const updateGlyphField = globalThis.__RNTextEngineUpdateGlyphField;
   if (!updateGlyphField) {
-    throw new Error('RNPretext: updateGlyphFieldInRuntime() was called before the current runtime was installed.');
+    throw new Error('RNTextEngine: updateGlyphFieldInRuntime() was called before the current runtime was installed.');
   }
 
   updateGlyphField(typeof handle === 'number' ? handle : handle.handle, glyphs, variantIndices);

@@ -1,5 +1,5 @@
 {
-  "name": "react-native-pretext",
+  "name": "react-native-text-engine",
   "version": "0.1.0",
   "description": "Worklet-friendly prepared text measurement and layout for React Native",
   "main": "lib/commonjs/index",
@@ -67,13 +67,13 @@
     "worklet",
     "jsi"
   ],
-  "repository": "https://github.com/christianbaroni/react-native-pretext",
+  "repository": "https://github.com/christianbaroni/react-native-text-engine",
   "author": "Christian Baroni <7061887+christianbaroni@users.noreply.github.com> (https://github.com/christianbaroni)",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/christianbaroni/react-native-pretext/issues"
+    "url": "https://github.com/christianbaroni/react-native-text-engine/issues"
   },
-  "homepage": "https://github.com/christianbaroni/react-native-pretext#readme",
+  "homepage": "https://github.com/christianbaroni/react-native-text-engine#readme",
   "peerDependencies": {
     "react": ">=18.2.0",
     "react-native": ">=0.72.0",
@@ -103,18 +103,18 @@
     ]
   },
   "codegenConfig": {
-    "name": "RNPretextSpec",
+    "name": "RNTextEngineSpec",
     "type": "all",
     "jsSrcsDir": "src",
     "ios": {
       "componentProvider": {
-        "RNPretextGlyphFieldView": "RNPretextGlyphFieldViewComponentView",
-        "RNPretextPreparedTextView": "RNPretextPreparedTextViewComponentView",
-        "RNPretextTextView": "RNPretextTextViewComponentView"
+        "RNTextEngineGlyphFieldView": "RNTextEngineGlyphFieldViewComponentView",
+        "RNTextEnginePreparedTextView": "RNTextEnginePreparedTextViewComponentView",
+        "RNTextEngineTextView": "RNTextEngineTextViewComponentView"
       }
     },
     "android": {
-      "javaPackageName": "com.rnpretext"
+      "javaPackageName": "com.rntextengine"
     }
   }
 }

@@ -2,7 +2,7 @@
   "compilerOptions": {
     "baseUrl": "./",
     "paths": {
-      "react-native-pretext": ["./src/index"]
+      "react-native-text-engine": ["./src/index"]
     },
     "allowUnreachableCode": false,
     "allowUnusedLabels": false,

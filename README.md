@@ -1,8 +1,8 @@
-# React Native Pretext
+# React Native Text Engine
 
 Native text measurement and rendering primitives for React Native.
 
-Use `react-native-pretext` when you need text work to happen natively instead of inside normal React text rendering. In practice, that usually means one of two things:
+Use `react-native-text-engine` when you need text work to happen natively instead of inside normal React text rendering. In practice, that usually means one of two things:
 
 1. You need exact text layout before render.
 2. You need a fixed-grid text surface whose content changes cell by cell.
@@ -49,7 +49,7 @@ If you try to force one through the other, you pay for the wrong work.
 Install the package:
 
 ```sh
-yarn add react-native-pretext
+yarn add react-native-text-engine
 ```
 
 If you want the worklet helpers, also install `react-native-worklets`:
@@ -70,7 +70,7 @@ pod install
 ### Create once, layout many times
 
 ```ts
-import { createPreparedText, type TextMeasureStyle } from 'react-native-pretext';
+import { createPreparedText, type TextMeasureStyle } from 'react-native-text-engine';
 
 const style: TextMeasureStyle = {
   fontFamily: 'SF Pro Rounded',
@@ -106,7 +106,7 @@ The split is simple:
 If you do not need a persistent resource:
 
 ```ts
-import { measureText, measureTextWidth } from 'react-native-pretext';
+import { measureText, measureTextWidth } from 'react-native-text-engine';
 
 const width = measureTextWidth('123.45', {
   fontSize: 17,
@@ -122,7 +122,7 @@ const block = measureText('Long paragraph...', { fontSize: 17, lineHeight: 24 },
 Prepared text can include inline style overrides inside one string:
 
 ```ts
-import { createPreparedText, type TextMeasureRun } from 'react-native-pretext';
+import { createPreparedText, type TextMeasureRun } from 'react-native-text-engine';
 
 const text = 'Ship bold code exactly';
 const runs: readonly TextMeasureRun[] = [
@@ -140,7 +140,7 @@ Runs are UTF-16 ranges into the source string. They must be sorted and non-overl
 For large collections:
 
 ```ts
-import { createPreparedText, layoutPreparedText, releasePreparedText } from 'react-native-pretext';
+import { createPreparedText, layoutPreparedText, releasePreparedText } from 'react-native-text-engine';
 
 const prepared = createPreparedText(messages, style);
 const layouts = layoutPreparedText(prepared, { width: contentWidth });
@@ -164,7 +164,7 @@ Use `message.lines()` when one width applies to the whole block. Use `message.ne
 Create a glyph field when you have a fixed cell grid and a small style palette.
 
 ```ts
-import { GlyphFieldView, createGlyphField, type GlyphFieldVariant } from 'react-native-pretext';
+import { GlyphFieldView, createGlyphField, type GlyphFieldVariant } from 'react-native-text-engine';
 
 const variants: readonly GlyphFieldVariant[] = [
   { color: 'rgba(196,163,90,0.18)', fontWeight: '300' },
@@ -210,7 +210,7 @@ That is the whole model. The native field owns drawing and style caches. Your co
 The package also exposes two minimal native text views:
 
 ```ts
-import { PreparedTextView, TextView } from 'react-native-pretext';
+import { PreparedTextView, TextView } from 'react-native-text-engine';
 ```
 
 - `TextView` renders direct text props.
@@ -226,12 +226,12 @@ The core API is synchronous and React-free, so it can be used from worklets afte
 
 ### Install into the UI runtime
 
-If UI worklets will call pretext directly, do this once during startup:
+If UI worklets will call the text engine directly, do this once during startup:
 
 ```ts
-import { installPretextInUIRuntime } from 'react-native-pretext/worklets';
+import { installTextEngineInUIRuntime } from 'react-native-text-engine/worklets';
 
-installPretextInUIRuntime();
+installTextEngineInUIRuntime();
 ```
 
 ### Dedicated worklet runtime
@@ -239,9 +239,9 @@ installPretextInUIRuntime();
 If you want a separate runtime for text-heavy work:
 
 ```ts
-import { createPretextRuntime } from 'react-native-pretext/worklets';
+import { createTextEngineRuntime } from 'react-native-text-engine/worklets';
 
-const runtime = createPretextRuntime({ name: 'pretext-layout' });
+const runtime = createTextEngineRuntime({ name: 'text-engine-layout' });
 ```
 
 ### Worklet helpers
@@ -256,7 +256,7 @@ The worklet entry uses plain handle tokens so results can move across runtimes. 
 Example:
 
 ```ts
-import { updateGlyphFieldInRuntime } from 'react-native-pretext/worklets';
+import { updateGlyphFieldInRuntime } from 'react-native-text-engine/worklets';
 
 updateGlyphFieldInRuntime(field.handle, glyphs, variantIndices);
 ```

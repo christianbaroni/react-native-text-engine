@@ -1,5 +1,5 @@
 import { Platform } from 'react-native';
-import { measureTextWidth, type TextMeasureStyle } from 'react-native-pretext';
+import { measureTextWidth, type TextMeasureStyle } from 'react-native-text-engine';
 
 type FontStyleVariant = 'italic' | 'normal';
 

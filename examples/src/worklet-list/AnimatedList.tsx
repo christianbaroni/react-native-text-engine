@@ -455,6 +455,8 @@ function getStyleNumber(style: object, key: string): number | undefined {
   return typeof value === 'number' ? value : undefined;
 }
 
+const ZERO_SCROLL_PADDING: ScrollPadding = { end: 0, start: 0 };
+
 function resolveScrollPadding({
   contentContainerStyle,
   isHorizontal,
@@ -464,7 +466,7 @@ function resolveScrollPadding({
 }): ScrollPadding {
   const flattened: unknown = StyleSheet.flatten(contentContainerStyle);
   if (!flattened || typeof flattened !== 'object') {
-    return { end: 0, start: 0 };
+    return ZERO_SCROLL_PADDING;
   }
 
   const basePadding: number = getStyleNumber(flattened, 'padding') ?? 0;

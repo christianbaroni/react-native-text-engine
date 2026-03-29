@@ -52,7 +52,7 @@ export type TextViewProps = ViewProps & {
   textAlign?: 'auto' | 'center' | 'justify' | 'left' | 'right';
 };
 
-const NativeTextView = requireNativeComponent<TextViewProps>('RNPretextTextView');
+const NativeTextView = requireNativeComponent<TextViewProps>('RNTextEngineTextView');
 
 /**
  * Native text display surface that can be driven directly by animated props.

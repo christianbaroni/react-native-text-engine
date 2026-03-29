@@ -28,7 +28,7 @@ function App(): React.JSX.Element {
       <SafeAreaProvider>
         <GestureHandlerRootView style={styles.root}>
           <View style={styles.shell}>
-            <View pointerEvents="box-none" style={[styles.nav, demo === 'chat' ? styles.navRaised : null]}>
+            <View pointerEvents="box-none" style={styles.nav}>
               <PillSwitch options={DEMO_OPTIONS} onChange={uiActions.setDemo} value={demo} />
             </View>
             <View style={styles.content}>
@@ -77,9 +77,6 @@ const styles = StyleSheet.create({
     position: 'absolute',
     right: 0,
     zIndex: 10,
-  },
-  navRaised: {
-    bottom: Platform.OS === 'ios' ? 116 : 104,
   },
   root: {
     flex: 1,

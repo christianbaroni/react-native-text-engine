@@ -1,1 +1,1 @@
--keep class com.rnpretext.** { *; }
+-keep class com.rntextengine.** { *; }

@@ -1,5 +1,5 @@
 import { NativeModules } from 'react-native';
-import RNPretextModule from './NativeRNPretext';
+import RNTextEngineModule from './NativeRNTextEngine';
 import type {
   GlyphFieldConfig,
   LayoutOptions,
@@ -11,22 +11,22 @@ import type {
 } from './types';
 
 declare global {
-  var __RNPretextCreateGlyphField: ((config: GlyphFieldConfig) => number) | undefined;
-  var __RNPretextInstallRuntime: ((runtimeToken: ArrayBuffer) => boolean) | undefined;
-  var __RNPretextLayout: ((handle: number, options: LayoutOptions) => TextLayout) | undefined;
-  var __RNPretextLayoutBatch:
+  var __RNTextEngineCreateGlyphField: ((config: GlyphFieldConfig) => number) | undefined;
+  var __RNTextEngineInstallRuntime: ((runtimeToken: ArrayBuffer) => boolean) | undefined;
+  var __RNTextEngineLayout: ((handle: number, options: LayoutOptions) => TextLayout) | undefined;
+  var __RNTextEngineLayoutBatch:
     | ((handles: readonly number[], options: LayoutOptions) => TextLayout[])
     | undefined;
-  var __RNPretextLayoutNextLine:
+  var __RNTextEngineLayoutNextLine:
     | ((handle: number, start: number, width: number) => NextTextLine | null)
     | undefined;
-  var __RNPretextLayoutLines:
+  var __RNTextEngineLayoutLines:
     | ((handle: number, options: LayoutOptions) => TextLayoutLines)
     | undefined;
-  var __RNPretextMeasure:
+  var __RNTextEngineMeasure:
     | ((text: string, style: TextMeasureStyle | undefined, options: LayoutOptions, runs?: readonly TextMeasureRun[]) => TextLayout)
     | undefined;
-  var __RNPretextMeasureBatch:
+  var __RNTextEngineMeasureBatch:
     | ((
         texts: readonly string[],
         style: TextMeasureStyle | undefined,
@@ -34,26 +34,26 @@ declare global {
         runsByText?: readonly (readonly TextMeasureRun[] | undefined)[]
       ) => TextLayout[])
     | undefined;
-  var __RNPretextMeasureWidth:
+  var __RNTextEngineMeasureWidth:
     | ((text: string, style: TextMeasureStyle | undefined, runs?: readonly TextMeasureRun[]) => number)
     | undefined;
-  var __RNPretextPrepare:
+  var __RNTextEnginePrepare:
     | ((text: string, style: TextMeasureStyle | undefined, runs?: readonly TextMeasureRun[]) => number)
     | undefined;
-  var __RNPretextPrepareBatch:
+  var __RNTextEnginePrepareBatch:
     | ((
         texts: readonly string[],
         style: TextMeasureStyle | undefined,
         runsByText?: readonly (readonly TextMeasureRun[] | undefined)[]
       ) => number[])
     | undefined;
-  var __RNPretextReleaseGlyphField: ((handle: number) => void) | undefined;
-  var __RNPretextRelease: ((handle: number) => void) | undefined;
-  var __RNPretextReleaseMany: ((handles: readonly number[]) => void) | undefined;
-  var __RNPretextUpdateGlyphField: ((handle: number, glyphs: string, variantIndices: Uint8Array) => void) | undefined;
+  var __RNTextEngineReleaseGlyphField: ((handle: number) => void) | undefined;
+  var __RNTextEngineRelease: ((handle: number) => void) | undefined;
+  var __RNTextEngineReleaseMany: ((handles: readonly number[]) => void) | undefined;
+  var __RNTextEngineUpdateGlyphField: ((handle: number, glyphs: string, variantIndices: Uint8Array) => void) | undefined;
 }
 
-type RNPretextRuntime = {
+type RNTextEngineRuntime = {
   readonly createGlyphField: (config: GlyphFieldConfig) => number;
   readonly installRuntime: (runtimeToken: ArrayBuffer) => void;
   readonly layout: (handle: number, options: LayoutOptions) => TextLayout;
@@ -80,7 +80,7 @@ type RNPretextRuntime = {
   readonly updateGlyphField: (handle: number, glyphs: string, variantIndices: Uint8Array) => void;
 };
 
-let cachedRuntime: RNPretextRuntime | null = null;
+let cachedRuntime: RNTextEngineRuntime | null = null;
 
 function hasInstall(value: unknown): value is { install: () => boolean } {
   if (typeof value !== 'object' || value === null) return false;
@@ -88,30 +88,30 @@ function hasInstall(value: unknown): value is { install: () => boolean } {
 }
 
 function resolveInstallModule(): { install: () => boolean } | null {
-  if (hasInstall(RNPretextModule)) return RNPretextModule;
+  if (hasInstall(RNTextEngineModule)) return RNTextEngineModule;
 
-  const nativeModule = NativeModules.RNPretext;
+  const nativeModule = NativeModules.RNTextEngine;
   if (hasInstall(nativeModule)) return nativeModule;
 
   return null;
 }
 
-function buildRuntime(): RNPretextRuntime {
-  const createGlyphField = globalThis.__RNPretextCreateGlyphField;
-  const installRuntime = globalThis.__RNPretextInstallRuntime;
-  const prepare = globalThis.__RNPretextPrepare;
-  const prepareBatch = globalThis.__RNPretextPrepareBatch;
-  const releaseGlyphField = globalThis.__RNPretextReleaseGlyphField;
-  const release = globalThis.__RNPretextRelease;
-  const releaseMany = globalThis.__RNPretextReleaseMany;
-  const updateGlyphField = globalThis.__RNPretextUpdateGlyphField;
-  const measureWidth = globalThis.__RNPretextMeasureWidth;
-  const measure = globalThis.__RNPretextMeasure;
-  const measureBatch = globalThis.__RNPretextMeasureBatch;
-  const layout = globalThis.__RNPretextLayout;
-  const layoutBatch = globalThis.__RNPretextLayoutBatch;
-  const layoutNextLine = globalThis.__RNPretextLayoutNextLine;
-  const layoutLines = globalThis.__RNPretextLayoutLines;
+function buildRuntime(): RNTextEngineRuntime {
+  const createGlyphField = globalThis.__RNTextEngineCreateGlyphField;
+  const installRuntime = globalThis.__RNTextEngineInstallRuntime;
+  const prepare = globalThis.__RNTextEnginePrepare;
+  const prepareBatch = globalThis.__RNTextEnginePrepareBatch;
+  const releaseGlyphField = globalThis.__RNTextEngineReleaseGlyphField;
+  const release = globalThis.__RNTextEngineRelease;
+  const releaseMany = globalThis.__RNTextEngineReleaseMany;
+  const updateGlyphField = globalThis.__RNTextEngineUpdateGlyphField;
+  const measureWidth = globalThis.__RNTextEngineMeasureWidth;
+  const measure = globalThis.__RNTextEngineMeasure;
+  const measureBatch = globalThis.__RNTextEngineMeasureBatch;
+  const layout = globalThis.__RNTextEngineLayout;
+  const layoutBatch = globalThis.__RNTextEngineLayoutBatch;
+  const layoutNextLine = globalThis.__RNTextEngineLayoutNextLine;
+  const layoutLines = globalThis.__RNTextEngineLayoutLines;
 
   if (
     !createGlyphField ||
@@ -130,7 +130,7 @@ function buildRuntime(): RNPretextRuntime {
     !layoutNextLine ||
     !layoutLines
   ) {
-    throw new Error('RNPretext: Native runtime installed incompletely. Expected all JSI bindings to be present.');
+    throw new Error('RNTextEngine: Native runtime installed incompletely. Expected all JSI bindings to be present.');
   }
 
   return {
@@ -138,7 +138,7 @@ function buildRuntime(): RNPretextRuntime {
     installRuntime: runtimeToken => {
       const didInstall = installRuntime(runtimeToken);
       if (!didInstall) {
-        throw new Error('RNPretext: Failed to install bindings into the requested runtime.');
+        throw new Error('RNTextEngine: Failed to install bindings into the requested runtime.');
       }
     },
     layout: (handle, options) => layout(handle, options),
@@ -157,7 +157,7 @@ function buildRuntime(): RNPretextRuntime {
   };
 }
 
-export function initRNPretext(): RNPretextRuntime {
+export function initRNTextEngine(): RNTextEngineRuntime {
   if (cachedRuntime) return cachedRuntime;
 
   try {
@@ -166,7 +166,7 @@ export function initRNPretext(): RNPretextRuntime {
   } catch {
     const installModule = resolveInstallModule();
     if (!installModule) {
-      throw new Error('RNPretext: Native module was not found. Make sure the package is autolinked and installed in a React Native runtime.');
+      throw new Error('RNTextEngine: Native module was not found. Make sure the package is autolinked and installed in a React Native runtime.');
     }
 
     const didInstall = installModule.install();
@@ -175,7 +175,7 @@ export function initRNPretext(): RNPretextRuntime {
         cachedRuntime = buildRuntime();
         return cachedRuntime;
       } catch {
-        throw new Error('RNPretext: Native install() returned false.');
+        throw new Error('RNTextEngine: Native install() returned false.');
       }
     }
 
@@ -184,6 +184,6 @@ export function initRNPretext(): RNPretextRuntime {
   }
 }
 
-export function getRNPretextRuntime(): RNPretextRuntime {
-  return initRNPretext();
+export function getRNTextEngineRuntime(): RNTextEngineRuntime {
+  return initRNTextEngine();
 }

@@ -1,6 +1,6 @@
 import React from 'react';
 import { Platform, type StyleProp, type ViewProps, type ViewStyle } from 'react-native';
-import NativePreparedTextView from './specs/RNPretextPreparedTextViewNativeComponent';
+import NativePreparedTextView from './specs/RNTextEnginePreparedTextViewNativeComponent';
 
 /**
  * Props for the native prepared-handle render surface.

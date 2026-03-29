@@ -8,4 +8,3 @@ export type {
   RenderItemProps,
   ScrollEventCallback,
 } from './AnimatedList';
-export { useWorkletClass } from './useWorkletClass';

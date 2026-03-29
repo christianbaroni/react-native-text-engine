@@ -4,8 +4,8 @@ import { useStableValue } from '@storesjs/stores';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { useFrameCallback, useSharedValue } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { GlyphFieldView, createGlyphField } from 'react-native-pretext';
-import { installPretextInUIRuntime, updateGlyphFieldInRuntime } from 'react-native-pretext/worklets';
+import { GlyphFieldView, createGlyphField } from 'react-native-text-engine';
+import { installTextEngineInUIRuntime, updateGlyphFieldInRuntime } from 'react-native-text-engine/worklets';
 import {
   FIELD_STYLE,
   FIELD_VARIANTS,
@@ -56,7 +56,7 @@ export function TextFieldDemo({ isActive = true }: { isActive?: boolean }) {
   const fieldHandle = field.handle;
 
   useEffect(() => {
-    installPretextInUIRuntime();
+    installTextEngineInUIRuntime();
   }, []);
 
   useEffect(() => () => field.release(), [field]);

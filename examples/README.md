@@ -1,8 +1,8 @@
-# React Native Pretext Example
+# React Native Text Engine Example
 
 This app shows the package running in real React Native UI.
 
-It focuses on the two main primitives in `react-native-pretext`:
+It focuses on the two main primitives in `react-native-text-engine`:
 
 - prepared text for flowing text
 - glyph fields for fixed-grid text surfaces
