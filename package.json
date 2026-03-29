@@ -108,9 +108,5 @@
     "android": {
       "javaPackageName": "com.rnpretext"
     }
-  },
-  "dependencies": {
-    "react-native-mmkv": "^4.3.0",
-    "react-native-nitro-modules": "^0.35.2"
   }
 }

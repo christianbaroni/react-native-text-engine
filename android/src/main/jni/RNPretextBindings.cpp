@@ -105,6 +105,7 @@ struct GlyphFieldArgs {
 
 JavaVM* jvm_ = nullptr;
 jclass bindingsClass_ = nullptr;
+jclass stringClass_ = nullptr;
 
 jmethodID initializeMethod_ = nullptr;
 jmethodID cleanupMethod_ = nullptr;
@@ -171,6 +172,10 @@ void initializeIfNeeded(JNIEnv* env, jobject context) {
   jclass localClass = env->FindClass("com/rnpretext/RNPretextBindings");
   bindingsClass_ = reinterpret_cast<jclass>(env->NewGlobalRef(localClass));
   env->DeleteLocalRef(localClass);
+
+  jclass localStringClass = env->FindClass("java/lang/String");
+  stringClass_ = reinterpret_cast<jclass>(env->NewGlobalRef(localStringClass));
+  env->DeleteLocalRef(localStringClass);
 
   initializeMethod_ = env->GetStaticMethodID(bindingsClass_, "initialize", "(Lcom/facebook/react/bridge/ReactApplicationContext;)V");
   cleanupMethod_ = env->GetStaticMethodID(bindingsClass_, "cleanup", "()V");
@@ -698,9 +703,7 @@ std::vector<uint8_t> parseUint8Array(Runtime& runtime, const Value& value, size_
 }
 
 jobjectArray makeJavaStringArray(JNIEnv* env, const std::vector<std::string>& values) {
-  jclass stringClass = env->FindClass("java/lang/String");
-  jobjectArray array = env->NewObjectArray(static_cast<jsize>(values.size()), stringClass, nullptr);
-  env->DeleteLocalRef(stringClass);
+  jobjectArray array = env->NewObjectArray(static_cast<jsize>(values.size()), stringClass_, nullptr);
   for (size_t i = 0; i < values.size(); i++) {
     jstring item = env->NewStringUTF(values[i].c_str());
     env->SetObjectArrayElement(array, static_cast<jsize>(i), item);
@@ -753,9 +756,7 @@ jbyteArray makeJavaByteArray(JNIEnv* env, const std::vector<uint8_t>& values) {
 }
 
 jobjectArray makeJavaOptionalStringArray(JNIEnv* env, const std::vector<std::string>& values) {
-  jclass stringClass = env->FindClass("java/lang/String");
-  jobjectArray array = env->NewObjectArray(static_cast<jsize>(values.size()), stringClass, nullptr);
-  env->DeleteLocalRef(stringClass);
+  jobjectArray array = env->NewObjectArray(static_cast<jsize>(values.size()), stringClass_, nullptr);
   for (size_t i = 0; i < values.size(); i++) {
     if (values[i].empty()) continue;
     jstring item = env->NewStringUTF(values[i].c_str());
@@ -890,6 +891,10 @@ void cleanup(JNIEnv* env) {
   if (!bindingsClass_) return;
   env->CallStaticVoidMethod(bindingsClass_, cleanupMethod_);
   if (env->ExceptionCheck()) env->ExceptionClear();
+  if (stringClass_ != nullptr) {
+    env->DeleteGlobalRef(stringClass_);
+    stringClass_ = nullptr;
+  }
   env->DeleteGlobalRef(bindingsClass_);
   bindingsClass_ = nullptr;
 }

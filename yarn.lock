@@ -5136,27 +5136,6 @@ __metadata:
   languageName: node
   linkType: hard
 
-"react-native-mmkv@npm:^4.3.0":
-  version: 4.3.0
-  resolution: "react-native-mmkv@npm:4.3.0"
-  peerDependencies:
-    react: "*"
-    react-native: "*"
-    react-native-nitro-modules: "*"
-  checksum: 10c0/ef4c89224c4452ae9b5b903fe9c24a17cf8f03eab77fa68f101a485a508e68af0aad0659a01c0c2cc6b71a5bd0ad5e403a3994e499c0db8a471d413f18d5deb8
-  languageName: node
-  linkType: hard
-
-"react-native-nitro-modules@npm:^0.35.2":
-  version: 0.35.2
-  resolution: "react-native-nitro-modules@npm:0.35.2"
-  peerDependencies:
-    react: "*"
-    react-native: "*"
-  checksum: 10c0/6136f36ac1dc01dface7a4765b3258c8c8c766bc77c53765dfa6a29ff9f2091b13ce3e2a8a651e515cda045d125fc6fdd4f450cb4aabb0ab94c3d6b4b7b55b77
-  languageName: node
-  linkType: hard
-
 "react-native-pretext@workspace:.":
   version: 0.0.0-use.local
   resolution: "react-native-pretext@workspace:."
@@ -5166,8 +5145,6 @@ __metadata:
     del-cli: "npm:^5.0.0"
     prettier: "npm:^3.5.3"
     react-native-builder-bob: "npm:^0.20.0"
-    react-native-mmkv: "npm:^4.3.0"
-    react-native-nitro-modules: "npm:^0.35.2"
     react-native-worklets: "npm:^0.8.1"
     release-it: "npm:^15.0.0"
     typescript: "npm:^5.0.0"
