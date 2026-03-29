@@ -12,12 +12,14 @@
 @property (nonatomic, assign) CGFloat letterSpacing;
 @property (nonatomic, assign) CGFloat lineHeight;
 @property (nonatomic, assign) NSInteger numberOfLines;
+@property (nonatomic, assign) BOOL selectable;
 @property (nonatomic, copy) NSString *text;
 @property (nonatomic, copy) NSString *textAlign;
 @end
 
 @implementation RNPretextTextView {
   UILabel *_label;
+  UITextView *_textView;
 }
 
 - (instancetype)init
@@ -32,6 +34,20 @@
     _label.backgroundColor = UIColor.clearColor;
     _label.numberOfLines = 0;
     [self addSubview:_label];
+
+    _textView = [[UITextView alloc] initWithFrame:self.bounds];
+    _textView.autoresizingMask =
+        UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    _textView.backgroundColor = UIColor.clearColor;
+    _textView.editable = NO;
+    _textView.scrollEnabled = NO;
+    _textView.selectable = NO;
+    _textView.showsHorizontalScrollIndicator = NO;
+    _textView.showsVerticalScrollIndicator = NO;
+    _textView.textContainerInset = UIEdgeInsetsZero;
+    _textView.textContainer.lineFragmentPadding = 0;
+    _textView.hidden = YES;
+    [self addSubview:_textView];
   }
 
   return self;
@@ -42,113 +58,116 @@
   [super layoutSubviews];
   _label.frame = self.bounds;
   _label.preferredMaxLayoutWidth = CGRectGetWidth(self.bounds);
+  _textView.frame = self.bounds;
+  _textView.textContainer.size = self.bounds.size;
 }
 
 - (void)setText:(NSString *)text
 {
   _text = [text copy];
-  [self updateLabel];
+  [self updateTextDisplay];
 }
 
 - (void)setColor:(UIColor *)color
 {
   _color = color;
-  [self updateLabel];
+  [self updateTextDisplay];
 }
 
 - (void)setFontFamily:(NSString *)fontFamily
 {
   _fontFamily = [fontFamily copy];
-  [self updateLabel];
+  [self updateTextDisplay];
 }
 
 - (void)setFontSize:(CGFloat)fontSize
 {
   _fontSize = fontSize;
-  [self updateLabel];
+  [self updateTextDisplay];
 }
 
 - (void)setFontStyle:(NSString *)fontStyle
 {
   _fontStyle = [fontStyle copy];
-  [self updateLabel];
+  [self updateTextDisplay];
 }
 
 - (void)setFontWeight:(NSString *)fontWeight
 {
   _fontWeight = [fontWeight copy];
-  [self updateLabel];
+  [self updateTextDisplay];
 }
 
 - (void)setLetterSpacing:(CGFloat)letterSpacing
 {
   _letterSpacing = letterSpacing;
-  [self updateLabel];
+  [self updateTextDisplay];
 }
 
 - (void)setLineHeight:(CGFloat)lineHeight
 {
   _lineHeight = lineHeight;
-  [self updateLabel];
+  [self updateTextDisplay];
 }
 
 - (void)setNumberOfLines:(NSInteger)numberOfLines
 {
   _numberOfLines = numberOfLines;
   _label.numberOfLines = numberOfLines > 0 ? numberOfLines : 0;
+  _textView.textContainer.maximumNumberOfLines = numberOfLines > 0 ? numberOfLines : 0;
 }
 
 - (void)setEllipsizeMode:(NSString *)ellipsizeMode
 {
   _ellipsizeMode = [ellipsizeMode copy];
+  NSLineBreakMode lineBreakMode = NSLineBreakByClipping;
 
   if ([ellipsizeMode isEqualToString:@"head"]) {
-    _label.lineBreakMode = NSLineBreakByTruncatingHead;
-    return;
+    lineBreakMode = NSLineBreakByTruncatingHead;
+  } else if ([ellipsizeMode isEqualToString:@"middle"]) {
+    lineBreakMode = NSLineBreakByTruncatingMiddle;
+  } else if ([ellipsizeMode isEqualToString:@"tail"]) {
+    lineBreakMode = NSLineBreakByTruncatingTail;
   }
 
-  if ([ellipsizeMode isEqualToString:@"middle"]) {
-    _label.lineBreakMode = NSLineBreakByTruncatingMiddle;
-    return;
-  }
-
-  if ([ellipsizeMode isEqualToString:@"tail"]) {
-    _label.lineBreakMode = NSLineBreakByTruncatingTail;
-    return;
-  }
-
-  _label.lineBreakMode = NSLineBreakByClipping;
+  _label.lineBreakMode = lineBreakMode;
+  _textView.textContainer.lineBreakMode = lineBreakMode;
 }
 
 - (void)setTextAlign:(NSString *)textAlign
 {
   _textAlign = [textAlign copy];
+  NSTextAlignment alignment = NSTextAlignmentLeft;
 
   if ([textAlign isEqualToString:@"center"]) {
-    _label.textAlignment = NSTextAlignmentCenter;
-    return;
+    alignment = NSTextAlignmentCenter;
+  } else if ([textAlign isEqualToString:@"right"]) {
+    alignment = NSTextAlignmentRight;
+  } else if ([textAlign isEqualToString:@"justify"]) {
+    alignment = NSTextAlignmentJustified;
   }
 
-  if ([textAlign isEqualToString:@"right"]) {
-    _label.textAlignment = NSTextAlignmentRight;
-    return;
-  }
-
-  if ([textAlign isEqualToString:@"justify"]) {
-    _label.textAlignment = NSTextAlignmentJustified;
-    return;
-  }
-
-  _label.textAlignment = NSTextAlignmentLeft;
+  _label.textAlignment = alignment;
+  _textView.textAlignment = alignment;
+  [self updateTextDisplay];
 }
 
-- (void)updateLabel
+- (void)setSelectable:(BOOL)selectable
+{
+  _selectable = selectable;
+  _label.hidden = selectable;
+  _textView.hidden = !selectable;
+  _textView.selectable = selectable;
+  _textView.userInteractionEnabled = selectable;
+}
+
+- (NSAttributedString *)buildAttributedText
 {
   NSString *text = _text ?: @"";
   UIFont *font =
       [RCTFont updateFont:nil
                withFamily:_fontFamily
-                     size:@(_fontSize)
+                    size:@(_fontSize)
                    weight:_fontWeight
                     style:_fontStyle
                   variant:nil
@@ -174,8 +193,14 @@
     attributes[NSParagraphStyleAttributeName] = paragraphStyle;
   }
 
-  _label.attributedText =
-      [[NSAttributedString alloc] initWithString:text attributes:attributes];
+  return [[NSAttributedString alloc] initWithString:text attributes:attributes];
+}
+
+- (void)updateTextDisplay
+{
+  NSAttributedString *attributedText = [self buildAttributedText];
+  _label.attributedText = attributedText;
+  _textView.attributedText = attributedText;
 }
 
 @end
@@ -206,6 +231,7 @@ RCT_EXPORT_VIEW_PROPERTY(fontWeight, NSString)
 RCT_EXPORT_VIEW_PROPERTY(letterSpacing, CGFloat)
 RCT_EXPORT_VIEW_PROPERTY(lineHeight, CGFloat)
 RCT_EXPORT_VIEW_PROPERTY(numberOfLines, NSInteger)
+RCT_EXPORT_VIEW_PROPERTY(selectable, BOOL)
 RCT_EXPORT_VIEW_PROPERTY(text, NSString)
 RCT_EXPORT_VIEW_PROPERTY(textAlign, NSString)
 

@@ -7,10 +7,13 @@
 @property (nonatomic, assign) NSInteger handle;
 @property (nonatomic, assign) NSInteger numberOfLines;
 @property (nonatomic, copy) NSString *ellipsizeMode;
+@property (nonatomic, assign) BOOL selectable;
 @end
 
 @implementation RNPretextPreparedTextView {
   UILabel *_label;
+  UITextView *_textView;
+  NSAttributedString *_resolvedText;
 }
 
 - (instancetype)init
@@ -25,6 +28,20 @@
     _label.lineBreakMode = NSLineBreakByClipping;
     _label.numberOfLines = 0;
     [self addSubview:_label];
+
+    _textView = [[UITextView alloc] initWithFrame:self.bounds];
+    _textView.autoresizingMask =
+        UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    _textView.backgroundColor = UIColor.clearColor;
+    _textView.editable = NO;
+    _textView.scrollEnabled = NO;
+    _textView.selectable = NO;
+    _textView.showsHorizontalScrollIndicator = NO;
+    _textView.showsVerticalScrollIndicator = NO;
+    _textView.textContainerInset = UIEdgeInsetsZero;
+    _textView.textContainer.lineFragmentPadding = 0;
+    _textView.hidden = YES;
+    [self addSubview:_textView];
   }
 
   return self;
@@ -35,6 +52,8 @@
   [super layoutSubviews];
   _label.frame = self.bounds;
   _label.preferredMaxLayoutWidth = CGRectGetWidth(self.bounds);
+  _textView.frame = self.bounds;
+  _textView.textContainer.size = self.bounds.size;
 }
 
 - (void)setHandle:(NSInteger)handle
@@ -43,40 +62,52 @@
   _handle = handle;
 
   if (handle <= 0) {
-    _label.attributedText = nil;
+    _resolvedText = nil;
+    [self updateTextDisplay];
     return;
   }
 
-  _label.attributedText =
-      rnpretext::preparedAttributedTextForHandle((uint64_t)handle);
+  _resolvedText = rnpretext::preparedAttributedTextForHandle((uint64_t)handle);
+  [self updateTextDisplay];
 }
 
 - (void)setNumberOfLines:(NSInteger)numberOfLines
 {
   _numberOfLines = numberOfLines;
   _label.numberOfLines = numberOfLines > 0 ? numberOfLines : 0;
+  _textView.textContainer.maximumNumberOfLines = numberOfLines > 0 ? numberOfLines : 0;
 }
 
 - (void)setEllipsizeMode:(NSString *)ellipsizeMode
 {
   _ellipsizeMode = [ellipsizeMode copy];
+  NSLineBreakMode lineBreakMode = NSLineBreakByClipping;
 
   if ([ellipsizeMode isEqualToString:@"head"]) {
-    _label.lineBreakMode = NSLineBreakByTruncatingHead;
-    return;
+    lineBreakMode = NSLineBreakByTruncatingHead;
+  } else if ([ellipsizeMode isEqualToString:@"middle"]) {
+    lineBreakMode = NSLineBreakByTruncatingMiddle;
+  } else if ([ellipsizeMode isEqualToString:@"tail"]) {
+    lineBreakMode = NSLineBreakByTruncatingTail;
   }
 
-  if ([ellipsizeMode isEqualToString:@"middle"]) {
-    _label.lineBreakMode = NSLineBreakByTruncatingMiddle;
-    return;
-  }
+  _label.lineBreakMode = lineBreakMode;
+  _textView.textContainer.lineBreakMode = lineBreakMode;
+}
 
-  if ([ellipsizeMode isEqualToString:@"tail"]) {
-    _label.lineBreakMode = NSLineBreakByTruncatingTail;
-    return;
-  }
+- (void)setSelectable:(BOOL)selectable
+{
+  _selectable = selectable;
+  _label.hidden = selectable;
+  _textView.hidden = !selectable;
+  _textView.selectable = selectable;
+  _textView.userInteractionEnabled = selectable;
+}
 
-  _label.lineBreakMode = NSLineBreakByClipping;
+- (void)updateTextDisplay
+{
+  _label.attributedText = _resolvedText;
+  _textView.attributedText = _resolvedText;
 }
 
 @end
@@ -100,6 +131,7 @@ RCT_EXPORT_MODULE(RNPretextPreparedTextView)
 
 RCT_EXPORT_VIEW_PROPERTY(handle, NSInteger)
 RCT_EXPORT_VIEW_PROPERTY(numberOfLines, NSInteger)
+RCT_EXPORT_VIEW_PROPERTY(selectable, BOOL)
 RCT_CUSTOM_VIEW_PROPERTY(ellipsizeMode, NSString, RNPretextPreparedTextView)
 {
   view.ellipsizeMode = [RCTConvert NSString:json];

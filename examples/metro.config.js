@@ -11,20 +11,21 @@ const { wrapWithReanimatedMetroConfig } = require('react-native-reanimated/metro
 const appNodeModules = path.resolve(__dirname, 'node_modules');
 const packageRoot = path.resolve(__dirname, '..');
 const packageNodeModules = path.resolve(packageRoot, 'node_modules');
-const duplicatePackageNames = ['react', 'react-native', 'react-native-reanimated', 'react-native-worklets'];
+const runtimePeerPackages = ['react', 'react-native', 'react-native-reanimated', 'react-native-worklets'];
 const escapePathForRegex = value => value.replace(/[|\\{}()[\]^$+*?.-]/g, '\\$&');
+
+function buildRuntimePeerAliases(nodeModulesRoot) {
+  return Object.fromEntries(runtimePeerPackages.map(packageName => [packageName, path.resolve(nodeModulesRoot, packageName)]));
+}
+
+function buildDuplicateRuntimePeerBlockList(nodeModulesRoot) {
+  return runtimePeerPackages.map(packageName => new RegExp(`${escapePathForRegex(path.join(nodeModulesRoot, packageName))}/.*`));
+}
+
 const config = {
   resolver: {
-    // `react-native-pretext` is linked in through a portal. If Metro resolves
-    // these runtime peers from both the app and the package root, Worklets and
-    // Reanimated lose object identity guarantees and shared values freeze.
-    blockList: duplicatePackageNames.map(packageName => new RegExp(`${escapePathForRegex(path.join(packageNodeModules, packageName))}/.*`)),
-    extraNodeModules: {
-      react: path.resolve(appNodeModules, 'react'),
-      'react-native': path.resolve(appNodeModules, 'react-native'),
-      'react-native-reanimated': path.resolve(appNodeModules, 'react-native-reanimated'),
-      'react-native-worklets': path.resolve(appNodeModules, 'react-native-worklets'),
-    },
+    blockList: buildDuplicateRuntimePeerBlockList(packageNodeModules),
+    extraNodeModules: buildRuntimePeerAliases(appNodeModules),
     nodeModulesPaths: [appNodeModules, packageNodeModules],
     unstable_enableSymlinks: true,
   },

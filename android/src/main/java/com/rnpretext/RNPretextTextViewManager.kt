@@ -82,6 +82,15 @@ internal class RNPretextTextViewManager : SimpleViewManager<RNPretextTextViewMan
         view.setSingleLine(false)
     }
 
+    @ReactProp(name = "selectable", defaultBoolean = false)
+    fun setSelectable(view: RNPretextTextView, selectable: Boolean) {
+        view.setTextIsSelectable(selectable)
+        view.isFocusable = selectable
+        view.isFocusableInTouchMode = selectable
+        view.isClickable = selectable
+        view.isLongClickable = selectable
+    }
+
     @ReactProp(name = "ellipsizeMode")
     fun setEllipsizeMode(view: RNPretextTextView, ellipsizeMode: String?) {
         view.ellipsize = when (ellipsizeMode) {

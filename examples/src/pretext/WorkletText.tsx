@@ -19,13 +19,14 @@ type WorkletTextProps = {
   children: WorkletTextValue;
   ellipsizeMode?: 'clip' | 'head' | 'middle' | 'tail';
   numberOfLines?: number;
+  selectable?: boolean;
   style?: StyleProp<TextStyle>;
   testID?: string;
 };
 
 const AnimatedNativeTextView = Animated.createAnimatedComponent(TextView as React.ComponentType<Record<string, unknown>>);
 
-export function WorkletText({ children, ellipsizeMode, numberOfLines, style, testID }: WorkletTextProps) {
+export function WorkletText({ children, ellipsizeMode, numberOfLines, selectable, style, testID }: WorkletTextProps) {
   const animatedProps = useAnimatedProps(() => {
     const text = typeof children === 'string' ? children : children == null ? '' : (children.value ?? '');
 
@@ -43,6 +44,7 @@ export function WorkletText({ children, ellipsizeMode, numberOfLines, style, tes
         {...textProps}
         ellipsizeMode={ellipsizeMode}
         numberOfLines={numberOfLines}
+        selectable={selectable}
         style={styles.fill}
         testID={testID}
       />

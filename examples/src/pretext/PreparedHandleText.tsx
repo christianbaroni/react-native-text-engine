@@ -12,10 +12,11 @@ type PreparedHandleTextProps = {
   ellipsizeMode?: 'clip' | 'head' | 'middle' | 'tail';
   handle: HandleValue;
   numberOfLines?: number;
+  selectable?: boolean;
   style?: StyleProp<ViewStyle>;
 };
 
-export function PreparedHandleText({ ellipsizeMode, handle, numberOfLines, style }: PreparedHandleTextProps) {
+export function PreparedHandleText({ ellipsizeMode, handle, numberOfLines, selectable, style }: PreparedHandleTextProps) {
   const animatedProps = useAnimatedProps(() => ({
     handle: handle.value,
   }));
@@ -28,6 +29,7 @@ export function PreparedHandleText({ ellipsizeMode, handle, numberOfLines, style
         animatedProps={animatedProps}
         ellipsizeMode={ellipsizeMode}
         numberOfLines={numberOfLines}
+        selectable={selectable}
         style={styles.fill}
       />
     </View>

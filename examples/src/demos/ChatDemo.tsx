@@ -427,7 +427,7 @@ function ChatBubble({
 }
 
 function PreparedBubbleText({ handle }: { handle: DerivedValue<number> }) {
-  return <PreparedHandleText ellipsizeMode="clip" handle={handle} style={styles.preparedTextFrame} />;
+  return <PreparedHandleText ellipsizeMode="clip" handle={handle} selectable style={styles.preparedTextFrame} />;
 }
 
 function FallbackBubbleText({

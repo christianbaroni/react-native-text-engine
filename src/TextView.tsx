@@ -1,12 +1,5 @@
 import React from 'react';
-import {
-  Platform,
-  requireNativeComponent,
-  type ColorValue,
-  type StyleProp,
-  type ViewProps,
-  type ViewStyle,
-} from 'react-native';
+import { Platform, requireNativeComponent, type ColorValue, type StyleProp, type ViewProps, type ViewStyle } from 'react-native';
 
 export type TextViewProps = ViewProps & {
   color?: ColorValue;
@@ -18,6 +11,7 @@ export type TextViewProps = ViewProps & {
   letterSpacing?: number;
   lineHeight?: number;
   numberOfLines?: number;
+  selectable?: boolean;
   style?: StyleProp<ViewStyle>;
   text?: string;
   textAlign?: 'auto' | 'center' | 'justify' | 'left' | 'right';
