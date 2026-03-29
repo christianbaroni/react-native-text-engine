@@ -30,6 +30,29 @@ export type TextMeasureStyle = {
 };
 
 /**
+ * Inline text-style overrides that can vary within one prepared text block.
+ *
+ * Block-level layout policy such as `allowFontScaling`, `includeFontPadding`,
+ * and `textBreakStrategy` remains owned by the base `TextMeasureStyle`.
+ */
+export type TextMeasureRunStyle = Pick<
+  TextMeasureStyle,
+  'color' | 'fontFamily' | 'fontSize' | 'fontStyle' | 'fontWeight' | 'letterSpacing' | 'lineHeight' | 'tabularNumbers'
+>;
+
+/**
+ * UTF-16 range-local style override inside one prepared text block.
+ *
+ * Runs must be sorted, non-overlapping, and remain within the source text's
+ * UTF-16 bounds. `style` is a patch over the base `TextMeasureStyle`.
+ */
+export type TextMeasureRun = Readonly<{
+  end: number;
+  start: number;
+  style: TextMeasureRunStyle;
+}>;
+
+/**
  * Width-constrained layout request against a prepared text block.
  */
 export type LayoutOptions = {

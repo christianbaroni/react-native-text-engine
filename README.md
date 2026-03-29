@@ -109,6 +109,25 @@ const width = measureWidth('123.45', {
 const block = measure('Long paragraph...', style, { width: 320 });
 ```
 
+### Inline runs
+
+```ts
+import { measure, prepare, type TextMeasureRun } from 'react-native-pretext';
+
+const text = 'Ship bold code exactly';
+const style = { fontSize: 17, lineHeight: 24 };
+const runs: readonly TextMeasureRun[] = [
+  { start: 5, end: 9, style: { fontWeight: '700' } },
+  { start: 10, end: 14, style: { fontFamily: 'Menlo', tabularNumbers: true } },
+];
+
+const prepared = prepare(text, style, runs);
+const layout = measure(text, style, { width: 320 }, runs);
+```
+
+Runs are UTF-16 offsets into the source string.
+They must be sorted and non-overlapping.
+
 ### Batch work
 
 ```ts
@@ -187,6 +206,18 @@ type TextMeasureStyle = {
 
 This is not meant to mirror the entire Text style API.
 Only layout-relevant or prepared-render-relevant facts belong here.
+
+Inline overrides use the run-local subset:
+
+```ts
+type TextMeasureRunStyle = Pick<
+  TextMeasureStyle,
+  'color' | 'fontFamily' | 'fontSize' | 'fontStyle' | 'fontWeight' | 'letterSpacing' | 'lineHeight' | 'tabularNumbers'
+>;
+```
+
+Block-level layout policy such as `allowFontScaling`, `includeFontPadding`, and
+`textBreakStrategy` remains owned by the base `TextMeasureStyle`.
 
 ## Handle lifecycle
 

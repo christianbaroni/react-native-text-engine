@@ -4,11 +4,13 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.os.Build
 import android.text.Layout
+import android.text.Spannable
 import android.text.SpannableString
 import android.text.StaticLayout
 import android.text.TextPaint
 import android.text.TextUtils
 import android.text.style.LineHeightSpan
+import android.text.style.MetricAffectingSpan
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.common.assets.ReactFontManager
 import com.facebook.react.uimanager.DisplayMetricsHolder
@@ -33,6 +35,31 @@ internal object RNPretextBindings {
         val textBreakStrategy: Int,
         val textColor: Int?,
         val textPaint: TextPaint,
+    )
+
+    private data class TextMeasureRunStyle(
+        val color: String?,
+        val fontFamily: String?,
+        val fontSize: Double,
+        val fontStyle: String?,
+        val fontWeight: String?,
+        val hasColor: Boolean,
+        val hasFontFamily: Boolean,
+        val hasFontSize: Boolean,
+        val hasFontStyle: Boolean,
+        val hasFontWeight: Boolean,
+        val hasLetterSpacing: Boolean,
+        val hasLineHeight: Boolean,
+        val hasTabularNumbers: Boolean,
+        val letterSpacing: Double,
+        val lineHeight: Double,
+        val tabularNumbers: Boolean,
+    )
+
+    private data class TextMeasureRun(
+        val end: Int,
+        val start: Int,
+        val style: TextMeasureRunStyle,
     )
 
     private data class PreparedTextData(
@@ -129,6 +156,160 @@ internal object RNPretextBindings {
     }
 
     @JvmStatic
+    fun prepareWithRuns(
+        text: String,
+        color: String?,
+        fontFamily: String?,
+        fontSize: Double,
+        fontWeight: String?,
+        fontStyle: String?,
+        letterSpacing: Double,
+        lineHeight: Double,
+        allowFontScaling: Boolean,
+        includeFontPadding: Boolean,
+        tabularNumbers: Boolean,
+        textBreakStrategy: String?,
+        runStarts: IntArray,
+        runEnds: IntArray,
+        runStyleMasks: IntArray,
+        runColors: Array<String?>,
+        runFontFamilies: Array<String?>,
+        runFontSizes: DoubleArray,
+        runFontWeights: Array<String?>,
+        runFontStyles: Array<String?>,
+        runLetterSpacings: DoubleArray,
+        runLineHeights: DoubleArray,
+        runTabularNumbers: BooleanArray,
+    ): Long {
+        val baseStyle = resolveTextStyle(
+            color = color,
+            fontFamily = fontFamily,
+            fontSize = fontSize,
+            fontWeight = fontWeight,
+            fontStyle = fontStyle,
+            letterSpacing = letterSpacing,
+            lineHeight = lineHeight,
+            allowFontScaling = allowFontScaling,
+            includeFontPadding = includeFontPadding,
+            tabularNumbers = tabularNumbers,
+            textBreakStrategy = textBreakStrategy,
+        )
+        val runs =
+            buildRuns(
+                textLength = text.length,
+                runStarts = runStarts,
+                runEnds = runEnds,
+                runStyleMasks = runStyleMasks,
+                runColors = runColors,
+                runFontFamilies = runFontFamilies,
+                runFontSizes = runFontSizes,
+                runFontWeights = runFontWeights,
+                runFontStyles = runFontStyles,
+                runLetterSpacings = runLetterSpacings,
+                runLineHeights = runLineHeights,
+                runTabularNumbers = runTabularNumbers,
+            )
+
+        val handle = nextHandle.getAndIncrement()
+        preparedTexts[handle] =
+            buildPreparedText(text, baseStyle, runs) { runStyle ->
+                resolveTextStyle(
+                    color = if (runStyle.hasColor) runStyle.color else color,
+                    fontFamily = if (runStyle.hasFontFamily) runStyle.fontFamily else fontFamily,
+                    fontSize = if (runStyle.hasFontSize) runStyle.fontSize else fontSize,
+                    fontWeight = if (runStyle.hasFontWeight) runStyle.fontWeight else fontWeight,
+                    fontStyle = if (runStyle.hasFontStyle) runStyle.fontStyle else fontStyle,
+                    letterSpacing = if (runStyle.hasLetterSpacing) runStyle.letterSpacing else letterSpacing,
+                    lineHeight = if (runStyle.hasLineHeight) runStyle.lineHeight else lineHeight,
+                    allowFontScaling = allowFontScaling,
+                    includeFontPadding = includeFontPadding,
+                    tabularNumbers = if (runStyle.hasTabularNumbers) runStyle.tabularNumbers else tabularNumbers,
+                    textBreakStrategy = textBreakStrategy,
+                )
+            }
+        return handle
+    }
+
+    @JvmStatic
+    fun prepareBatchWithRuns(
+        texts: Array<String>,
+        color: String?,
+        fontFamily: String?,
+        fontSize: Double,
+        fontWeight: String?,
+        fontStyle: String?,
+        letterSpacing: Double,
+        lineHeight: Double,
+        allowFontScaling: Boolean,
+        includeFontPadding: Boolean,
+        tabularNumbers: Boolean,
+        textBreakStrategy: String?,
+        runCounts: IntArray,
+        runStarts: IntArray,
+        runEnds: IntArray,
+        runStyleMasks: IntArray,
+        runColors: Array<String?>,
+        runFontFamilies: Array<String?>,
+        runFontSizes: DoubleArray,
+        runFontWeights: Array<String?>,
+        runFontStyles: Array<String?>,
+        runLetterSpacings: DoubleArray,
+        runLineHeights: DoubleArray,
+        runTabularNumbers: BooleanArray,
+    ): LongArray {
+        val baseStyle = resolveTextStyle(
+            color = color,
+            fontFamily = fontFamily,
+            fontSize = fontSize,
+            fontWeight = fontWeight,
+            fontStyle = fontStyle,
+            letterSpacing = letterSpacing,
+            lineHeight = lineHeight,
+            allowFontScaling = allowFontScaling,
+            includeFontPadding = includeFontPadding,
+            tabularNumbers = tabularNumbers,
+            textBreakStrategy = textBreakStrategy,
+        )
+        val runsByText =
+            buildRunsByText(
+                texts = texts,
+                runCounts = runCounts,
+                runStarts = runStarts,
+                runEnds = runEnds,
+                runStyleMasks = runStyleMasks,
+                runColors = runColors,
+                runFontFamilies = runFontFamilies,
+                runFontSizes = runFontSizes,
+                runFontWeights = runFontWeights,
+                runFontStyles = runFontStyles,
+                runLetterSpacings = runLetterSpacings,
+                runLineHeights = runLineHeights,
+                runTabularNumbers = runTabularNumbers,
+            )
+
+        return LongArray(texts.size) { index ->
+            val handle = nextHandle.getAndIncrement()
+            preparedTexts[handle] =
+                buildPreparedText(texts[index], baseStyle, runsByText[index]) { runStyle ->
+                    resolveTextStyle(
+                        color = if (runStyle.hasColor) runStyle.color else color,
+                        fontFamily = if (runStyle.hasFontFamily) runStyle.fontFamily else fontFamily,
+                        fontSize = if (runStyle.hasFontSize) runStyle.fontSize else fontSize,
+                        fontWeight = if (runStyle.hasFontWeight) runStyle.fontWeight else fontWeight,
+                        fontStyle = if (runStyle.hasFontStyle) runStyle.fontStyle else fontStyle,
+                        letterSpacing = if (runStyle.hasLetterSpacing) runStyle.letterSpacing else letterSpacing,
+                        lineHeight = if (runStyle.hasLineHeight) runStyle.lineHeight else lineHeight,
+                        allowFontScaling = allowFontScaling,
+                        includeFontPadding = includeFontPadding,
+                        tabularNumbers = if (runStyle.hasTabularNumbers) runStyle.tabularNumbers else tabularNumbers,
+                        textBreakStrategy = textBreakStrategy,
+                    )
+                }
+            handle
+        }
+    }
+
+    @JvmStatic
     fun release(handle: Long) {
         preparedTexts.remove(handle)
     }
@@ -171,6 +352,79 @@ internal object RNPretextBindings {
     }
 
     @JvmStatic
+    fun measureWidthWithRuns(
+        text: String,
+        color: String?,
+        fontFamily: String?,
+        fontSize: Double,
+        fontWeight: String?,
+        fontStyle: String?,
+        letterSpacing: Double,
+        lineHeight: Double,
+        allowFontScaling: Boolean,
+        includeFontPadding: Boolean,
+        tabularNumbers: Boolean,
+        textBreakStrategy: String?,
+        runStarts: IntArray,
+        runEnds: IntArray,
+        runStyleMasks: IntArray,
+        runColors: Array<String?>,
+        runFontFamilies: Array<String?>,
+        runFontSizes: DoubleArray,
+        runFontWeights: Array<String?>,
+        runFontStyles: Array<String?>,
+        runLetterSpacings: DoubleArray,
+        runLineHeights: DoubleArray,
+        runTabularNumbers: BooleanArray,
+    ): Double {
+        val baseStyle = resolveTextStyle(
+            color = color,
+            fontFamily = fontFamily,
+            fontSize = fontSize,
+            fontWeight = fontWeight,
+            fontStyle = fontStyle,
+            letterSpacing = letterSpacing,
+            lineHeight = lineHeight,
+            allowFontScaling = allowFontScaling,
+            includeFontPadding = includeFontPadding,
+            tabularNumbers = tabularNumbers,
+            textBreakStrategy = textBreakStrategy,
+        )
+        val runs =
+            buildRuns(
+                textLength = text.length,
+                runStarts = runStarts,
+                runEnds = runEnds,
+                runStyleMasks = runStyleMasks,
+                runColors = runColors,
+                runFontFamilies = runFontFamilies,
+                runFontSizes = runFontSizes,
+                runFontWeights = runFontWeights,
+                runFontStyles = runFontStyles,
+                runLetterSpacings = runLetterSpacings,
+                runLineHeights = runLineHeights,
+                runTabularNumbers = runTabularNumbers,
+            )
+        val prepared =
+            buildPreparedText(text, baseStyle, runs) { runStyle ->
+                resolveTextStyle(
+                    color = if (runStyle.hasColor) runStyle.color else color,
+                    fontFamily = if (runStyle.hasFontFamily) runStyle.fontFamily else fontFamily,
+                    fontSize = if (runStyle.hasFontSize) runStyle.fontSize else fontSize,
+                    fontWeight = if (runStyle.hasFontWeight) runStyle.fontWeight else fontWeight,
+                    fontStyle = if (runStyle.hasFontStyle) runStyle.fontStyle else fontStyle,
+                    letterSpacing = if (runStyle.hasLetterSpacing) runStyle.letterSpacing else letterSpacing,
+                    lineHeight = if (runStyle.hasLineHeight) runStyle.lineHeight else lineHeight,
+                    allowFontScaling = allowFontScaling,
+                    includeFontPadding = includeFontPadding,
+                    tabularNumbers = if (runStyle.hasTabularNumbers) runStyle.tabularNumbers else tabularNumbers,
+                    textBreakStrategy = textBreakStrategy,
+                )
+            }
+        return Layout.getDesiredWidth(prepared.textWithLineHeight, prepared.style.textPaint).toDouble().toDp()
+    }
+
+    @JvmStatic
     fun measure(
         text: String,
         color: String?,
@@ -202,6 +456,82 @@ internal object RNPretextBindings {
             textBreakStrategy = textBreakStrategy,
         )
         val prepared = buildPreparedText(text, style)
+        return packLayout(buildLayout(prepared, width, maxLines, ellipsizeMode, includeLines = false))
+    }
+
+    @JvmStatic
+    fun measureWithRuns(
+        text: String,
+        color: String?,
+        fontFamily: String?,
+        fontSize: Double,
+        fontWeight: String?,
+        fontStyle: String?,
+        letterSpacing: Double,
+        lineHeight: Double,
+        allowFontScaling: Boolean,
+        includeFontPadding: Boolean,
+        tabularNumbers: Boolean,
+        textBreakStrategy: String?,
+        width: Double,
+        maxLines: Int,
+        ellipsizeMode: String?,
+        runStarts: IntArray,
+        runEnds: IntArray,
+        runStyleMasks: IntArray,
+        runColors: Array<String?>,
+        runFontFamilies: Array<String?>,
+        runFontSizes: DoubleArray,
+        runFontWeights: Array<String?>,
+        runFontStyles: Array<String?>,
+        runLetterSpacings: DoubleArray,
+        runLineHeights: DoubleArray,
+        runTabularNumbers: BooleanArray,
+    ): DoubleArray {
+        val baseStyle = resolveTextStyle(
+            color = color,
+            fontFamily = fontFamily,
+            fontSize = fontSize,
+            fontWeight = fontWeight,
+            fontStyle = fontStyle,
+            letterSpacing = letterSpacing,
+            lineHeight = lineHeight,
+            allowFontScaling = allowFontScaling,
+            includeFontPadding = includeFontPadding,
+            tabularNumbers = tabularNumbers,
+            textBreakStrategy = textBreakStrategy,
+        )
+        val runs =
+            buildRuns(
+                textLength = text.length,
+                runStarts = runStarts,
+                runEnds = runEnds,
+                runStyleMasks = runStyleMasks,
+                runColors = runColors,
+                runFontFamilies = runFontFamilies,
+                runFontSizes = runFontSizes,
+                runFontWeights = runFontWeights,
+                runFontStyles = runFontStyles,
+                runLetterSpacings = runLetterSpacings,
+                runLineHeights = runLineHeights,
+                runTabularNumbers = runTabularNumbers,
+            )
+        val prepared =
+            buildPreparedText(text, baseStyle, runs) { runStyle ->
+                resolveTextStyle(
+                    color = if (runStyle.hasColor) runStyle.color else color,
+                    fontFamily = if (runStyle.hasFontFamily) runStyle.fontFamily else fontFamily,
+                    fontSize = if (runStyle.hasFontSize) runStyle.fontSize else fontSize,
+                    fontWeight = if (runStyle.hasFontWeight) runStyle.fontWeight else fontWeight,
+                    fontStyle = if (runStyle.hasFontStyle) runStyle.fontStyle else fontStyle,
+                    letterSpacing = if (runStyle.hasLetterSpacing) runStyle.letterSpacing else letterSpacing,
+                    lineHeight = if (runStyle.hasLineHeight) runStyle.lineHeight else lineHeight,
+                    allowFontScaling = allowFontScaling,
+                    includeFontPadding = includeFontPadding,
+                    tabularNumbers = if (runStyle.hasTabularNumbers) runStyle.tabularNumbers else tabularNumbers,
+                    textBreakStrategy = textBreakStrategy,
+                )
+            }
         return packLayout(buildLayout(prepared, width, maxLines, ellipsizeMode, includeLines = false))
     }
 
@@ -242,6 +572,96 @@ internal object RNPretextBindings {
                 packed,
                 index * PACKED_LAYOUT_SIZE,
                 buildLayout(buildPreparedText(text, style), width, maxLines, ellipsizeMode, includeLines = false),
+            )
+        }
+        return packed
+    }
+
+    @JvmStatic
+    fun measureBatchWithRuns(
+        texts: Array<String>,
+        color: String?,
+        fontFamily: String?,
+        fontSize: Double,
+        fontWeight: String?,
+        fontStyle: String?,
+        letterSpacing: Double,
+        lineHeight: Double,
+        allowFontScaling: Boolean,
+        includeFontPadding: Boolean,
+        tabularNumbers: Boolean,
+        textBreakStrategy: String?,
+        width: Double,
+        maxLines: Int,
+        ellipsizeMode: String?,
+        runCounts: IntArray,
+        runStarts: IntArray,
+        runEnds: IntArray,
+        runStyleMasks: IntArray,
+        runColors: Array<String?>,
+        runFontFamilies: Array<String?>,
+        runFontSizes: DoubleArray,
+        runFontWeights: Array<String?>,
+        runFontStyles: Array<String?>,
+        runLetterSpacings: DoubleArray,
+        runLineHeights: DoubleArray,
+        runTabularNumbers: BooleanArray,
+    ): DoubleArray {
+        val baseStyle = resolveTextStyle(
+            color = color,
+            fontFamily = fontFamily,
+            fontSize = fontSize,
+            fontWeight = fontWeight,
+            fontStyle = fontStyle,
+            letterSpacing = letterSpacing,
+            lineHeight = lineHeight,
+            allowFontScaling = allowFontScaling,
+            includeFontPadding = includeFontPadding,
+            tabularNumbers = tabularNumbers,
+            textBreakStrategy = textBreakStrategy,
+        )
+        val runsByText =
+            buildRunsByText(
+                texts = texts,
+                runCounts = runCounts,
+                runStarts = runStarts,
+                runEnds = runEnds,
+                runStyleMasks = runStyleMasks,
+                runColors = runColors,
+                runFontFamilies = runFontFamilies,
+                runFontSizes = runFontSizes,
+                runFontWeights = runFontWeights,
+                runFontStyles = runFontStyles,
+                runLetterSpacings = runLetterSpacings,
+                runLineHeights = runLineHeights,
+                runTabularNumbers = runTabularNumbers,
+            )
+        val packed = DoubleArray(texts.size * PACKED_LAYOUT_SIZE)
+        texts.forEachIndexed { index, text ->
+            packLayoutInto(
+                packed,
+                index * PACKED_LAYOUT_SIZE,
+                buildLayout(
+                    buildPreparedText(text, baseStyle, runsByText[index]) { runStyle ->
+                        resolveTextStyle(
+                            color = if (runStyle.hasColor) runStyle.color else color,
+                            fontFamily = if (runStyle.hasFontFamily) runStyle.fontFamily else fontFamily,
+                            fontSize = if (runStyle.hasFontSize) runStyle.fontSize else fontSize,
+                            fontWeight = if (runStyle.hasFontWeight) runStyle.fontWeight else fontWeight,
+                            fontStyle = if (runStyle.hasFontStyle) runStyle.fontStyle else fontStyle,
+                            letterSpacing = if (runStyle.hasLetterSpacing) runStyle.letterSpacing else letterSpacing,
+                            lineHeight = if (runStyle.hasLineHeight) runStyle.lineHeight else lineHeight,
+                            allowFontScaling = allowFontScaling,
+                            includeFontPadding = includeFontPadding,
+                            tabularNumbers = if (runStyle.hasTabularNumbers) runStyle.tabularNumbers else tabularNumbers,
+                            textBreakStrategy = textBreakStrategy,
+                        )
+                    },
+                    width,
+                    maxLines,
+                    ellipsizeMode,
+                    includeLines = false,
+                ),
             )
         }
         return packed
@@ -354,7 +774,7 @@ internal object RNPretextBindings {
                         RNPretextLineHeightSpan(style.lineHeightPx),
                         0,
                         text.length,
-                        SpannableString.SPAN_INCLUSIVE_INCLUSIVE,
+                        Spannable.SPAN_INCLUSIVE_INCLUSIVE,
                     )
                 }
             }
@@ -364,6 +784,267 @@ internal object RNPretextBindings {
             text = text,
             textWithLineHeight = textWithLineHeight,
         )
+    }
+
+    private fun buildPreparedText(
+        text: String,
+        style: ResolvedTextStyle,
+        runs: List<TextMeasureRun>,
+        resolveRunStyle: (TextMeasureRunStyle) -> ResolvedTextStyle,
+    ): PreparedTextData {
+        val textWithLineHeight =
+            if (text.isEmpty()) {
+                text
+            } else {
+                buildStyledText(text, style, runs, resolveRunStyle)
+            }
+
+        return PreparedTextData(
+            style = style,
+            text = text,
+            textWithLineHeight = textWithLineHeight,
+        )
+    }
+
+    private fun buildStyledText(
+        text: String,
+        baseStyle: ResolvedTextStyle,
+        runs: List<TextMeasureRun>,
+        resolveRunStyle: (TextMeasureRunStyle) -> ResolvedTextStyle,
+    ): CharSequence {
+        val styledText = SpannableString(text)
+
+        if (baseStyle.lineHeightPx != null) {
+            applyBaseLineHeightSpans(styledText, text.length, baseStyle.lineHeightPx, runs)
+        }
+
+        runs.forEach { run ->
+            val runStyle = resolveRunStyle(run.style)
+            styledText.setSpan(
+                RNPretextTextPaintSpan(runStyle.textPaint),
+                run.start,
+                run.end,
+                Spannable.SPAN_EXCLUSIVE_EXCLUSIVE,
+            )
+
+            runStyle.lineHeightPx?.let { lineHeightPx ->
+                styledText.setSpan(
+                    RNPretextLineHeightSpan(lineHeightPx),
+                    run.start,
+                    run.end,
+                    Spannable.SPAN_EXCLUSIVE_EXCLUSIVE,
+                )
+            }
+        }
+
+        return styledText
+    }
+
+    private fun applyBaseLineHeightSpans(
+        styledText: SpannableString,
+        textLength: Int,
+        lineHeightPx: Float,
+        runs: List<TextMeasureRun>,
+    ) {
+        var cursor = 0
+
+        runs.forEach { run ->
+            if (run.style.hasLineHeight && cursor < run.start) {
+                styledText.setSpan(
+                    RNPretextLineHeightSpan(lineHeightPx),
+                    cursor,
+                    run.start,
+                    Spannable.SPAN_EXCLUSIVE_EXCLUSIVE,
+                )
+            }
+
+            if (run.style.hasLineHeight) {
+                cursor = run.end
+            }
+        }
+
+        if (cursor < textLength) {
+            styledText.setSpan(
+                RNPretextLineHeightSpan(lineHeightPx),
+                cursor,
+                textLength,
+                Spannable.SPAN_EXCLUSIVE_EXCLUSIVE,
+            )
+        }
+    }
+
+    private fun buildRuns(
+        textLength: Int,
+        runStarts: IntArray,
+        runEnds: IntArray,
+        runStyleMasks: IntArray,
+        runColors: Array<String?>,
+        runFontFamilies: Array<String?>,
+        runFontSizes: DoubleArray,
+        runFontWeights: Array<String?>,
+        runFontStyles: Array<String?>,
+        runLetterSpacings: DoubleArray,
+        runLineHeights: DoubleArray,
+        runTabularNumbers: BooleanArray,
+    ): List<TextMeasureRun> {
+        requireAlignedRunArrays(
+            runStarts.size,
+            runEnds.size,
+            runStyleMasks.size,
+            runColors.size,
+            runFontFamilies.size,
+            runFontSizes.size,
+            runFontWeights.size,
+            runFontStyles.size,
+            runLetterSpacings.size,
+            runLineHeights.size,
+            runTabularNumbers.size,
+        )
+
+        return buildRuns(
+            textLength = textLength,
+            runOffset = 0,
+            runCount = runStarts.size,
+            runStarts = runStarts,
+            runEnds = runEnds,
+            runStyleMasks = runStyleMasks,
+            runColors = runColors,
+            runFontFamilies = runFontFamilies,
+            runFontSizes = runFontSizes,
+            runFontWeights = runFontWeights,
+            runFontStyles = runFontStyles,
+            runLetterSpacings = runLetterSpacings,
+            runLineHeights = runLineHeights,
+            runTabularNumbers = runTabularNumbers,
+        )
+    }
+
+    private fun buildRuns(
+        textLength: Int,
+        runOffset: Int,
+        runCount: Int,
+        runStarts: IntArray,
+        runEnds: IntArray,
+        runStyleMasks: IntArray,
+        runColors: Array<String?>,
+        runFontFamilies: Array<String?>,
+        runFontSizes: DoubleArray,
+        runFontWeights: Array<String?>,
+        runFontStyles: Array<String?>,
+        runLetterSpacings: DoubleArray,
+        runLineHeights: DoubleArray,
+        runTabularNumbers: BooleanArray,
+    ): List<TextMeasureRun> {
+        val runs = ArrayList<TextMeasureRun>(runCount)
+        var previousEnd = 0
+
+        for (relativeIndex in 0 until runCount) {
+            val index = runOffset + relativeIndex
+            val start = runStarts[index]
+            val end = runEnds[index]
+            val styleMask = runStyleMasks[index]
+
+            require(styleMask != 0) { "RNPretext: each text run must override at least one inline style field." }
+            require(start >= 0 && end <= textLength && end > start) {
+                "RNPretext: text runs must stay within the source text and have positive length."
+            }
+            require(start >= previousEnd) { "RNPretext: text runs must be sorted and non-overlapping." }
+
+            runs.add(
+                TextMeasureRun(
+                    end = end,
+                    start = start,
+                    style =
+                        TextMeasureRunStyle(
+                            color = runColors[index],
+                            fontFamily = runFontFamilies[index],
+                            fontSize = runFontSizes[index],
+                            fontStyle = runFontStyles[index],
+                            fontWeight = runFontWeights[index],
+                            hasColor = styleMask and RUN_STYLE_HAS_COLOR != 0,
+                            hasFontFamily = styleMask and RUN_STYLE_HAS_FONT_FAMILY != 0,
+                            hasFontSize = styleMask and RUN_STYLE_HAS_FONT_SIZE != 0,
+                            hasFontStyle = styleMask and RUN_STYLE_HAS_FONT_STYLE != 0,
+                            hasFontWeight = styleMask and RUN_STYLE_HAS_FONT_WEIGHT != 0,
+                            hasLetterSpacing = styleMask and RUN_STYLE_HAS_LETTER_SPACING != 0,
+                            hasLineHeight = styleMask and RUN_STYLE_HAS_LINE_HEIGHT != 0,
+                            hasTabularNumbers = styleMask and RUN_STYLE_HAS_TABULAR_NUMBERS != 0,
+                            letterSpacing = runLetterSpacings[index],
+                            lineHeight = runLineHeights[index],
+                            tabularNumbers = runTabularNumbers[index],
+                        ),
+                ),
+            )
+            previousEnd = end
+        }
+
+        return runs
+    }
+
+    private fun buildRunsByText(
+        texts: Array<String>,
+        runCounts: IntArray,
+        runStarts: IntArray,
+        runEnds: IntArray,
+        runStyleMasks: IntArray,
+        runColors: Array<String?>,
+        runFontFamilies: Array<String?>,
+        runFontSizes: DoubleArray,
+        runFontWeights: Array<String?>,
+        runFontStyles: Array<String?>,
+        runLetterSpacings: DoubleArray,
+        runLineHeights: DoubleArray,
+        runTabularNumbers: BooleanArray,
+    ): List<List<TextMeasureRun>> {
+        require(runCounts.size == texts.size) { "RNPretext: batch text runs must align with the batch text input length." }
+        val totalRunCount = runCounts.sum()
+        requireAlignedRunArrays(
+            totalRunCount,
+            runEnds.size,
+            runStyleMasks.size,
+            runColors.size,
+            runFontFamilies.size,
+            runFontSizes.size,
+            runFontWeights.size,
+            runFontStyles.size,
+            runLetterSpacings.size,
+            runLineHeights.size,
+            runTabularNumbers.size,
+        )
+
+        val runsByText = ArrayList<List<TextMeasureRun>>(texts.size)
+        var runOffset = 0
+
+        texts.forEachIndexed { index, text ->
+            val runCount = runCounts[index]
+            runsByText.add(
+                buildRuns(
+                    textLength = text.length,
+                    runOffset = runOffset,
+                    runCount = runCount,
+                    runStarts = runStarts,
+                    runEnds = runEnds,
+                    runStyleMasks = runStyleMasks,
+                    runColors = runColors,
+                    runFontFamilies = runFontFamilies,
+                    runFontSizes = runFontSizes,
+                    runFontWeights = runFontWeights,
+                    runFontStyles = runFontStyles,
+                    runLetterSpacings = runLetterSpacings,
+                    runLineHeights = runLineHeights,
+                    runTabularNumbers = runTabularNumbers,
+                ),
+            )
+            runOffset += runCount
+        }
+
+        return runsByText
+    }
+
+    private fun requireAlignedRunArrays(expectedSize: Int, vararg actualSizes: Int) {
+        actualSizes.forEach { actualSize ->
+            require(actualSize == expectedSize) { "RNPretext: run payload arrays must stay aligned." }
+        }
     }
 
     private data class LineInfo(
@@ -562,6 +1243,29 @@ internal object RNPretextBindings {
         return this / currentDensity()
     }
 
+    private class RNPretextTextPaintSpan(textPaint: TextPaint) : MetricAffectingSpan() {
+        private val spanPaint = TextPaint(textPaint)
+
+        override fun updateMeasureState(textPaint: TextPaint) {
+            apply(textPaint)
+        }
+
+        override fun updateDrawState(textPaint: TextPaint) {
+            apply(textPaint)
+        }
+
+        private fun apply(textPaint: TextPaint) {
+            textPaint.typeface = spanPaint.typeface
+            textPaint.textSize = spanPaint.textSize
+            textPaint.letterSpacing = spanPaint.letterSpacing
+            textPaint.color = spanPaint.color
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                textPaint.fontFeatureSettings = spanPaint.fontFeatureSettings
+            }
+        }
+    }
+
     private class RNPretextLineHeightSpan(height: Float) : LineHeightSpan {
         private val lineHeight = ceil(height.toDouble()).toInt()
 
@@ -581,4 +1285,12 @@ internal object RNPretextBindings {
 
     private const val PACKED_LAYOUT_SIZE = 4
     private const val PACKED_LINE_SIZE = 4
+    private const val RUN_STYLE_HAS_COLOR = 1 shl 0
+    private const val RUN_STYLE_HAS_FONT_FAMILY = 1 shl 1
+    private const val RUN_STYLE_HAS_FONT_SIZE = 1 shl 2
+    private const val RUN_STYLE_HAS_FONT_STYLE = 1 shl 3
+    private const val RUN_STYLE_HAS_FONT_WEIGHT = 1 shl 4
+    private const val RUN_STYLE_HAS_LETTER_SPACING = 1 shl 5
+    private const val RUN_STYLE_HAS_LINE_HEIGHT = 1 shl 6
+    private const val RUN_STYLE_HAS_TABULAR_NUMBERS = 1 shl 7
 }

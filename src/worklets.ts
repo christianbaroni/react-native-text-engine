@@ -1,6 +1,6 @@
 import { createWorkletRuntime, runOnUISync, scheduleOnRuntime, type WorkletRuntime } from 'react-native-worklets';
 import { getRNPretextRuntime } from './initModule';
-import type { LayoutOptions, PreparedTextHandle, TextLayout, TextMeasureStyle } from './types';
+import type { LayoutOptions, PreparedTextHandle, TextLayout, TextMeasureRun, TextMeasureStyle } from './types';
 
 declare global {
   var _WORKLET_RUNTIME: ArrayBuffer;
@@ -80,7 +80,12 @@ export function createRNPretextWorkletRuntime(config?: PretextWorkletRuntimeConf
  * This must be called only after `react-native-pretext` has been installed into
  * the current runtime.
  */
-export function measureBatchInRuntime(texts: readonly string[], style: TextMeasureStyle | undefined, options: LayoutOptions): TextLayout[] {
+export function measureBatchInRuntime(
+  texts: readonly string[],
+  style: TextMeasureStyle | undefined,
+  options: LayoutOptions,
+  runsByText?: readonly (readonly TextMeasureRun[] | undefined)[]
+): TextLayout[] {
   'worklet';
 
   const measureBatch = globalThis.__RNPretextMeasureBatch;
@@ -88,13 +93,17 @@ export function measureBatchInRuntime(texts: readonly string[], style: TextMeasu
     throw new Error('RNPretext: measureBatchInRuntime() was called before the current runtime was installed.');
   }
 
-  return measureBatch(texts, style, options);
+  return measureBatch(texts, style, options, runsByText);
 }
 
 /**
  * Worklet-safe prepared-text creation against the current installed runtime.
  */
-export function prepareBatchInRuntime(texts: readonly string[], style?: TextMeasureStyle): PreparedTextHandle[] {
+export function prepareBatchInRuntime(
+  texts: readonly string[],
+  style?: TextMeasureStyle,
+  runsByText?: readonly (readonly TextMeasureRun[] | undefined)[]
+): PreparedTextHandle[] {
   'worklet';
 
   const prepareBatch = globalThis.__RNPretextPrepareBatch;
@@ -102,7 +111,7 @@ export function prepareBatchInRuntime(texts: readonly string[], style?: TextMeas
     throw new Error('RNPretext: prepareBatchInRuntime() was called before the current runtime was installed.');
   }
 
-  return prepareBatch(texts, style).map(buildHandle);
+  return prepareBatch(texts, style, runsByText).map(buildHandle);
 }
 
 /**

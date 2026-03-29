@@ -1,6 +1,6 @@
 import { NativeModules } from 'react-native';
 import RNPretextModule from './NativeRNPretext';
-import type { LayoutOptions, NextTextLine, TextLayout, TextLayoutLines, TextMeasureStyle } from './types';
+import type { LayoutOptions, NextTextLine, TextLayout, TextLayoutLines, TextMeasureRun, TextMeasureStyle } from './types';
 
 declare global {
   var __RNPretextInstallRuntime: ((runtimeToken: ArrayBuffer) => boolean) | undefined;
@@ -14,14 +14,29 @@ declare global {
   var __RNPretextLayoutLines:
     | ((handle: number, options: LayoutOptions) => TextLayoutLines)
     | undefined;
-  var __RNPretextMeasure: ((text: string, style: TextMeasureStyle | undefined, options: LayoutOptions) => TextLayout) | undefined;
-  var __RNPretextMeasureBatch:
-    | ((texts: readonly string[], style: TextMeasureStyle | undefined, options: LayoutOptions) => TextLayout[])
+  var __RNPretextMeasure:
+    | ((text: string, style: TextMeasureStyle | undefined, options: LayoutOptions, runs?: readonly TextMeasureRun[]) => TextLayout)
     | undefined;
-  var __RNPretextMeasureWidth: ((text: string, style: TextMeasureStyle | undefined) => number) | undefined;
-  var __RNPretextPrepare: ((text: string, style: TextMeasureStyle | undefined) => number) | undefined;
+  var __RNPretextMeasureBatch:
+    | ((
+        texts: readonly string[],
+        style: TextMeasureStyle | undefined,
+        options: LayoutOptions,
+        runsByText?: readonly (readonly TextMeasureRun[] | undefined)[]
+      ) => TextLayout[])
+    | undefined;
+  var __RNPretextMeasureWidth:
+    | ((text: string, style: TextMeasureStyle | undefined, runs?: readonly TextMeasureRun[]) => number)
+    | undefined;
+  var __RNPretextPrepare:
+    | ((text: string, style: TextMeasureStyle | undefined, runs?: readonly TextMeasureRun[]) => number)
+    | undefined;
   var __RNPretextPrepareBatch:
-    | ((texts: readonly string[], style: TextMeasureStyle | undefined) => number[])
+    | ((
+        texts: readonly string[],
+        style: TextMeasureStyle | undefined,
+        runsByText?: readonly (readonly TextMeasureRun[] | undefined)[]
+      ) => number[])
     | undefined;
   var __RNPretextRelease: ((handle: number) => void) | undefined;
   var __RNPretextReleaseMany: ((handles: readonly number[]) => void) | undefined;
@@ -33,11 +48,20 @@ type RNPretextRuntime = {
   readonly layoutBatch: (handles: readonly number[], options: LayoutOptions) => TextLayout[];
   readonly layoutNextLine: (handle: number, start: number, width: number) => NextTextLine | null;
   readonly layoutLines: (handle: number, options: LayoutOptions) => TextLayoutLines;
-  readonly measure: (text: string, style: TextMeasureStyle | undefined, options: LayoutOptions) => TextLayout;
-  readonly measureBatch: (texts: readonly string[], style: TextMeasureStyle | undefined, options: LayoutOptions) => TextLayout[];
-  readonly measureWidth: (text: string, style: TextMeasureStyle | undefined) => number;
-  readonly prepare: (text: string, style: TextMeasureStyle | undefined) => number;
-  readonly prepareBatch: (texts: readonly string[], style: TextMeasureStyle | undefined) => number[];
+  readonly measure: (text: string, style: TextMeasureStyle | undefined, options: LayoutOptions, runs?: readonly TextMeasureRun[]) => TextLayout;
+  readonly measureBatch: (
+    texts: readonly string[],
+    style: TextMeasureStyle | undefined,
+    options: LayoutOptions,
+    runsByText?: readonly (readonly TextMeasureRun[] | undefined)[]
+  ) => TextLayout[];
+  readonly measureWidth: (text: string, style: TextMeasureStyle | undefined, runs?: readonly TextMeasureRun[]) => number;
+  readonly prepare: (text: string, style: TextMeasureStyle | undefined, runs?: readonly TextMeasureRun[]) => number;
+  readonly prepareBatch: (
+    texts: readonly string[],
+    style: TextMeasureStyle | undefined,
+    runsByText?: readonly (readonly TextMeasureRun[] | undefined)[]
+  ) => number[];
   readonly release: (handle: number) => void;
   readonly releaseMany: (handles: readonly number[]) => void;
 };
@@ -87,11 +111,11 @@ function buildRuntime(): RNPretextRuntime {
     layoutBatch: (handles, options) => layoutBatch(handles, options),
     layoutNextLine: (handle, start, width) => layoutNextLine(handle, start, width),
     layoutLines: (handle, options) => layoutLines(handle, options),
-    measure: (text, style, options) => measure(text, style, options),
-    measureBatch: (texts, style, options) => measureBatch(texts, style, options),
-    measureWidth: (text, style) => measureWidth(text, style),
-    prepare: (text, style) => prepare(text, style),
-    prepareBatch: (texts, style) => prepareBatch(texts, style),
+    measure: (text, style, options, runs) => measure(text, style, options, runs),
+    measureBatch: (texts, style, options, runsByText) => measureBatch(texts, style, options, runsByText),
+    measureWidth: (text, style, runs) => measureWidth(text, style, runs),
+    prepare: (text, style, runs) => prepare(text, style, runs),
+    prepareBatch: (texts, style, runsByText) => prepareBatch(texts, style, runsByText),
     release: handle => release(handle),
     releaseMany: handles => releaseMany(handles),
   };

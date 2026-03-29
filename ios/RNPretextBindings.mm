@@ -58,6 +58,31 @@ struct ResolvedTextStyle {
   CGFloat fallbackLineHeight = 0;
 };
 
+struct TextMeasureRunStyle {
+  bool hasColor = false;
+  bool hasFontFamily = false;
+  bool hasFontSize = false;
+  bool hasFontStyle = false;
+  bool hasFontWeight = false;
+  bool hasLetterSpacing = false;
+  bool hasLineHeight = false;
+  bool hasTabularNumbers = false;
+  bool tabularNumbers = false;
+  double fontSize = 14;
+  double letterSpacing = 0;
+  double lineHeight = 0;
+  std::string color;
+  std::string fontFamily;
+  std::string fontStyle;
+  std::string fontWeight;
+};
+
+struct TextMeasureRun {
+  NSInteger end = 0;
+  NSInteger start = 0;
+  TextMeasureRunStyle style;
+};
+
 struct LayoutOptions {
   std::optional<std::string> ellipsizeMode;
   std::optional<int> maxLines;
@@ -118,6 +143,112 @@ TextMeasureStyle parseStyle(Runtime& runtime, const Value* value, size_t index, 
   readString("fontWeight", style.hasFontWeight, style.fontWeight);
 
   return style;
+}
+
+TextMeasureRunStyle parseRunStyle(Runtime& runtime, const Object& object) {
+  TextMeasureRunStyle style;
+
+  auto readBool = [&](const char* name, bool& hasValue, bool& target) {
+    if (!object.hasProperty(runtime, name)) return;
+    Value field = object.getProperty(runtime, name);
+    if (!field.isBool()) return;
+    hasValue = true;
+    target = field.getBool();
+  };
+
+  auto readNumber = [&](const char* name, bool& hasValue, double& target) {
+    if (!object.hasProperty(runtime, name)) return;
+    Value field = object.getProperty(runtime, name);
+    if (!field.isNumber()) return;
+    hasValue = true;
+    target = field.asNumber();
+  };
+
+  auto readString = [&](const char* name, bool& hasValue, std::string& target) {
+    if (!object.hasProperty(runtime, name)) return;
+    Value field = object.getProperty(runtime, name);
+    if (!field.isString()) return;
+    hasValue = true;
+    target = field.asString(runtime).utf8(runtime);
+  };
+
+  readString("color", style.hasColor, style.color);
+  readString("fontFamily", style.hasFontFamily, style.fontFamily);
+  readNumber("fontSize", style.hasFontSize, style.fontSize);
+  readString("fontStyle", style.hasFontStyle, style.fontStyle);
+  readString("fontWeight", style.hasFontWeight, style.fontWeight);
+  readNumber("letterSpacing", style.hasLetterSpacing, style.letterSpacing);
+  readNumber("lineHeight", style.hasLineHeight, style.lineHeight);
+  readBool("tabularNumbers", style.hasTabularNumbers, style.tabularNumbers);
+
+  return style;
+}
+
+bool hasAnyRunOverride(const TextMeasureRunStyle& style) {
+  return style.hasColor || style.hasFontFamily || style.hasFontSize || style.hasFontStyle ||
+      style.hasFontWeight || style.hasLetterSpacing || style.hasLineHeight || style.hasTabularNumbers;
+}
+
+std::vector<TextMeasureRun> parseRuns(Runtime& runtime, const Value& value, NSInteger textLength) {
+  if (value.isUndefined() || value.isNull()) return {};
+  if (!value.isObject() || !value.asObject(runtime).isArray(runtime)) {
+    throw JSError(runtime, "RNPretext: text runs must be an array.");
+  }
+
+  Array array = value.asObject(runtime).asArray(runtime);
+  std::vector<TextMeasureRun> runs;
+  runs.reserve(array.size(runtime));
+  NSInteger previousEnd = 0;
+
+  for (size_t index = 0; index < array.size(runtime); index++) {
+    Value item = array.getValueAtIndex(runtime, index);
+    if (!item.isObject()) {
+      throw JSError(runtime, "RNPretext: each text run must be an object.");
+    }
+
+    Object runObject = item.asObject(runtime);
+    if (!runObject.hasProperty(runtime, "start") || !runObject.hasProperty(runtime, "end")) {
+      throw JSError(runtime, "RNPretext: each text run must include start and end offsets.");
+    }
+
+    Value startValue = runObject.getProperty(runtime, "start");
+    Value endValue = runObject.getProperty(runtime, "end");
+    if (!startValue.isNumber() || !endValue.isNumber()) {
+      throw JSError(runtime, "RNPretext: text run start and end must be numbers.");
+    }
+
+    NSInteger start = static_cast<NSInteger>(startValue.asNumber());
+    NSInteger end = static_cast<NSInteger>(endValue.asNumber());
+    if (start < 0 || end > textLength || end <= start) {
+      throw JSError(runtime, "RNPretext: text runs must stay within the source text and have positive length.");
+    }
+    if (start < previousEnd) {
+      throw JSError(runtime, "RNPretext: text runs must be sorted and non-overlapping.");
+    }
+
+    if (!runObject.hasProperty(runtime, "style")) {
+      throw JSError(runtime, "RNPretext: each text run must include a style object.");
+    }
+
+    Value styleValue = runObject.getProperty(runtime, "style");
+    if (!styleValue.isObject()) {
+      throw JSError(runtime, "RNPretext: each text run style must be an object.");
+    }
+
+    TextMeasureRunStyle style = parseRunStyle(runtime, styleValue.asObject(runtime));
+    if (!hasAnyRunOverride(style)) {
+      throw JSError(runtime, "RNPretext: each text run must override at least one inline style field.");
+    }
+
+    TextMeasureRun run;
+    run.end = end;
+    run.start = start;
+    run.style = style;
+    runs.push_back(run);
+    previousEnd = end;
+  }
+
+  return runs;
 }
 
 LayoutOptions parseLayoutOptions(Runtime& runtime, const Value* value, size_t index, size_t count) {
@@ -261,6 +392,44 @@ ResolvedTextStyle resolveTextStyle(const TextMeasureStyle& style) {
 
 NSAttributedString *buildAttributedText(NSString *text, const ResolvedTextStyle& style) {
   return [[NSAttributedString alloc] initWithString:text attributes:style.attributes];
+}
+
+TextMeasureStyle mergeRunStyle(const TextMeasureStyle& baseStyle, const TextMeasureRunStyle& runStyle) {
+  TextMeasureStyle merged = baseStyle;
+
+  if (runStyle.hasColor) {
+    merged.hasColor = true;
+    merged.color = runStyle.color;
+  }
+  if (runStyle.hasFontFamily) {
+    merged.hasFontFamily = true;
+    merged.fontFamily = runStyle.fontFamily;
+  }
+  if (runStyle.hasFontSize) {
+    merged.hasFontSize = true;
+    merged.fontSize = runStyle.fontSize;
+  }
+  if (runStyle.hasFontStyle) {
+    merged.hasFontStyle = true;
+    merged.fontStyle = runStyle.fontStyle;
+  }
+  if (runStyle.hasFontWeight) {
+    merged.hasFontWeight = true;
+    merged.fontWeight = runStyle.fontWeight;
+  }
+  if (runStyle.hasLetterSpacing) {
+    merged.hasLetterSpacing = true;
+    merged.letterSpacing = runStyle.letterSpacing;
+  }
+  if (runStyle.hasLineHeight) {
+    merged.hasLineHeight = true;
+    merged.lineHeight = runStyle.lineHeight;
+  }
+  if (runStyle.hasTabularNumbers) {
+    merged.tabularNumbers = runStyle.tabularNumbers;
+  }
+
+  return merged;
 }
 
 NSString *trimTrailingWhitespace(NSString *text) {
@@ -419,12 +588,25 @@ Value layoutAttributedText(Runtime& runtime, NSString *text, NSAttributedString 
   return result;
 }
 
-RNPretextPreparedText *buildPreparedText(NSString *text, const ResolvedTextStyle& style) {
-  NSAttributedString *attributedText = buildAttributedText(text, style);
+RNPretextPreparedText *buildPreparedText(
+    NSString *text,
+    const TextMeasureStyle& baseStyle,
+    const ResolvedTextStyle& resolvedBaseStyle,
+    const std::vector<TextMeasureRun>& runs) {
+  NSMutableAttributedString *attributedText =
+      [[NSMutableAttributedString alloc] initWithAttributedString:buildAttributedText(text, resolvedBaseStyle)];
+
+  for (const TextMeasureRun& run : runs) {
+    TextMeasureStyle mergedStyle = mergeRunStyle(baseStyle, run.style);
+    ResolvedTextStyle resolvedRunStyle = resolveTextStyle(mergedStyle);
+    [attributedText addAttributes:resolvedRunStyle.attributes
+                            range:NSMakeRange(run.start, run.end - run.start)];
+  }
+
   RNPretextPreparedText *prepared = [[RNPretextPreparedText alloc] init];
   prepared.text = text;
   prepared.attributedText = attributedText;
-  prepared.fallbackLineHeight = style.fallbackLineHeight;
+  prepared.fallbackLineHeight = resolvedBaseStyle.fallbackLineHeight;
   return prepared;
 }
 
@@ -576,20 +758,22 @@ void install(Runtime& runtime) {
 
   installFunction(
       "__RNPretextPrepare",
-      2,
+      3,
       [](Runtime& runtime, const Value&, const Value* arguments, size_t count) -> Value {
         if (count == 0 || !arguments[0].isString()) {
           throw JSError(runtime, "RNPretext: prepare() requires a text string.");
         }
         TextMeasureStyle style = count > 1 ? parseStyle(runtime, arguments, 1, count) : TextMeasureStyle {};
-        ResolvedTextStyle resolvedStyle = resolveTextStyle(style);
         NSString *text = toNSString(arguments[0].asString(runtime).utf8(runtime));
-        return static_cast<double>(storePreparedText(buildPreparedText(text, resolvedStyle)));
+        std::vector<TextMeasureRun> runs =
+            count > 2 ? parseRuns(runtime, arguments[2], text.length) : std::vector<TextMeasureRun> {};
+        ResolvedTextStyle resolvedStyle = resolveTextStyle(style);
+        return static_cast<double>(storePreparedText(buildPreparedText(text, style, resolvedStyle, runs)));
       });
 
   installFunction(
       "__RNPretextPrepareBatch",
-      2,
+      3,
       [](Runtime& runtime, const Value&, const Value* arguments, size_t count) -> Value {
         if (count == 0) {
           throw JSError(runtime, "RNPretext: prepareBatch() requires an array of strings.");
@@ -597,10 +781,27 @@ void install(Runtime& runtime) {
         TextMeasureStyle style = count > 1 ? parseStyle(runtime, arguments, 1, count) : TextMeasureStyle {};
         ResolvedTextStyle resolvedStyle = resolveTextStyle(style);
         std::vector<std::string> texts = parseStringArray(runtime, arguments[0]);
+        std::vector<std::vector<TextMeasureRun>> runsByText(texts.size());
+        if (count > 2 && !arguments[2].isUndefined() && !arguments[2].isNull()) {
+          if (!arguments[2].isObject() || !arguments[2].asObject(runtime).isArray(runtime)) {
+            throw JSError(runtime, "RNPretext: batch text runs must be an array aligned with the batch text input.");
+          }
+
+          Array runsArray = arguments[2].asObject(runtime).asArray(runtime);
+          if (runsArray.size(runtime) != texts.size()) {
+            throw JSError(runtime, "RNPretext: batch text runs must align with the batch text input length.");
+          }
+
+          for (size_t index = 0; index < texts.size(); index++) {
+            runsByText[index] = parseRuns(runtime, runsArray.getValueAtIndex(runtime, index), toNSString(texts[index]).length);
+          }
+        }
+
         std::vector<Handle> handles;
         handles.reserve(texts.size());
-        for (const std::string& text : texts) {
-          handles.push_back(storePreparedText(buildPreparedText(toNSString(text), resolvedStyle)));
+        for (size_t index = 0; index < texts.size(); index++) {
+          NSString *text = toNSString(texts[index]);
+          handles.push_back(storePreparedText(buildPreparedText(text, style, resolvedStyle, runsByText[index])));
         }
         return buildHandleArray(runtime, handles);
       });
@@ -629,15 +830,18 @@ void install(Runtime& runtime) {
 
   installFunction(
       "__RNPretextMeasureWidth",
-      2,
+      3,
       [](Runtime& runtime, const Value&, const Value* arguments, size_t count) -> Value {
         if (count == 0 || !arguments[0].isString()) {
           throw JSError(runtime, "RNPretext: measureWidth() requires a text string.");
         }
         TextMeasureStyle style = count > 1 ? parseStyle(runtime, arguments, 1, count) : TextMeasureStyle {};
-        ResolvedTextStyle resolvedStyle = resolveTextStyle(style);
         NSString *text = toNSString(arguments[0].asString(runtime).utf8(runtime));
-        NSAttributedString *attributed = buildAttributedText(text, resolvedStyle);
+        std::vector<TextMeasureRun> runs =
+            count > 2 ? parseRuns(runtime, arguments[2], text.length) : std::vector<TextMeasureRun> {};
+        ResolvedTextStyle resolvedStyle = resolveTextStyle(style);
+        RNPretextPreparedText *prepared = buildPreparedText(text, style, resolvedStyle, runs);
+        NSAttributedString *attributed = prepared.attributedText;
         return measureAttributedWidth(attributed);
       });
 
@@ -682,22 +886,24 @@ void install(Runtime& runtime) {
 
   installFunction(
       "__RNPretextMeasure",
-      3,
+      4,
       [](Runtime& runtime, const Value&, const Value* arguments, size_t count) -> Value {
         if (count == 0 || !arguments[0].isString()) {
           throw JSError(runtime, "RNPretext: measure() requires a text string.");
         }
         TextMeasureStyle style = count > 1 ? parseStyle(runtime, arguments, 1, count) : TextMeasureStyle {};
         LayoutOptions options = parseLayoutOptions(runtime, arguments, 2, count);
-        ResolvedTextStyle resolvedStyle = resolveTextStyle(style);
         NSString *text = toNSString(arguments[0].asString(runtime).utf8(runtime));
-        RNPretextPreparedText *prepared = buildPreparedText(text, resolvedStyle);
+        std::vector<TextMeasureRun> runs =
+            count > 3 ? parseRuns(runtime, arguments[3], text.length) : std::vector<TextMeasureRun> {};
+        ResolvedTextStyle resolvedStyle = resolveTextStyle(style);
+        RNPretextPreparedText *prepared = buildPreparedText(text, style, resolvedStyle, runs);
         return layoutAttributedText(runtime, prepared.text, prepared.attributedText, prepared.fallbackLineHeight, options, false);
       });
 
   installFunction(
       "__RNPretextMeasureBatch",
-      3,
+      4,
       [](Runtime& runtime, const Value&, const Value* arguments, size_t count) -> Value {
         if (count == 0) {
           throw JSError(runtime, "RNPretext: measureBatch() requires an array of strings.");
@@ -706,9 +912,26 @@ void install(Runtime& runtime) {
         LayoutOptions options = parseLayoutOptions(runtime, arguments, 2, count);
         ResolvedTextStyle resolvedStyle = resolveTextStyle(style);
         std::vector<std::string> texts = parseStringArray(runtime, arguments[0]);
+        std::vector<std::vector<TextMeasureRun>> runsByText(texts.size());
+        if (count > 3 && !arguments[3].isUndefined() && !arguments[3].isNull()) {
+          if (!arguments[3].isObject() || !arguments[3].asObject(runtime).isArray(runtime)) {
+            throw JSError(runtime, "RNPretext: batch text runs must be an array aligned with the batch text input.");
+          }
+
+          Array runsArray = arguments[3].asObject(runtime).asArray(runtime);
+          if (runsArray.size(runtime) != texts.size()) {
+            throw JSError(runtime, "RNPretext: batch text runs must align with the batch text input length.");
+          }
+
+          for (size_t index = 0; index < texts.size(); index++) {
+            runsByText[index] = parseRuns(runtime, runsArray.getValueAtIndex(runtime, index), toNSString(texts[index]).length);
+          }
+        }
+
         Array results(runtime, texts.size());
         for (size_t i = 0; i < texts.size(); i++) {
-          RNPretextPreparedText *prepared = buildPreparedText(toNSString(texts[i]), resolvedStyle);
+          NSString *text = toNSString(texts[i]);
+          RNPretextPreparedText *prepared = buildPreparedText(text, style, resolvedStyle, runsByText[i]);
           results.setValueAtIndex(
               runtime,
               i,
