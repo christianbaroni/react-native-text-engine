@@ -4,8 +4,7 @@ import { Platform, requireNativeComponent, type StyleProp, type ViewProps, type 
 /**
  * Props for the native prepared-handle render surface.
  *
- * `selectable` opts into the interaction-oriented native text owner. The
- * prepared-handle surface currently renders on iOS only.
+ * `selectable` opts into the interaction-oriented native text owner.
  */
 export type PreparedTextViewProps = ViewProps & {
   ellipsizeMode?: 'clip' | 'head' | 'middle' | 'tail';
@@ -15,7 +14,7 @@ export type PreparedTextViewProps = ViewProps & {
   style?: StyleProp<ViewStyle>;
 };
 
-const IOSPreparedTextView = requireNativeComponent<PreparedTextViewProps>('RNPretextPreparedTextView');
+const NativePreparedTextView = requireNativeComponent<PreparedTextViewProps>('RNPretextPreparedTextView');
 
 // `requireNativeComponent` exposes a HostComponent type that is incompatible
 // with this package's React type surface in TS, even though it is the correct
@@ -24,4 +23,6 @@ const IOSPreparedTextView = requireNativeComponent<PreparedTextViewProps>('RNPre
  * Native prepared-handle render surface.
  */
 export const PreparedTextView: React.ComponentType<PreparedTextViewProps> =
-  Platform.OS === 'ios' ? (IOSPreparedTextView as unknown as React.ComponentType<PreparedTextViewProps>) : () => null;
+  Platform.OS === 'ios' || Platform.OS === 'android'
+    ? (NativePreparedTextView as unknown as React.ComponentType<PreparedTextViewProps>)
+    : () => null;

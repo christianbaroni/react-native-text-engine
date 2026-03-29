@@ -42,6 +42,8 @@ type RNPretextRuntime = {
   readonly releaseMany: (handles: readonly number[]) => void;
 };
 
+let cachedRuntime: RNPretextRuntime | null = null;
+
 function hasInstall(value: unknown): value is { install: () => boolean } {
   if (typeof value !== 'object' || value === null) return false;
   return typeof Reflect.get(value, 'install') === 'function';
@@ -96,8 +98,11 @@ function buildRuntime(): RNPretextRuntime {
 }
 
 export function initRNPretext(): RNPretextRuntime {
+  if (cachedRuntime) return cachedRuntime;
+
   try {
-    return buildRuntime();
+    cachedRuntime = buildRuntime();
+    return cachedRuntime;
   } catch {
     const installModule = resolveInstallModule();
     if (!installModule) {
@@ -107,13 +112,15 @@ export function initRNPretext(): RNPretextRuntime {
     const didInstall = installModule.install();
     if (!didInstall) {
       try {
-        return buildRuntime();
+        cachedRuntime = buildRuntime();
+        return cachedRuntime;
       } catch {
         throw new Error('RNPretext: Native install() returned false.');
       }
     }
 
-    return buildRuntime();
+    cachedRuntime = buildRuntime();
+    return cachedRuntime;
   }
 }
 

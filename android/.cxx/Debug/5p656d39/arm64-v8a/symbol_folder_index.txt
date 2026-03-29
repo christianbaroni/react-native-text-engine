@@ -1,1 +1,0 @@
-/Users/christian/dev/react-native-pretext/examples/node_modules/react-native-pretext/android/build/intermediates/cxx/Debug/5p656d39/obj/arm64-v8a

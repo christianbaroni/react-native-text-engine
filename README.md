@@ -159,7 +159,7 @@ import { PreparedTextView, TextView } from 'react-native-pretext';
 ```
 
 - `TextView` renders direct text props on iOS and Android.
-- `PreparedTextView` renders directly from a prepared handle on iOS.
+- `PreparedTextView` renders directly from a prepared handle on iOS and Android.
 - `selectable` opts into the interaction-oriented native text owner.
 - leaving `selectable` off keeps the cheaper display-oriented path.
 
@@ -167,11 +167,12 @@ The split is intentional: selection and display have different runtime costs, so
 
 ## Style surface
 
-`TextMeasureStyle` intentionally exposes the small, high-value subset of RN text style that materially affects measurement:
+`TextMeasureStyle` intentionally exposes the small, high-value subset of RN text style that materially affects exact layout or prepared-handle rendering:
 
 ```ts
 type TextMeasureStyle = {
   allowFontScaling?: boolean;
+  color?: string;
   fontFamily?: string;
   fontSize?: number;
   fontStyle?: 'italic' | 'normal';
@@ -185,7 +186,7 @@ type TextMeasureStyle = {
 ```
 
 This is not meant to mirror the entire Text style API.
-Only measurement-relevant facts belong here.
+Only layout-relevant or prepared-render-relevant facts belong here.
 
 ## Handle lifecycle
 

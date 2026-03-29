@@ -27,11 +27,26 @@ def resolveReactNativeWorkletsDirectory() {
     }
 }
 
+def resolveReactNativeDirectory() {
+    try {
+        def reactNativePackage = file(
+            providers.exec {
+                workingDir(rootDir)
+                commandLine("node", "--print", "require.resolve('react-native/package.json')")
+            }.standardOutput.asText.get().trim()
+        )
+        return reactNativePackage.exists() ? reactNativePackage.parentFile : null
+    } catch (ignored) {
+        return null
+    }
+}
+
 plugins {
     id 'com.android.library'
     id 'org.jetbrains.kotlin.android'
 }
 
+def reactNativeRootDir = resolveReactNativeDirectory()
 def reactNativeWorkletsRootDir = resolveReactNativeWorkletsDirectory()
 
 if (isNewArchitectureEnabled()) {
@@ -41,6 +56,10 @@ if (isNewArchitectureEnabled()) {
 android {
     namespace "com.rnpretext"
     compileSdkVersion safeExtGet('compileSdkVersion', 33)
+
+    buildFeatures {
+        prefab true
+    }
 
     // Used to override the NDK path/version on internal CI or by allowing
     // users to customize the NDK path/version from their root project.
@@ -57,8 +76,10 @@ android {
         buildConfigField("boolean", "IS_NEW_ARCHITECTURE_ENABLED", isNewArchitectureEnabled().toString())
         externalNativeBuild {
             cmake {
-                cppFlags "-std=c++17"
+                cppFlags "-std=c++20"
                 arguments "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON",
+                        "-DANDROID_STL=c++_shared",
+                        "-DREACT_NATIVE_DIR=${reactNativeRootDir ? toPlatformFileString(reactNativeRootDir.path) : ''}",
                         "-DREACT_NATIVE_WORKLETS_DIR=${reactNativeWorkletsRootDir ? toPlatformFileString(reactNativeWorkletsRootDir.path) : ''}"
             }
         }

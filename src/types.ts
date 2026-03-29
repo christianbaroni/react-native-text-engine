@@ -9,11 +9,11 @@ export type PreparedTextHandle = Readonly<{
 }>;
 
 /**
- * Text style facts that affect native React Native text measurement.
+ * Small, high-value subset of RN text style used for prepared text ownership.
  *
- * This intentionally mirrors the small, high-value subset needed for accurate
- * sizing in real UI paths instead of trying to expose the entire Text style
- * surface.
+ * The same style object feeds exact measurement and the prepared-handle render
+ * surfaces, so only facts that materially affect layout or that render surface
+ * belong here.
  */
 export type TextMeasureStyle = {
   allowFontScaling?: boolean;

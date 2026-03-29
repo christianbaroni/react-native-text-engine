@@ -9,8 +9,8 @@ This example app exists to prove two concrete use cases:
 2. `ChatDemo`
    A long-conversation surface that uses exact `measureBatch` geometry for the
    active width and feeds that directly into a Shared Value recycled list built
-   from the real worklet-list architecture. On iOS it renders from prepared
-   handles and uses the selectable native text path for chat message text.
+   from the real worklet-list architecture. It renders from prepared handles
+   and uses the selectable native text path for chat message text.
 
 ## Run
 

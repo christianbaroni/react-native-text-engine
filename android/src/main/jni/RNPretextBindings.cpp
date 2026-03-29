@@ -32,6 +32,7 @@ struct StyleArgs {
   double fontSize = std::numeric_limits<double>::quiet_NaN();
   double letterSpacing = std::numeric_limits<double>::quiet_NaN();
   double lineHeight = std::numeric_limits<double>::quiet_NaN();
+  std::string color;
   std::string fontFamily;
   std::string fontStyle;
   std::string fontWeight;
@@ -102,25 +103,25 @@ void initializeIfNeeded(JNIEnv* env, jobject context) {
   prepareMethod_ = env->GetStaticMethodID(
       bindingsClass_,
       "prepare",
-      "(Ljava/lang/String;Ljava/lang/String;DLjava/lang/String;Ljava/lang/String;DDZZZLjava/lang/String;)J");
+      "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;DLjava/lang/String;Ljava/lang/String;DDZZZLjava/lang/String;)J");
   prepareBatchMethod_ = env->GetStaticMethodID(
       bindingsClass_,
       "prepareBatch",
-      "([Ljava/lang/String;Ljava/lang/String;DLjava/lang/String;Ljava/lang/String;DDZZZLjava/lang/String;)[J");
+      "([Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;DLjava/lang/String;Ljava/lang/String;DDZZZLjava/lang/String;)[J");
   releaseMethod_ = env->GetStaticMethodID(bindingsClass_, "release", "(J)V");
   releaseManyMethod_ = env->GetStaticMethodID(bindingsClass_, "releaseMany", "([J)V");
   measureWidthMethod_ = env->GetStaticMethodID(
       bindingsClass_,
       "measureWidth",
-      "(Ljava/lang/String;Ljava/lang/String;DLjava/lang/String;Ljava/lang/String;DDZZZLjava/lang/String;)D");
+      "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;DLjava/lang/String;Ljava/lang/String;DDZZZLjava/lang/String;)D");
   measureMethod_ = env->GetStaticMethodID(
       bindingsClass_,
       "measure",
-      "(Ljava/lang/String;Ljava/lang/String;DLjava/lang/String;Ljava/lang/String;DDZZZLjava/lang/String;DILjava/lang/String;)[D");
+      "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;DLjava/lang/String;Ljava/lang/String;DDZZZLjava/lang/String;DILjava/lang/String;)[D");
   measureBatchMethod_ = env->GetStaticMethodID(
       bindingsClass_,
       "measureBatch",
-      "([Ljava/lang/String;Ljava/lang/String;DLjava/lang/String;Ljava/lang/String;DDZZZLjava/lang/String;DILjava/lang/String;)[D");
+      "([Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;DLjava/lang/String;Ljava/lang/String;DDZZZLjava/lang/String;DILjava/lang/String;)[D");
   layoutMethod_ = env->GetStaticMethodID(bindingsClass_, "layout", "(JDILjava/lang/String;)[D");
   layoutBatchMethod_ = env->GetStaticMethodID(bindingsClass_, "layoutBatch", "([JDILjava/lang/String;)[D");
   layoutNextLineMethod_ = env->GetStaticMethodID(bindingsClass_, "layoutNextLine", "(JID)[D");
@@ -161,6 +162,7 @@ StyleArgs parseStyle(Runtime& runtime, const Value* arguments, size_t index, siz
   readBool("allowFontScaling", style.allowFontScaling);
   readBool("includeFontPadding", style.includeFontPadding);
   readBool("tabularNumbers", style.tabularNumbers);
+  readString("color", style.color);
   readNumber("fontSize", style.fontSize);
   readNumber("letterSpacing", style.letterSpacing);
   readNumber("lineHeight", style.lineHeight);
@@ -365,13 +367,15 @@ Runtime* extractRuntimeFromToken(Runtime& runtime, const Value& value) {
 
 template <typename Fn>
 void withStyle(JNIEnv* env, const StyleArgs& style, Fn&& fn) {
+  jstring color = toJString(env, style.color);
   jstring fontFamily = toJString(env, style.fontFamily);
   jstring fontWeight = toJString(env, style.fontWeight);
   jstring fontStyle = toJString(env, style.fontStyle);
   jstring textBreakStrategy = toJString(env, style.textBreakStrategy);
 
-  fn(fontFamily, fontWeight, fontStyle, textBreakStrategy);
+  fn(color, fontFamily, fontWeight, fontStyle, textBreakStrategy);
 
+  if (color) env->DeleteLocalRef(color);
   if (fontFamily) env->DeleteLocalRef(fontFamily);
   if (fontWeight) env->DeleteLocalRef(fontWeight);
   if (fontStyle) env->DeleteLocalRef(fontStyle);
@@ -457,11 +461,12 @@ void install(Runtime& runtime, JNIEnv* env, jobject context) {
         jstring text = env->NewStringUTF(arguments[0].asString(runtime).utf8(runtime).c_str());
         jlong handle = 0;
 
-        withStyle(env, style, [&](jstring fontFamily, jstring fontWeight, jstring fontStyle, jstring textBreakStrategy) {
+        withStyle(env, style, [&](jstring color, jstring fontFamily, jstring fontWeight, jstring fontStyle, jstring textBreakStrategy) {
           handle = env->CallStaticLongMethod(
               bindingsClass_,
               prepareMethod_,
               text,
+              color,
               fontFamily,
               style.fontSize,
               fontWeight,
@@ -497,11 +502,12 @@ void install(Runtime& runtime, JNIEnv* env, jobject context) {
         jobjectArray textArray = makeJavaStringArray(env, texts);
         jlongArray handles = nullptr;
 
-        withStyle(env, style, [&](jstring fontFamily, jstring fontWeight, jstring fontStyle, jstring textBreakStrategy) {
+        withStyle(env, style, [&](jstring color, jstring fontFamily, jstring fontWeight, jstring fontStyle, jstring textBreakStrategy) {
           handles = reinterpret_cast<jlongArray>(env->CallStaticObjectMethod(
               bindingsClass_,
               prepareBatchMethod_,
               textArray,
+              color,
               fontFamily,
               style.fontSize,
               fontWeight,
@@ -575,11 +581,12 @@ void install(Runtime& runtime, JNIEnv* env, jobject context) {
         jstring text = env->NewStringUTF(arguments[0].asString(runtime).utf8(runtime).c_str());
         jdouble width = 0;
 
-        withStyle(env, style, [&](jstring fontFamily, jstring fontWeight, jstring fontStyle, jstring textBreakStrategy) {
+        withStyle(env, style, [&](jstring color, jstring fontFamily, jstring fontWeight, jstring fontStyle, jstring textBreakStrategy) {
           width = env->CallStaticDoubleMethod(
               bindingsClass_,
               measureWidthMethod_,
               text,
+              color,
               fontFamily,
               style.fontSize,
               fontWeight,
@@ -620,11 +627,12 @@ void install(Runtime& runtime, JNIEnv* env, jobject context) {
             packed = reinterpret_cast<jdoubleArray>(
                 env->CallStaticObjectMethod(bindingsClass_, method, textArray, layout.width, layout.maxLines, ellipsize));
           } else {
-            withStyle(env, *style, [&](jstring fontFamily, jstring fontWeight, jstring fontStyle, jstring textBreakStrategy) {
+            withStyle(env, *style, [&](jstring color, jstring fontFamily, jstring fontWeight, jstring fontStyle, jstring textBreakStrategy) {
               packed = reinterpret_cast<jdoubleArray>(env->CallStaticObjectMethod(
                   bindingsClass_,
                   method,
                   textArray,
+                  color,
                   fontFamily,
                   style->fontSize,
                   fontWeight,

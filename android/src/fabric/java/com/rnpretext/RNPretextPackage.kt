@@ -16,7 +16,10 @@ class RNPretextPackage : BaseReactPackage() {
     }
 
     override fun getViewManagers(reactContext: ReactApplicationContext): List<ModuleSpec> {
-        return listOf(ModuleSpec.viewManagerSpec { RNPretextTextViewManager() })
+        return listOf(
+            ModuleSpec.viewManagerSpec { RNPretextTextViewManager() },
+            ModuleSpec.viewManagerSpec { RNPretextPreparedTextViewManager() },
+        )
     }
 
     override fun getReactModuleInfoProvider(): ReactModuleInfoProvider {

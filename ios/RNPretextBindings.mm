@@ -53,6 +53,11 @@ struct TextMeasureStyle {
   std::string fontWeight;
 };
 
+struct ResolvedTextStyle {
+  NSDictionary<NSAttributedStringKey, id> *attributes = nil;
+  CGFloat fallbackLineHeight = 0;
+};
+
 struct LayoutOptions {
   std::optional<std::string> ellipsizeMode;
   std::optional<int> maxLines;
@@ -223,10 +228,9 @@ UIColor *resolveColorString(const std::string& value) {
   return [RCTConvert UIColor:string];
 }
 
-NSAttributedString *buildAttributedText(NSString *text, const TextMeasureStyle& style, CGFloat *fallbackLineHeight) {
+ResolvedTextStyle resolveTextStyle(const TextMeasureStyle& style) {
   UIFont *font = resolveFont(style);
   CGFloat lineHeight = resolveLineHeight(style, font);
-  if (fallbackLineHeight) *fallbackLineHeight = lineHeight;
 
   NSMutableDictionary<NSAttributedStringKey, id> *attributes =
       [NSMutableDictionary dictionaryWithObject:font forKey:NSFontAttributeName];
@@ -249,7 +253,14 @@ NSAttributedString *buildAttributedText(NSString *text, const TextMeasureStyle& 
     attributes[NSParagraphStyleAttributeName] = paragraphStyle;
   }
 
-  return [[NSAttributedString alloc] initWithString:text attributes:attributes];
+  ResolvedTextStyle resolvedStyle;
+  resolvedStyle.attributes = [attributes copy];
+  resolvedStyle.fallbackLineHeight = lineHeight;
+  return resolvedStyle;
+}
+
+NSAttributedString *buildAttributedText(NSString *text, const ResolvedTextStyle& style) {
+  return [[NSAttributedString alloc] initWithString:text attributes:style.attributes];
 }
 
 NSString *trimTrailingWhitespace(NSString *text) {
@@ -408,13 +419,12 @@ Value layoutAttributedText(Runtime& runtime, NSString *text, NSAttributedString 
   return result;
 }
 
-RNPretextPreparedText *buildPreparedText(NSString *text, const TextMeasureStyle& style) {
-  CGFloat fallbackLineHeight = 0;
-  NSAttributedString *attributedText = buildAttributedText(text, style, &fallbackLineHeight);
+RNPretextPreparedText *buildPreparedText(NSString *text, const ResolvedTextStyle& style) {
+  NSAttributedString *attributedText = buildAttributedText(text, style);
   RNPretextPreparedText *prepared = [[RNPretextPreparedText alloc] init];
   prepared.text = text;
   prepared.attributedText = attributedText;
-  prepared.fallbackLineHeight = fallbackLineHeight;
+  prepared.fallbackLineHeight = style.fallbackLineHeight;
   return prepared;
 }
 
@@ -572,8 +582,9 @@ void install(Runtime& runtime) {
           throw JSError(runtime, "RNPretext: prepare() requires a text string.");
         }
         TextMeasureStyle style = count > 1 ? parseStyle(runtime, arguments, 1, count) : TextMeasureStyle {};
+        ResolvedTextStyle resolvedStyle = resolveTextStyle(style);
         NSString *text = toNSString(arguments[0].asString(runtime).utf8(runtime));
-        return static_cast<double>(storePreparedText(buildPreparedText(text, style)));
+        return static_cast<double>(storePreparedText(buildPreparedText(text, resolvedStyle)));
       });
 
   installFunction(
@@ -584,11 +595,12 @@ void install(Runtime& runtime) {
           throw JSError(runtime, "RNPretext: prepareBatch() requires an array of strings.");
         }
         TextMeasureStyle style = count > 1 ? parseStyle(runtime, arguments, 1, count) : TextMeasureStyle {};
+        ResolvedTextStyle resolvedStyle = resolveTextStyle(style);
         std::vector<std::string> texts = parseStringArray(runtime, arguments[0]);
         std::vector<Handle> handles;
         handles.reserve(texts.size());
         for (const std::string& text : texts) {
-          handles.push_back(storePreparedText(buildPreparedText(toNSString(text), style)));
+          handles.push_back(storePreparedText(buildPreparedText(toNSString(text), resolvedStyle)));
         }
         return buildHandleArray(runtime, handles);
       });
@@ -623,9 +635,9 @@ void install(Runtime& runtime) {
           throw JSError(runtime, "RNPretext: measureWidth() requires a text string.");
         }
         TextMeasureStyle style = count > 1 ? parseStyle(runtime, arguments, 1, count) : TextMeasureStyle {};
+        ResolvedTextStyle resolvedStyle = resolveTextStyle(style);
         NSString *text = toNSString(arguments[0].asString(runtime).utf8(runtime));
-        CGFloat fallbackLineHeight = 0;
-        NSAttributedString *attributed = buildAttributedText(text, style, &fallbackLineHeight);
+        NSAttributedString *attributed = buildAttributedText(text, resolvedStyle);
         return measureAttributedWidth(attributed);
       });
 
@@ -677,8 +689,9 @@ void install(Runtime& runtime) {
         }
         TextMeasureStyle style = count > 1 ? parseStyle(runtime, arguments, 1, count) : TextMeasureStyle {};
         LayoutOptions options = parseLayoutOptions(runtime, arguments, 2, count);
+        ResolvedTextStyle resolvedStyle = resolveTextStyle(style);
         NSString *text = toNSString(arguments[0].asString(runtime).utf8(runtime));
-        RNPretextPreparedText *prepared = buildPreparedText(text, style);
+        RNPretextPreparedText *prepared = buildPreparedText(text, resolvedStyle);
         return layoutAttributedText(runtime, prepared.text, prepared.attributedText, prepared.fallbackLineHeight, options, false);
       });
 
@@ -691,10 +704,11 @@ void install(Runtime& runtime) {
         }
         TextMeasureStyle style = count > 1 ? parseStyle(runtime, arguments, 1, count) : TextMeasureStyle {};
         LayoutOptions options = parseLayoutOptions(runtime, arguments, 2, count);
+        ResolvedTextStyle resolvedStyle = resolveTextStyle(style);
         std::vector<std::string> texts = parseStringArray(runtime, arguments[0]);
         Array results(runtime, texts.size());
         for (size_t i = 0; i < texts.size(); i++) {
-          RNPretextPreparedText *prepared = buildPreparedText(toNSString(texts[i]), style);
+          RNPretextPreparedText *prepared = buildPreparedText(toNSString(texts[i]), resolvedStyle);
           results.setValueAtIndex(
               runtime,
               i,

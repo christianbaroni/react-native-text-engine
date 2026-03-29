@@ -1,7 +1,6 @@
 package com.rnpretext
 
 import android.graphics.Color
-import android.graphics.Typeface
 import android.os.Build
 import android.text.Layout
 import android.text.TextUtils
@@ -9,14 +8,12 @@ import android.util.TypedValue
 import android.view.Gravity
 import androidx.appcompat.widget.AppCompatTextView
 import com.facebook.react.bridge.ColorPropConverter
-import com.facebook.react.common.assets.ReactFontManager
 import com.facebook.react.uimanager.PixelUtil
 import com.facebook.react.uimanager.SimpleViewManager
 import com.facebook.react.uimanager.ThemedReactContext
 import com.facebook.react.uimanager.ViewProps
 import com.facebook.react.uimanager.annotations.ReactProp
 import com.facebook.react.views.text.ReactTypefaceUtils
-import kotlin.math.ceil
 import kotlin.math.max
 
 internal class RNPretextTextViewManager : SimpleViewManager<RNPretextTextViewManager.RNPretextTextView>() {

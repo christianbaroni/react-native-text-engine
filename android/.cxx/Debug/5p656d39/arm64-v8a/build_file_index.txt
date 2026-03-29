@@ -1,1 +1,0 @@
-/Users/christian/dev/react-native-pretext/examples/node_modules/react-native-pretext/android/src/main/jni/CMakeLists.txt

@@ -1,5 +1,6 @@
 package com.rnpretext
 
+import android.graphics.Color
 import android.graphics.Typeface
 import android.os.Build
 import android.text.Layout
@@ -9,9 +10,9 @@ import android.text.TextPaint
 import android.text.TextUtils
 import android.text.style.LineHeightSpan
 import com.facebook.react.bridge.ReactApplicationContext
+import com.facebook.react.common.assets.ReactFontManager
 import com.facebook.react.uimanager.DisplayMetricsHolder
 import com.facebook.react.uimanager.PixelUtil
-import com.facebook.react.views.text.ReactFontManager
 import com.facebook.react.views.text.ReactTypefaceUtils.parseFontWeight
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
@@ -25,13 +26,26 @@ internal object RNPretextBindings {
     private val preparedTexts = ConcurrentHashMap<Long, PreparedTextData>()
     private lateinit var reactContext: ReactApplicationContext
 
-    private data class PreparedTextData(
-        val text: String,
-        val textPaint: TextPaint,
-        val textBreakStrategy: Int,
-        val includeFontPadding: Boolean,
+    private data class ResolvedTextStyle(
         val fallbackLineHeight: Double,
+        val includeFontPadding: Boolean,
+        val lineHeightPx: Float?,
+        val textBreakStrategy: Int,
+        val textColor: Int?,
+        val textPaint: TextPaint,
+    )
+
+    private data class PreparedTextData(
+        val style: ResolvedTextStyle,
+        val text: String,
         val textWithLineHeight: CharSequence,
+    )
+
+    internal data class PreparedTextViewData(
+        val includeFontPadding: Boolean,
+        val text: CharSequence,
+        val textColor: Int?,
+        val textPaint: TextPaint,
     )
 
     @JvmStatic
@@ -48,6 +62,7 @@ internal object RNPretextBindings {
     @JvmStatic
     fun prepare(
         text: String,
+        color: String?,
         fontFamily: String?,
         fontSize: Double,
         fontWeight: String?,
@@ -59,8 +74,41 @@ internal object RNPretextBindings {
         tabularNumbers: Boolean,
         textBreakStrategy: String?,
     ): Long {
-        val prepared = buildPreparedText(
-            text = text,
+        val style = resolveTextStyle(
+            color = color,
+            fontFamily = fontFamily,
+            fontSize = fontSize,
+            fontWeight = fontWeight,
+            fontStyle = fontStyle,
+            letterSpacing = letterSpacing,
+            lineHeight = lineHeight,
+            allowFontScaling = allowFontScaling,
+            includeFontPadding = includeFontPadding,
+            tabularNumbers = tabularNumbers,
+            textBreakStrategy = textBreakStrategy,
+        )
+        val handle = nextHandle.getAndIncrement()
+        preparedTexts[handle] = buildPreparedText(text, style)
+        return handle
+    }
+
+    @JvmStatic
+    fun prepareBatch(
+        texts: Array<String>,
+        color: String?,
+        fontFamily: String?,
+        fontSize: Double,
+        fontWeight: String?,
+        fontStyle: String?,
+        letterSpacing: Double,
+        lineHeight: Double,
+        allowFontScaling: Boolean,
+        includeFontPadding: Boolean,
+        tabularNumbers: Boolean,
+        textBreakStrategy: String?,
+    ): LongArray {
+        val style = resolveTextStyle(
+            color = color,
             fontFamily = fontFamily,
             fontSize = fontSize,
             fontWeight = fontWeight,
@@ -73,39 +121,10 @@ internal object RNPretextBindings {
             textBreakStrategy = textBreakStrategy,
         )
 
-        val handle = nextHandle.getAndIncrement()
-        preparedTexts[handle] = prepared
-        return handle
-    }
-
-    @JvmStatic
-    fun prepareBatch(
-        texts: Array<String>,
-        fontFamily: String?,
-        fontSize: Double,
-        fontWeight: String?,
-        fontStyle: String?,
-        letterSpacing: Double,
-        lineHeight: Double,
-        allowFontScaling: Boolean,
-        includeFontPadding: Boolean,
-        tabularNumbers: Boolean,
-        textBreakStrategy: String?,
-    ): LongArray {
         return LongArray(texts.size) { index ->
-            prepare(
-                text = texts[index],
-                fontFamily = fontFamily,
-                fontSize = fontSize,
-                fontWeight = fontWeight,
-                fontStyle = fontStyle,
-                letterSpacing = letterSpacing,
-                lineHeight = lineHeight,
-                allowFontScaling = allowFontScaling,
-                includeFontPadding = includeFontPadding,
-                tabularNumbers = tabularNumbers,
-                textBreakStrategy = textBreakStrategy,
-            )
+            val handle = nextHandle.getAndIncrement()
+            preparedTexts[handle] = buildPreparedText(texts[index], style)
+            handle
         }
     }
 
@@ -122,6 +141,7 @@ internal object RNPretextBindings {
     @JvmStatic
     fun measureWidth(
         text: String,
+        color: String?,
         fontFamily: String?,
         fontSize: Double,
         fontWeight: String?,
@@ -133,8 +153,8 @@ internal object RNPretextBindings {
         tabularNumbers: Boolean,
         textBreakStrategy: String?,
     ): Double {
-        val prepared = buildPreparedText(
-            text = text,
+        val style = resolveTextStyle(
+            color = color,
             fontFamily = fontFamily,
             fontSize = fontSize,
             fontWeight = fontWeight,
@@ -146,12 +166,14 @@ internal object RNPretextBindings {
             tabularNumbers = tabularNumbers,
             textBreakStrategy = textBreakStrategy,
         )
-        return Layout.getDesiredWidth(prepared.textWithLineHeight, prepared.textPaint).toDouble().toDp()
+        val prepared = buildPreparedText(text, style)
+        return Layout.getDesiredWidth(prepared.textWithLineHeight, prepared.style.textPaint).toDouble().toDp()
     }
 
     @JvmStatic
     fun measure(
         text: String,
+        color: String?,
         fontFamily: String?,
         fontSize: Double,
         fontWeight: String?,
@@ -166,8 +188,8 @@ internal object RNPretextBindings {
         maxLines: Int,
         ellipsizeMode: String?,
     ): DoubleArray {
-        val prepared = buildPreparedText(
-            text = text,
+        val style = resolveTextStyle(
+            color = color,
             fontFamily = fontFamily,
             fontSize = fontSize,
             fontWeight = fontWeight,
@@ -179,12 +201,14 @@ internal object RNPretextBindings {
             tabularNumbers = tabularNumbers,
             textBreakStrategy = textBreakStrategy,
         )
+        val prepared = buildPreparedText(text, style)
         return packLayout(buildLayout(prepared, width, maxLines, ellipsizeMode, includeLines = false))
     }
 
     @JvmStatic
     fun measureBatch(
         texts: Array<String>,
+        color: String?,
         fontFamily: String?,
         fontSize: Double,
         fontWeight: String?,
@@ -199,25 +223,26 @@ internal object RNPretextBindings {
         maxLines: Int,
         ellipsizeMode: String?,
     ): DoubleArray {
+        val style = resolveTextStyle(
+            color = color,
+            fontFamily = fontFamily,
+            fontSize = fontSize,
+            fontWeight = fontWeight,
+            fontStyle = fontStyle,
+            letterSpacing = letterSpacing,
+            lineHeight = lineHeight,
+            allowFontScaling = allowFontScaling,
+            includeFontPadding = includeFontPadding,
+            tabularNumbers = tabularNumbers,
+            textBreakStrategy = textBreakStrategy,
+        )
         val packed = DoubleArray(texts.size * PACKED_LAYOUT_SIZE)
         texts.forEachIndexed { index, text ->
-            val layout = measure(
-                text,
-                fontFamily,
-                fontSize,
-                fontWeight,
-                fontStyle,
-                letterSpacing,
-                lineHeight,
-                allowFontScaling,
-                includeFontPadding,
-                tabularNumbers,
-                textBreakStrategy,
-                width,
-                maxLines,
-                ellipsizeMode,
+            packLayoutInto(
+                packed,
+                index * PACKED_LAYOUT_SIZE,
+                buildLayout(buildPreparedText(text, style), width, maxLines, ellipsizeMode, includeLines = false),
             )
-            System.arraycopy(layout, 0, packed, index * PACKED_LAYOUT_SIZE, PACKED_LAYOUT_SIZE)
         }
         return packed
     }
@@ -232,8 +257,11 @@ internal object RNPretextBindings {
     fun layoutBatch(handles: LongArray, width: Double, maxLines: Int, ellipsizeMode: String?): DoubleArray {
         val packed = DoubleArray(handles.size * PACKED_LAYOUT_SIZE)
         handles.forEachIndexed { index, handle ->
-            val layout = layout(handle, width, maxLines, ellipsizeMode)
-            System.arraycopy(layout, 0, packed, index * PACKED_LAYOUT_SIZE, PACKED_LAYOUT_SIZE)
+            packLayoutInto(
+                packed,
+                index * PACKED_LAYOUT_SIZE,
+                buildLayout(requirePrepared(handle), width, maxLines, ellipsizeMode, includeLines = false),
+            )
         }
         return packed
     }
@@ -267,8 +295,8 @@ internal object RNPretextBindings {
         return doubleArrayOf(line.start, line.end, line.width, line.bottom)
     }
 
-    private fun buildPreparedText(
-        text: String,
+    private fun resolveTextStyle(
+        color: String?,
         fontFamily: String?,
         fontSize: Double,
         fontWeight: String?,
@@ -279,10 +307,15 @@ internal object RNPretextBindings {
         includeFontPadding: Boolean,
         tabularNumbers: Boolean,
         textBreakStrategy: String?,
-    ): PreparedTextData {
+    ): ResolvedTextStyle {
         val textPaint = TextPaint(TextPaint.ANTI_ALIAS_FLAG)
         val effectiveFontSize = scale(fontSize, allowFontScaling, defaultValue = 14.0)
         textPaint.textSize = effectiveFontSize
+
+        val resolvedColor = resolveTextColor(color)
+        if (resolvedColor != null) {
+            textPaint.color = resolvedColor
+        }
 
         val typeface = resolveTypeface(fontFamily, fontWeight, fontStyle)
         textPaint.typeface = typeface
@@ -295,20 +328,30 @@ internal object RNPretextBindings {
             textPaint.fontFeatureSettings = "'tnum'"
         }
 
-        val effectiveLineHeight = if (lineHeight.isNaN()) {
+        val fallbackLineHeight = if (lineHeight.isNaN()) {
             ((-textPaint.fontMetricsInt.ascent) + textPaint.fontMetricsInt.descent).toDouble().toDp()
         } else {
             scale(lineHeight, allowFontScaling, defaultValue = lineHeight).toDouble().toDp()
         }
 
-        val breakStrategy = resolveTextBreakStrategy(textBreakStrategy)
+        return ResolvedTextStyle(
+            fallbackLineHeight = fallbackLineHeight,
+            includeFontPadding = includeFontPadding,
+            lineHeightPx = if (lineHeight.isNaN()) null else scale(lineHeight, allowFontScaling, defaultValue = lineHeight),
+            textBreakStrategy = resolveTextBreakStrategy(textBreakStrategy),
+            textColor = resolvedColor,
+            textPaint = textPaint,
+        )
+    }
+
+    private fun buildPreparedText(text: String, style: ResolvedTextStyle): PreparedTextData {
         val textWithLineHeight =
-            if (lineHeight.isNaN() || text.isEmpty()) {
+            if (style.lineHeightPx == null || text.isEmpty()) {
                 text
             } else {
                 SpannableString(text).apply {
                     setSpan(
-                        RNPretextLineHeightSpan(scale(lineHeight, allowFontScaling, defaultValue = lineHeight)),
+                        RNPretextLineHeightSpan(style.lineHeightPx),
                         0,
                         text.length,
                         SpannableString.SPAN_INCLUSIVE_INCLUSIVE,
@@ -317,11 +360,8 @@ internal object RNPretextBindings {
             }
 
         return PreparedTextData(
+            style = style,
             text = text,
-            textPaint = textPaint,
-            textBreakStrategy = breakStrategy,
-            includeFontPadding = includeFontPadding,
-            fallbackLineHeight = effectiveLineHeight,
             textWithLineHeight = textWithLineHeight,
         )
     }
@@ -351,7 +391,7 @@ internal object RNPretextBindings {
     ): LayoutInfo {
         if (prepared.text.isEmpty()) {
             return LayoutInfo(
-                height = prepared.fallbackLineHeight,
+                height = prepared.style.fallbackLineHeight,
                 lastLineWidth = 0.0,
                 lineCount = 0.0,
                 lines = emptyList(),
@@ -363,16 +403,16 @@ internal object RNPretextBindings {
         val layoutWidth = max(0.0, width) * density
         val textWidthPx = max(1, ceil(layoutWidth).toInt())
         val charSequence = prepared.textWithLineHeight
-        val paint = TextPaint(prepared.textPaint)
+        val paint = TextPaint(prepared.style.textPaint)
         val effectiveMaxLines = if (maxLines > 0) maxLines else Int.MAX_VALUE
         val ellipsize = resolveEllipsize(ellipsizeMode, effectiveMaxLines)
 
         val layout = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             StaticLayout.Builder.obtain(charSequence, 0, charSequence.length, paint, textWidthPx)
                 .setAlignment(Layout.Alignment.ALIGN_NORMAL)
-                .setBreakStrategy(prepared.textBreakStrategy)
+                .setBreakStrategy(prepared.style.textBreakStrategy)
                 .setHyphenationFrequency(Layout.HYPHENATION_FREQUENCY_NORMAL)
-                .setIncludePad(prepared.includeFontPadding)
+                .setIncludePad(prepared.style.includeFontPadding)
                 .setMaxLines(effectiveMaxLines)
                 .setEllipsize(ellipsize)
                 .build()
@@ -385,7 +425,7 @@ internal object RNPretextBindings {
                 Layout.Alignment.ALIGN_NORMAL,
                 1f,
                 0f,
-                prepared.includeFontPadding,
+                prepared.style.includeFontPadding,
             )
         }
 
@@ -422,11 +462,15 @@ internal object RNPretextBindings {
 
     private fun packLayout(layout: LayoutInfo): DoubleArray {
         val packed = DoubleArray(PACKED_LAYOUT_SIZE)
-        packed[0] = layout.width
-        packed[1] = layout.height
-        packed[2] = layout.lineCount
-        packed[3] = layout.lastLineWidth
+        packLayoutInto(packed, 0, layout)
         return packed
+    }
+
+    private fun packLayoutInto(target: DoubleArray, offset: Int, layout: LayoutInfo) {
+        target[offset] = layout.width
+        target[offset + 1] = layout.height
+        target[offset + 2] = layout.lineCount
+        target[offset + 3] = layout.lastLineWidth
     }
 
     private fun packLayoutWithLines(layout: LayoutInfo): DoubleArray {
@@ -449,6 +493,17 @@ internal object RNPretextBindings {
 
     private fun requirePrepared(handle: Long): PreparedTextData {
         return preparedTexts[handle] ?: error("RNPretext: attempted to use an invalid prepared text handle.")
+    }
+
+    @JvmStatic
+    internal fun resolvePreparedTextViewData(handle: Long): PreparedTextViewData? {
+        val prepared = preparedTexts[handle] ?: return null
+        return PreparedTextViewData(
+            includeFontPadding = prepared.style.includeFontPadding,
+            text = SpannableString.valueOf(prepared.textWithLineHeight),
+            textColor = prepared.style.textColor,
+            textPaint = TextPaint(prepared.style.textPaint),
+        )
     }
 
     private fun resolveTypeface(fontFamily: String?, fontWeight: String?, fontStyle: String?): Typeface {
@@ -477,6 +532,11 @@ internal object RNPretextBindings {
             "simple" -> Layout.BREAK_STRATEGY_SIMPLE
             else -> Layout.BREAK_STRATEGY_HIGH_QUALITY
         }
+    }
+
+    private fun resolveTextColor(value: String?): Int? {
+        if (value.isNullOrBlank()) return null
+        return runCatching { Color.parseColor(value) }.getOrNull()
     }
 
     private fun resolveEllipsize(mode: String?, maxLines: Int): TextUtils.TruncateAt? {

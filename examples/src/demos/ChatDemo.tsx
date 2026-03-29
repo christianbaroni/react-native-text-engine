@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef } from 'react';
-import { Platform, Pressable, SafeAreaView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { Pressable, SafeAreaView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { releaseMany, type PreparedTextHandle, type TextLayout, type TextMeasureStyle } from 'react-native-pretext';
 import { layoutBatchInRuntime, measureBatchInRuntime, prepareBatchInRuntime } from 'react-native-pretext/worklets';
 import Animated, { type DerivedValue, type SharedValue, useAnimatedStyle, useDerivedValue, useSharedValue } from 'react-native-reanimated';
@@ -417,51 +417,13 @@ function ChatBubble({
 
   return (
     <Animated.View style={[styles.bubble, bubbleStyle]}>
-      {Platform.OS === 'ios' ? (
-        <PreparedBubbleText handle={handle} />
-      ) : (
-        <FallbackBubbleText messages={messages} messageIndex={messageIndex} role={role} />
-      )}
+      <PreparedBubbleText handle={handle} />
     </Animated.View>
   );
 }
 
 function PreparedBubbleText({ handle }: { handle: DerivedValue<number> }) {
   return <PreparedHandleText ellipsizeMode="clip" handle={handle} selectable style={styles.preparedTextFrame} />;
-}
-
-function FallbackBubbleText({
-  messages,
-  messageIndex,
-  role,
-}: {
-  messages: readonly ChatMessage[];
-  messageIndex: DerivedValue<number>;
-  role: DerivedValue<'assistant' | 'user'>;
-}) {
-  const text = useDerivedValue(() => {
-    const index = messageIndex.value;
-    return messages[index]?.text ?? '';
-  });
-
-  const assistantStyle = useAnimatedStyle(() => ({
-    opacity: role.value === 'assistant' ? 1 : 0,
-  }));
-
-  const userStyle = useAnimatedStyle(() => ({
-    opacity: role.value === 'user' ? 1 : 0,
-  }));
-
-  return (
-    <View style={styles.fallbackTextFrame}>
-      <Animated.View pointerEvents="none" style={[styles.fallbackTextLayer, assistantStyle]}>
-        <WorkletText style={[styles.messageText, styles.assistantMessageText]}>{text}</WorkletText>
-      </Animated.View>
-      <Animated.View pointerEvents="none" style={[styles.fallbackTextLayer, userStyle]}>
-        <WorkletText style={[styles.messageText, styles.userMessageText]}>{text}</WorkletText>
-      </Animated.View>
-    </View>
-  );
 }
 
 function useBubbleStyle(
@@ -533,9 +495,6 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 0,
   },
-  assistantMessageText: {
-    color: demoTheme.textPrimary,
-  },
   composerAction: {
     alignItems: 'center',
     backgroundColor: '#0d121a',
@@ -597,16 +556,6 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     marginTop: -1,
   },
-  fallbackTextFrame: {
-    flex: 1,
-  },
-  fallbackTextLayer: {
-    bottom: 0,
-    left: 0,
-    position: 'absolute',
-    right: 0,
-    top: 0,
-  },
   eyebrow: {
     color: demoTheme.accentBlue,
     fontSize: 11,
@@ -623,12 +572,6 @@ const styles = StyleSheet.create({
   },
   listShell: {
     flex: 1,
-  },
-  messageText: {
-    fontSize: CHAT_STYLE.fontSize,
-    fontWeight: '500',
-    letterSpacing: CHAT_STYLE.letterSpacing,
-    lineHeight: CHAT_STYLE.lineHeight,
   },
   metric: {
     backgroundColor: 'rgba(12, 16, 23, 0.82)',
@@ -667,9 +610,6 @@ const styles = StyleSheet.create({
   root: {
     backgroundColor: demoTheme.root,
     flex: 1,
-  },
-  userMessageText: {
-    color: '#ffffff',
   },
   topOverlay: {
     gap: 12,

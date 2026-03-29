@@ -1,6 +1,7 @@
 node_modules
 lib
 android/build
+android/.cxx
 ios/build
 .DS_Store
 .pnp.cjs

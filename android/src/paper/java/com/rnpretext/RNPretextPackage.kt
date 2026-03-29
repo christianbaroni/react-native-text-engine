@@ -11,6 +11,9 @@ class RNPretextPackage : ReactPackage {
     }
 
     override fun createViewManagers(reactContext: ReactApplicationContext): List<ViewManager<*, *>> {
-        return listOf(RNPretextTextViewManager())
+        return listOf(
+            RNPretextTextViewManager(),
+            RNPretextPreparedTextViewManager(),
+        )
     }
 }
