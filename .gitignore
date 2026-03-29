@@ -2,6 +2,9 @@ node_modules
 lib
 android/build
 android/.cxx
+android/.gradle
+android/.idea
+android/local.properties
 ios/build
 .DS_Store
 .pnp.cjs
