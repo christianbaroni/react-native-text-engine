@@ -1,14 +1,7 @@
 import { GlyphFieldView } from './GlyphFieldView';
 import { GlyphField, createGlyphField } from './GlyphField';
 import { PreparedTextView } from './PreparedTextView';
-import {
-  PreparedText,
-  createPreparedText,
-  layoutPreparedText,
-  measureText,
-  measureTextWidth,
-  releasePreparedText,
-} from './PreparedText';
+import { PreparedText, createPreparedText, layoutPreparedText, measureText, measureTextWidth, releasePreparedText } from './PreparedText';
 import { TextView } from './TextView';
 
 export type {

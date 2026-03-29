@@ -1,6 +1,6 @@
-import React from 'react';
-import { Platform, requireNativeComponent, type ColorValue, type StyleProp, type ViewProps, type ViewStyle } from 'react-native';
+import React, { forwardRef, type ComponentRef } from 'react';
 import type { TextMeasureRun } from './types';
+import NativeTextView, { type NativeProps as NativeTextViewProps } from './specs/RNTextEngineTextViewNativeComponent';
 
 export type TextViewRunPayload = Readonly<{
   runColors?: readonly (string | null)[];
@@ -17,45 +17,167 @@ export type TextViewRunPayload = Readonly<{
   runTabularNumbers?: readonly boolean[];
 }>;
 
+type NativeTextViewRunPayload = Readonly<{
+  runColors?: readonly string[];
+  runCount?: number;
+  runEnds: readonly number[];
+  runFontFamilies?: readonly string[];
+  runFontSizes?: readonly number[];
+  runFontStyles?: readonly string[];
+  runFontWeights?: readonly string[];
+  runLetterSpacings?: readonly number[];
+  runLineHeights?: readonly number[];
+  runStarts: readonly number[];
+  runStyleMasks?: readonly number[];
+  runTabularNumbers?: readonly boolean[];
+}>;
+
+const RUN_STYLE_HAS_COLOR = 1 << 0;
+const RUN_STYLE_HAS_FONT_FAMILY = 1 << 1;
+const RUN_STYLE_HAS_FONT_SIZE = 1 << 2;
+const RUN_STYLE_HAS_FONT_STYLE = 1 << 3;
+const RUN_STYLE_HAS_FONT_WEIGHT = 1 << 4;
+const RUN_STYLE_HAS_LETTER_SPACING = 1 << 5;
+const RUN_STYLE_HAS_LINE_HEIGHT = 1 << 6;
+const RUN_STYLE_HAS_TABULAR_NUMBERS = 1 << 7;
+
+type NativeTextViewStringArrayProp = readonly string[] | undefined;
+
 /**
  * Props for the native text display surface.
  *
  * `selectable` opts into the interaction-oriented native text owner. Leave it
  * off for the lowest-cost display path.
  */
-export type TextViewProps = ViewProps & {
-  color?: ColorValue;
+export type TextViewProps = Omit<
+  NativeTextViewProps,
+  'runColors' | 'runFontFamilies' | 'runFontStyles' | 'runFontWeights' | 'fontStyle' | 'textAlign'
+> & {
+  color?: NativeTextViewProps['color'];
   ellipsizeMode?: 'clip' | 'head' | 'middle' | 'tail';
-  fontFamily?: string;
-  fontSize?: number;
   fontStyle?: 'italic' | 'normal';
-  fontWeight?: string;
-  letterSpacing?: number;
-  lineHeight?: number;
-  numberOfLines?: number;
   runColors?: readonly (string | null)[];
-  runCount?: number;
-  runEnds?: readonly number[];
   runFontFamilies?: readonly (string | null)[];
-  runFontSizes?: readonly number[];
   runFontStyles?: readonly (string | null)[];
   runFontWeights?: readonly (string | null)[];
-  runLetterSpacings?: readonly number[];
-  runLineHeights?: readonly number[];
-  runStarts?: readonly number[];
-  runStyleMasks?: readonly number[];
-  runTabularNumbers?: readonly boolean[];
   runs?: readonly TextMeasureRun[];
-  selectable?: boolean;
-  style?: StyleProp<ViewStyle>;
-  text?: string;
   textAlign?: 'auto' | 'center' | 'justify' | 'left' | 'right';
 };
 
-const NativeTextView = requireNativeComponent<TextViewProps>('RNTextEngineTextView');
+function normalizeStringArray(values: readonly (string | null)[] | undefined): NativeTextViewStringArrayProp {
+  if (!values) return undefined;
+  return values.map(value => value ?? '');
+}
+
+function flattenRuns(runs: readonly TextMeasureRun[] | undefined): NativeTextViewRunPayload | null {
+  if (!runs || runs.length === 0) return null;
+
+  const runCount = runs.length;
+  const runStarts = new Array<number>(runCount);
+  const runEnds = new Array<number>(runCount);
+  const runStyleMasks = new Array<number>(runCount);
+  let runColors: string[] | undefined;
+  let runFontFamilies: string[] | undefined;
+  let runFontSizes: number[] | undefined;
+  let runFontStyles: string[] | undefined;
+  let runFontWeights: string[] | undefined;
+  let runLetterSpacings: number[] | undefined;
+  let runLineHeights: number[] | undefined;
+  let runTabularNumbers: boolean[] | undefined;
+
+  for (let index = 0; index < runCount; index += 1) {
+    const run = runs[index];
+    const style = run?.style;
+    let styleMask = 0;
+
+    runStarts[index] = run?.start ?? 0;
+    runEnds[index] = run?.end ?? 0;
+
+    if (!style) {
+      runStyleMasks[index] = styleMask;
+      continue;
+    }
+
+    if (style.color !== undefined) {
+      runColors ??= new Array<string>(runCount).fill('');
+      runColors[index] = style.color;
+      styleMask |= RUN_STYLE_HAS_COLOR;
+    }
+
+    if (style.fontFamily !== undefined) {
+      runFontFamilies ??= new Array<string>(runCount).fill('');
+      runFontFamilies[index] = style.fontFamily;
+      styleMask |= RUN_STYLE_HAS_FONT_FAMILY;
+    }
+
+    if (style.fontSize !== undefined) {
+      runFontSizes ??= new Array<number>(runCount).fill(0);
+      runFontSizes[index] = style.fontSize;
+      styleMask |= RUN_STYLE_HAS_FONT_SIZE;
+    }
+
+    if (style.fontStyle !== undefined) {
+      runFontStyles ??= new Array<string>(runCount).fill('');
+      runFontStyles[index] = style.fontStyle;
+      styleMask |= RUN_STYLE_HAS_FONT_STYLE;
+    }
+
+    if (style.fontWeight !== undefined) {
+      runFontWeights ??= new Array<string>(runCount).fill('');
+      runFontWeights[index] = style.fontWeight;
+      styleMask |= RUN_STYLE_HAS_FONT_WEIGHT;
+    }
+
+    if (style.letterSpacing !== undefined) {
+      runLetterSpacings ??= new Array<number>(runCount).fill(0);
+      runLetterSpacings[index] = style.letterSpacing;
+      styleMask |= RUN_STYLE_HAS_LETTER_SPACING;
+    }
+
+    if (style.lineHeight !== undefined) {
+      runLineHeights ??= new Array<number>(runCount).fill(0);
+      runLineHeights[index] = style.lineHeight;
+      styleMask |= RUN_STYLE_HAS_LINE_HEIGHT;
+    }
+
+    if (style.tabularNumbers !== undefined) {
+      runTabularNumbers ??= new Array<boolean>(runCount).fill(false);
+      runTabularNumbers[index] = style.tabularNumbers;
+      styleMask |= RUN_STYLE_HAS_TABULAR_NUMBERS;
+    }
+
+    runStyleMasks[index] = styleMask;
+  }
+
+  return {
+    runColors,
+    runCount,
+    runEnds,
+    runFontFamilies,
+    runFontSizes,
+    runFontStyles,
+    runFontWeights,
+    runLetterSpacings,
+    runLineHeights,
+    runStarts,
+    runStyleMasks,
+    runTabularNumbers,
+  };
+}
 
 /**
  * Native text display surface that can be driven directly by animated props.
  */
-export const TextView: React.ComponentType<TextViewProps> =
-  Platform.OS === 'ios' || Platform.OS === 'android' ? (NativeTextView as unknown as React.ComponentType<TextViewProps>) : () => null;
+export const TextView = forwardRef<ComponentRef<typeof NativeTextView>, TextViewProps>(function TextView(
+  { runs, runColors, runFontFamilies, runFontStyles, runFontWeights, ...nativeProps },
+  ref
+) {
+  const runPayload = flattenRuns(runs) ?? {
+    runColors: normalizeStringArray(runColors),
+    runFontFamilies: normalizeStringArray(runFontFamilies),
+    runFontStyles: normalizeStringArray(runFontStyles),
+    runFontWeights: normalizeStringArray(runFontWeights),
+  };
+
+  return <NativeTextView ref={ref} {...nativeProps} {...runPayload} />;
+});

@@ -145,11 +145,7 @@ export function layoutPreparedTextsInRuntime(handles: readonly PreparedTextHandl
 /**
  * Worklet-safe glyph-field update against the current installed runtime.
  */
-export function updateGlyphFieldInRuntime(
-  handle: GlyphFieldHandle | number,
-  glyphs: string,
-  variantIndices: Uint8Array
-): void {
+export function updateGlyphFieldInRuntime(handle: GlyphFieldHandle | number, glyphs: string, variantIndices: Uint8Array): void {
   'worklet';
 
   const updateGlyphField = globalThis.__RNTextEngineUpdateGlyphField;

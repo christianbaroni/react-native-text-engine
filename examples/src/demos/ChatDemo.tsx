@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef } from 'react';
-import { Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import {
   PreparedTextView,
   TextView,
@@ -92,8 +92,8 @@ const WIDTH_OPTIONS: ReadonlyArray<{ label: string; value: WidthMode }> = [
 ];
 
 const EMPTY_HANDLES: PreparedTextHandle[] = [];
-const AnimatedTextView = Animated.createAnimatedComponent(TextView as React.ComponentType<Record<string, unknown>>);
-const AnimatedPreparedTextView = Animated.createAnimatedComponent(PreparedTextView as React.ComponentType<Record<string, unknown>>);
+const AnimatedTextView = Animated.createAnimatedComponent(TextView);
+const AnimatedPreparedTextView = Animated.createAnimatedComponent(PreparedTextView);
 
 export function ChatDemo({ isActive = true }: { isActive?: boolean }) {
   const { height, width } = useWindowDimensions();
@@ -132,7 +132,7 @@ export function ChatDemo({ isActive = true }: { isActive?: boolean }) {
 
     const jobId = jobRef.current + 1;
     jobRef.current = jobId;
-    layoutMetricText.value = '...';
+    layoutMetricText.set('...');
 
     const handles = handlesRef.current;
 
@@ -180,7 +180,7 @@ export function ChatDemo({ isActive = true }: { isActive?: boolean }) {
         bubbleHeights.value = preview.heights;
         data.value = Array.from(PREVIEW_MESSAGE_INDICES);
         itemMetricsVersion.value += 1;
-        layoutMetricText.value = '...';
+        layoutMetricText.set('...');
       });
     }
 
@@ -228,7 +228,7 @@ export function ChatDemo({ isActive = true }: { isActive?: boolean }) {
       bubbleHeights.value = rows.heights;
       data.value = Array.from(FULL_MESSAGE_INDICES);
       itemMetricsVersion.value += 1;
-      layoutMetricText.value = `${rows.nextLayoutMs.toFixed(1)}ms`;
+      layoutMetricText.set(`${rows.nextLayoutMs.toFixed(1)}ms`);
       lastMeasuredTextWidthRef.current = rows.measuredTextWidth;
     });
   }, [
@@ -481,18 +481,13 @@ function Metric({ label, value }: { label: string; value: SharedValue<string> | 
 
 function MetricValueText({ value }: { value: SharedValue<string> }) {
   const animatedProps = useAnimatedProps(() => ({
+    color: METRIC_VALUE_TEXT_STYLE.color,
+    fontSize: METRIC_VALUE_TEXT_STYLE.fontSize,
+    fontWeight: METRIC_VALUE_TEXT_STYLE.fontWeight,
     text: value.value,
   }));
 
-  return (
-    <AnimatedTextView
-      animatedProps={animatedProps}
-      color={METRIC_VALUE_TEXT_STYLE.color}
-      fontSize={METRIC_VALUE_TEXT_STYLE.fontSize}
-      fontWeight={METRIC_VALUE_TEXT_STYLE.fontWeight}
-      style={styles.metricValueFill}
-    />
-  );
+  return <AnimatedTextView animatedProps={animatedProps} style={styles.metricValueFill} />;
 }
 
 const styles = StyleSheet.create({

@@ -1,28 +1,14 @@
 import { NativeModules } from 'react-native';
 import RNTextEngineModule from './NativeRNTextEngine';
-import type {
-  GlyphFieldConfig,
-  LayoutOptions,
-  NextTextLine,
-  TextLayout,
-  TextLayoutLines,
-  TextMeasureRun,
-  TextMeasureStyle,
-} from './types';
+import type { GlyphFieldConfig, LayoutOptions, NextTextLine, TextLayout, TextLayoutLines, TextMeasureRun, TextMeasureStyle } from './types';
 
 declare global {
   var __RNTextEngineCreateGlyphField: ((config: GlyphFieldConfig) => number) | undefined;
   var __RNTextEngineInstallRuntime: ((runtimeToken: ArrayBuffer) => boolean) | undefined;
   var __RNTextEngineLayout: ((handle: number, options: LayoutOptions) => TextLayout) | undefined;
-  var __RNTextEngineLayoutBatch:
-    | ((handles: readonly number[], options: LayoutOptions) => TextLayout[])
-    | undefined;
-  var __RNTextEngineLayoutNextLine:
-    | ((handle: number, start: number, width: number) => NextTextLine | null)
-    | undefined;
-  var __RNTextEngineLayoutLines:
-    | ((handle: number, options: LayoutOptions) => TextLayoutLines)
-    | undefined;
+  var __RNTextEngineLayoutBatch: ((handles: readonly number[], options: LayoutOptions) => TextLayout[]) | undefined;
+  var __RNTextEngineLayoutNextLine: ((handle: number, start: number, width: number) => NextTextLine | null) | undefined;
+  var __RNTextEngineLayoutLines: ((handle: number, options: LayoutOptions) => TextLayoutLines) | undefined;
   var __RNTextEngineMeasure:
     | ((text: string, style: TextMeasureStyle | undefined, options: LayoutOptions, runs?: readonly TextMeasureRun[]) => TextLayout)
     | undefined;
@@ -37,9 +23,7 @@ declare global {
   var __RNTextEngineMeasureWidth:
     | ((text: string, style: TextMeasureStyle | undefined, runs?: readonly TextMeasureRun[]) => number)
     | undefined;
-  var __RNTextEnginePrepare:
-    | ((text: string, style: TextMeasureStyle | undefined, runs?: readonly TextMeasureRun[]) => number)
-    | undefined;
+  var __RNTextEnginePrepare: ((text: string, style: TextMeasureStyle | undefined, runs?: readonly TextMeasureRun[]) => number) | undefined;
   var __RNTextEnginePrepareBatch:
     | ((
         texts: readonly string[],
@@ -60,7 +44,12 @@ type RNTextEngineRuntime = {
   readonly layoutBatch: (handles: readonly number[], options: LayoutOptions) => TextLayout[];
   readonly layoutNextLine: (handle: number, start: number, width: number) => NextTextLine | null;
   readonly layoutLines: (handle: number, options: LayoutOptions) => TextLayoutLines;
-  readonly measure: (text: string, style: TextMeasureStyle | undefined, options: LayoutOptions, runs?: readonly TextMeasureRun[]) => TextLayout;
+  readonly measure: (
+    text: string,
+    style: TextMeasureStyle | undefined,
+    options: LayoutOptions,
+    runs?: readonly TextMeasureRun[]
+  ) => TextLayout;
   readonly measureBatch: (
     texts: readonly string[],
     style: TextMeasureStyle | undefined,
@@ -166,7 +155,9 @@ export function initRNTextEngine(): RNTextEngineRuntime {
   } catch {
     const installModule = resolveInstallModule();
     if (!installModule) {
-      throw new Error('RNTextEngine: Native module was not found. Make sure the package is autolinked and installed in a React Native runtime.');
+      throw new Error(
+        'RNTextEngine: Native module was not found. Make sure the package is autolinked and installed in a React Native runtime.'
+      );
     }
 
     const didInstall = installModule.install();

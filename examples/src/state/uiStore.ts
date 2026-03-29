@@ -6,6 +6,7 @@ export type WidthMode = 'compact' | 'phone' | 'wide';
 type UiState = {
   chatWidthMode: WidthMode;
   demo: Demo;
+  hasMountedChat: boolean;
   setChatWidthMode: (widthMode: WidthMode) => void;
   setDemo: (demo: Demo) => void;
 };
@@ -13,8 +14,13 @@ type UiState = {
 export const useUiStore = createBaseStore<UiState>(set => ({
   chatWidthMode: 'phone',
   demo: 'field',
+  hasMountedChat: false,
   setChatWidthMode: chatWidthMode => set({ chatWidthMode }),
-  setDemo: demo => set({ demo }),
+  setDemo: demo =>
+    set(state => ({
+      demo,
+      hasMountedChat: state.hasMountedChat || demo === 'chat',
+    })),
 }));
 
 export const uiActions = createStoreActions(useUiStore);

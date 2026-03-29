@@ -1,4 +1,4 @@
-import React, { useLayoutEffect, useState } from 'react';
+import React from 'react';
 import { Platform, StatusBar, StyleSheet, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -15,12 +15,7 @@ const DEMO_OPTIONS = [
 
 function App(): React.JSX.Element {
   const demo = useUiStore(state => state.demo);
-  const [hasMountedChat, setHasMountedChat] = useState(demo === 'chat');
-
-  useLayoutEffect(() => {
-    if (demo !== 'chat') return;
-    setHasMountedChat(true);
-  }, [demo]);
+  const hasMountedChat = useUiStore(state => state.hasMountedChat);
 
   return (
     <>
