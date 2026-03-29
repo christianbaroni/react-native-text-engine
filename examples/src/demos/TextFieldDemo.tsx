@@ -1,5 +1,12 @@
 import React, { useLayoutEffect, useMemo } from 'react';
-import { SafeAreaView, StyleSheet, Text, View, useWindowDimensions, type LayoutChangeEvent } from 'react-native';
+import {
+  SafeAreaView,
+  StyleSheet,
+  Text,
+  View,
+  useWindowDimensions,
+  type LayoutChangeEvent,
+} from 'react-native';
 import { useStableValue } from '@storesjs/stores';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { useFrameCallback, useSharedValue } from 'react-native-reanimated';
@@ -16,16 +23,36 @@ import { demoTheme } from '../theme/demoTheme';
 
 export function TextFieldDemo({ isActive = true }: { isActive?: boolean }) {
   const { height, width } = useWindowDimensions();
-  const config = useMemo(() => resolveTextFieldConfig(width, height), [height, width]);
-  const runtimeInput = useMemo(() => createTextFieldRuntimeInput(config), [config]);
-  const initialFrame = useMemo(() => stepTextFieldRuntime(runtimeInput, 0, { active: false, x: 0, y: 0 }), [runtimeInput]);
+  const config = useMemo(
+    () => resolveTextFieldConfig(width, height),
+    [height, width],
+  );
+  const runtimeInput = useMemo(
+    () => createTextFieldRuntimeInput(config),
+    [config],
+  );
+  const initialFrame = useMemo(
+    () => stepTextFieldRuntime(runtimeInput, 0, { active: false, x: 0, y: 0 }),
+    [runtimeInput],
+  );
 
   const active = useSharedValue(isActive ? 1 : 0);
   const fieldText = useSharedValue(initialFrame.text);
-  const fieldRuns = useSharedValue<readonly TextMeasureRun[]>(initialFrame.runs);
-  const fieldFrame = useSharedValue({ height: config.artHeight, width: config.artWidth, x: 0, y: 0 });
+  const fieldRuns = useSharedValue<readonly TextMeasureRun[]>(
+    initialFrame.runs,
+  );
+  const fieldFrame = useSharedValue({
+    height: config.artHeight,
+    width: config.artWidth,
+    x: 0,
+    y: 0,
+  });
   const phase = useSharedValue(0);
-  const pointer = useSharedValue<TextFieldPointer>({ active: false, x: 0, y: 0 });
+  const pointer = useSharedValue<TextFieldPointer>({
+    active: false,
+    x: 0,
+    y: 0,
+  });
   const runtimeInputValue = useSharedValue(runtimeInput);
 
   useLayoutEffect(() => {
@@ -39,25 +66,51 @@ export function TextFieldDemo({ isActive = true }: { isActive?: boolean }) {
     const next = stepTextFieldRuntime(runtimeInput, 0, pointer.value);
     fieldText.value = next.text;
     fieldRuns.value = next.runs;
-    fieldFrame.value = { height: config.artHeight, width: config.artWidth, x: 0, y: 0 };
-  }, [config.artHeight, config.artWidth, fieldFrame, fieldRuns, fieldText, phase, pointer, runtimeInput, runtimeInputValue]);
+    fieldFrame.value = {
+      height: config.artHeight,
+      width: config.artWidth,
+      x: 0,
+      y: 0,
+    };
+  }, [
+    config.artHeight,
+    config.artWidth,
+    fieldFrame,
+    fieldRuns,
+    fieldText,
+    phase,
+    pointer,
+    runtimeInput,
+    runtimeInputValue,
+  ]);
 
   const updateFieldFrame = (event: LayoutChangeEvent) => {
-    const { height: layoutHeight, width: layoutWidth, x, y } = event.nativeEvent.layout;
+    const {
+      height: layoutHeight,
+      width: layoutWidth,
+      x,
+      y,
+    } = event.nativeEvent.layout;
     fieldFrame.value = { height: layoutHeight, width: layoutWidth, x, y };
   };
 
-  const onFrame = useStableValue(() => (frameInfo: { timeSincePreviousFrame: number | null }) => {
-    'worklet';
+  const onFrame = useStableValue(
+    () => (frameInfo: { timeSincePreviousFrame: number | null }) => {
+      'worklet';
 
-    if (active.value === 0) return;
+      if (active.value === 0) return;
 
-    phase.value += (frameInfo.timeSincePreviousFrame ?? 16.67) / 1000;
+      phase.value += (frameInfo.timeSincePreviousFrame ?? 16.67) / 1000;
 
-    const next = stepTextFieldRuntime(runtimeInputValue.value, phase.value, pointer.value);
-    fieldText.value = next.text;
-    fieldRuns.value = next.runs;
-  });
+      const next = stepTextFieldRuntime(
+        runtimeInputValue.value,
+        phase.value,
+        pointer.value,
+      );
+      fieldText.value = next.text;
+      fieldRuns.value = next.runs;
+    },
+  );
 
   useFrameCallback(onFrame);
 
@@ -88,14 +141,19 @@ export function TextFieldDemo({ isActive = true }: { isActive?: boolean }) {
             y: pointer.value.y,
           };
         }),
-    [fieldFrame, pointer]
+    [fieldFrame, pointer],
   );
 
   return (
     <SafeAreaView style={styles.root}>
       <GestureDetector gesture={dragGesture}>
         <View style={styles.stage}>
-          <View onLayout={updateFieldFrame} style={[styles.textField, { height: config.artHeight, width: config.artWidth }]}>
+          <View
+            onLayout={updateFieldFrame}
+            style={[
+              styles.textField,
+              { height: config.artHeight, width: config.artWidth },
+            ]}>
             <WorkletText
               ellipsizeMode="clip"
               numberOfLines={config.rows}
@@ -106,8 +164,7 @@ export function TextFieldDemo({ isActive = true }: { isActive?: boolean }) {
                   height: config.artHeight,
                   width: config.artWidth,
                 },
-              ]}
-            >
+              ]}>
               {fieldText}
             </WorkletText>
           </View>
@@ -115,7 +172,9 @@ export function TextFieldDemo({ isActive = true }: { isActive?: boolean }) {
       </GestureDetector>
 
       <View pointerEvents="none" style={styles.footer}>
-        <Text style={styles.footerText}>{config.rows * config.cols} characters</Text>
+        <Text style={styles.footerText}>
+          {config.rows * config.cols} characters
+        </Text>
       </View>
     </SafeAreaView>
   );
@@ -157,9 +216,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flex: 1,
     justifyContent: 'center',
-    paddingBottom: 84,
+    paddingBottom: 100,
     paddingHorizontal: 12,
-    paddingTop: 34,
   },
   textField: {
     justifyContent: 'center',

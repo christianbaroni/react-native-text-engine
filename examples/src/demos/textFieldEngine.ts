@@ -57,7 +57,7 @@ const FONT_FAMILY = Platform.OS === 'ios' ? 'Georgia' : 'serif';
 const CHARSET = ' .,:;!+-=*#@%&abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
 const WEIGHTS = ['300', '500', '800'] as const;
 const STYLES = ['normal', 'italic'] as const;
-const AMBIENT_DIM_COLOR = '#DDA261';
+const AMBIENT_DIM_COLOR = '#F0C785';
 const BRIGHTNESS_COLORS = ['#8B6841', '#B58349', '#DDA261', '#F0C785', '#FFF1CA'] as const;
 
 export const FIELD_STYLE: TextMeasureStyle = {
