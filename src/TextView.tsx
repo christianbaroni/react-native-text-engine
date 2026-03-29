@@ -1,7 +1,6 @@
 import React from 'react';
 import {
   Platform,
-  processColor,
   requireNativeComponent,
   type ColorValue,
   type StyleProp,
@@ -28,8 +27,3 @@ const NativeTextView = requireNativeComponent<TextViewProps>('RNPretextTextView'
 
 export const TextView: React.ComponentType<TextViewProps> =
   Platform.OS === 'ios' || Platform.OS === 'android' ? (NativeTextView as unknown as React.ComponentType<TextViewProps>) : () => null;
-
-export function resolveTextViewColor(color: ColorValue | undefined): ColorValue | number | undefined {
-  if (color == null) return undefined;
-  return typeof color === 'string' ? (processColor(color) ?? undefined) : color;
-}

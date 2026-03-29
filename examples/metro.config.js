@@ -1,5 +1,4 @@
 const path = require('path');
-const exclusionList = require('metro-config/private/defaults/exclusionList').default;
 const { getDefaultConfig, mergeConfig } = require('@react-native/metro-config');
 const { wrapWithReanimatedMetroConfig } = require('react-native-reanimated/metro-config');
 
@@ -16,9 +15,10 @@ const duplicatePackageNames = ['react', 'react-native', 'react-native-reanimated
 const escapePathForRegex = value => value.replace(/[|\\{}()[\]^$+*?.-]/g, '\\$&');
 const config = {
   resolver: {
-    blockList: exclusionList(
-      duplicatePackageNames.map(packageName => new RegExp(`${escapePathForRegex(path.join(packageNodeModules, packageName))}/.*`))
-    ),
+    // `react-native-pretext` is linked in through a portal. If Metro resolves
+    // these runtime peers from both the app and the package root, Worklets and
+    // Reanimated lose object identity guarantees and shared values freeze.
+    blockList: duplicatePackageNames.map(packageName => new RegExp(`${escapePathForRegex(path.join(packageNodeModules, packageName))}/.*`)),
     extraNodeModules: {
       react: path.resolve(appNodeModules, 'react'),
       'react-native': path.resolve(appNodeModules, 'react-native'),
