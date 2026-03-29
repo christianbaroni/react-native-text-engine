@@ -5,6 +5,7 @@ Prepared text measurement and layout for React Native.
 `react-native-pretext` gives React Native a `prepare` / `layout` text API backed by the platform’s native text engines.
 
 It is built for cases where React components should not own text measurement:
+
 - large AI chat conversations
 - exact text-driven virtualization
 - Shared Value UI that still needs width or line-count facts
@@ -19,6 +20,7 @@ The package has one core idea:
 3. `layoutNextLine(handle, start, width)` steps through the text one visible line at a time when width changes per line.
 
 That keeps one fact in one place:
+
 - text + typography live in the prepared handle
 - width-specific layout lives in the layout call
 
@@ -138,6 +140,31 @@ const measurement = useDerivedValue(() => {
 });
 ```
 
+For dedicated Worklets runtimes, use the `react-native-pretext/worklets` entry:
+
+```ts
+import { createRNPretextWorkletRuntime, layoutBatchInRuntime, prepareBatchInRuntime } from 'react-native-pretext/worklets';
+
+const runtime = createRNPretextWorkletRuntime({ name: 'pretext-layout' });
+```
+
+That installs the native bindings into the created runtime before any caller initializer runs.
+
+## Native text surfaces
+
+The package also exposes minimal native text views for render paths that should stay outside React-owned text layout:
+
+```ts
+import { PreparedTextView, TextView } from 'react-native-pretext';
+```
+
+- `TextView` renders direct text props on iOS and Android.
+- `PreparedTextView` renders directly from a prepared handle on iOS.
+- `selectable` opts into the interaction-oriented native text owner.
+- leaving `selectable` off keeps the cheaper display-oriented path.
+
+The split is intentional: selection and display have different runtime costs, so the package does not force the interaction path on every render surface.
+
 ## Style surface
 
 `TextMeasureStyle` intentionally exposes the small, high-value subset of RN text style that materially affects measurement:
@@ -165,6 +192,7 @@ Only measurement-relevant facts belong here.
 Prepared handles own native memory.
 
 That means:
+
 - call `release(handle)` when one prepared block is no longer needed
 - call `releaseMany(handles)` for bulk cleanup
 
@@ -180,7 +208,6 @@ The package keeps lifecycle explicit on purpose.
 
 ## What the package does not own
 
-- rendering text to screen
 - React state management
 - markdown parsing
 - mixed-style attributed text runs
@@ -191,29 +218,34 @@ Those can sit above this package.
 ## Architecture
 
 The package uses:
+
 - old/new architecture-compatible native module install path
 - JSI globals for sync calls
 - native registry-backed prepared handles
 - native text engines as the source of truth on iOS and Android
 
 The design artifacts for the package live in:
+
 - [brief.md](./brief.md)
 - [journal.md](./journal.md)
 - [implementation-plan.md](./implementation-plan.md)
 - [worklets-evaluation.md](./worklets-evaluation.md)
 
 The example app lives in:
+
 - [examples/App.tsx](./examples/App.tsx)
 - [examples/src/demos/TextFieldDemo.tsx](./examples/src/demos/TextFieldDemo.tsx)
 - [examples/src/demos/ChatDemo.tsx](./examples/src/demos/ChatDemo.tsx)
 
 Those demos currently prove two intended RN surfaces:
+
 - a continuously changing dark text field built from measured proportional glyph lookup and one Shared Value text owner on the UI runtime
 - a long AI chat surface where exact text geometry feeds a transplanted Shared Value recycled list instead of React-owned row measurement
 
 ## Verification
 
 Current verified checks in this repo:
+
 - TypeScript surface passes `yarn typescript`
 - publish build passes `yarn build`
 - package artifact passes `npm pack --dry-run`

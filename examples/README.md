@@ -9,7 +9,8 @@ This example app exists to prove two concrete use cases:
 2. `ChatDemo`
    A long-conversation surface that uses exact `measureBatch` geometry for the
    active width and feeds that directly into a Shared Value recycled list built
-   from the real worklet-list architecture.
+   from the real worklet-list architecture. On iOS it renders from prepared
+   handles and uses the selectable native text path for chat message text.
 
 ## Run
 
@@ -22,4 +23,6 @@ yarn android
 ```
 
 The app depends on the local package via `portal:..`, so edits in the package
-are visible directly from the example workspace.
+are visible directly from the example workspace. Metro is pinned to the app's
+own React / React Native / Reanimated / Worklets copies so the linked package
+does not load duplicate runtime peers.

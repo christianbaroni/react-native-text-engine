@@ -443,9 +443,11 @@ function FallbackBubbleText({
     const index = messageIndex.value;
     return messages[index]?.text ?? '';
   });
+
   const assistantStyle = useAnimatedStyle(() => ({
     opacity: role.value === 'assistant' ? 1 : 0,
   }));
+
   const userStyle = useAnimatedStyle(() => ({
     opacity: role.value === 'user' ? 1 : 0,
   }));

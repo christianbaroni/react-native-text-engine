@@ -91,6 +91,9 @@ export function measureBatchInRuntime(texts: readonly string[], style: TextMeasu
   return measureBatch(texts, style, options);
 }
 
+/**
+ * Worklet-safe prepared-text creation against the current installed runtime.
+ */
 export function prepareBatchInRuntime(texts: readonly string[], style?: TextMeasureStyle): PreparedTextHandle[] {
   'worklet';
 
@@ -102,6 +105,9 @@ export function prepareBatchInRuntime(texts: readonly string[], style?: TextMeas
   return prepareBatch(texts, style).map(buildHandle);
 }
 
+/**
+ * Worklet-safe prepared-text layout against the current installed runtime.
+ */
 export function layoutBatchInRuntime(handles: readonly PreparedTextHandle[], options: LayoutOptions): TextLayout[] {
   'worklet';
 

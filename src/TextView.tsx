@@ -1,6 +1,12 @@
 import React from 'react';
 import { Platform, requireNativeComponent, type ColorValue, type StyleProp, type ViewProps, type ViewStyle } from 'react-native';
 
+/**
+ * Props for the native text display surface.
+ *
+ * `selectable` opts into the interaction-oriented native text owner. Leave it
+ * off for the lowest-cost display path.
+ */
 export type TextViewProps = ViewProps & {
   color?: ColorValue;
   ellipsizeMode?: 'clip' | 'head' | 'middle' | 'tail';
@@ -19,5 +25,8 @@ export type TextViewProps = ViewProps & {
 
 const NativeTextView = requireNativeComponent<TextViewProps>('RNPretextTextView');
 
+/**
+ * Native text display surface that can be driven directly by animated props.
+ */
 export const TextView: React.ComponentType<TextViewProps> =
   Platform.OS === 'ios' || Platform.OS === 'android' ? (NativeTextView as unknown as React.ComponentType<TextViewProps>) : () => null;
