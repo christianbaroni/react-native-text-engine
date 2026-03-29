@@ -84,9 +84,9 @@ using namespace facebook::react;
 
   CGContextSetBlendMode(context, kCGBlendModeCopy);
   CGContextSetFillColorWithColor(context, UIColor.clearColor.CGColor);
-  CGContextFillRect(context, self.bounds);
+  CGContextFillRect(context, rect);
   CGContextSetBlendMode(context, kCGBlendModeNormal);
-  rntextengine::drawGlyphFieldHandle((uint64_t)_registeredHandle, context, self.bounds);
+  rntextengine::drawGlyphFieldHandle((uint64_t)_registeredHandle, context, self.bounds, rect);
 }
 
 - (void)prepareForRecycle
@@ -156,9 +156,9 @@ using namespace facebook::react;
 
   CGContextSetBlendMode(context, kCGBlendModeCopy);
   CGContextSetFillColorWithColor(context, UIColor.clearColor.CGColor);
-  CGContextFillRect(context, self.bounds);
+  CGContextFillRect(context, rect);
   CGContextSetBlendMode(context, kCGBlendModeNormal);
-  rntextengine::drawGlyphFieldHandle((uint64_t)_handle, context, self.bounds);
+  rntextengine::drawGlyphFieldHandle((uint64_t)_handle, context, self.bounds, rect);
 }
 
 @end

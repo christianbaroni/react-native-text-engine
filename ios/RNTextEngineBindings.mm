@@ -47,13 +47,30 @@
 
 @end
 
+@interface RNTextEngineGlyphFieldRun : NSObject
+@property (nonatomic, copy) NSString *text;
+@property (nonatomic, assign) CGFloat width;
+@property (nonatomic, assign) NSInteger variantIndex;
+@property (nonatomic, strong) RNTextEngineGlyphFieldVariant *variant;
+@end
+
+@implementation RNTextEngineGlyphFieldRun
+@end
+
+@interface RNTextEngineGlyphFieldRow : NSObject
+@property (nonatomic, copy) NSArray<RNTextEngineGlyphFieldRun *> *runs;
+@property (nonatomic, assign) CGFloat width;
+@end
+
+@implementation RNTextEngineGlyphFieldRow
+@end
+
 @interface RNTextEngineGlyphField : NSObject
 @property (nonatomic, assign) NSInteger columns;
 @property (nonatomic, assign) CGFloat lineHeight;
 @property (nonatomic, assign) NSInteger rows;
 @property (nonatomic, assign) NSTextAlignment textAlign;
-@property (nonatomic, copy) NSString *glyphs;
-@property (nonatomic, copy) NSData *variantIndices;
+@property (nonatomic, copy) NSArray<RNTextEngineGlyphFieldRow *> *rowsData;
 @property (nonatomic, copy) NSArray<RNTextEngineGlyphFieldVariant *> *variants;
 @property (nonatomic, strong) NSHashTable<UIView *> *views;
 @end
@@ -63,8 +80,7 @@
 - (instancetype)init
 {
   if ((self = [super init])) {
-    _glyphs = @"";
-    _variantIndices = [NSData data];
+    _rowsData = @[];
     _views = [NSHashTable weakObjectsHashTable];
   }
 
@@ -666,13 +682,16 @@ RNTextEngineGlyphFieldVariant *buildGlyphFieldVariant(const GlyphFieldConfig& co
   return variant;
 }
 
-CGFloat measureGlyphWidth(RNTextEngineGlyphFieldVariant *variant, NSString *glyph) {
-  NSNumber *cachedWidth = variant.widthCache[@(glyph.length == 0 ? 0 : [glyph characterAtIndex:0])];
+NSString *glyphStringForCharacter(unichar character);
+
+CGFloat measureGlyphWidth(RNTextEngineGlyphFieldVariant *variant, unichar character) {
+  NSNumber *cachedWidth = variant.widthCache[@(character)];
   if (cachedWidth != nil) return cachedWidth.doubleValue;
 
+  NSString *glyph = glyphStringForCharacter(character);
   NSAttributedString *attributedGlyph = [[NSAttributedString alloc] initWithString:glyph attributes:variant.attributes];
   CGFloat width = measureAttributedWidth(attributedGlyph);
-  variant.widthCache[@(glyph.length == 0 ? 0 : [glyph characterAtIndex:0])] = @(width);
+  variant.widthCache[@(character)] = @(width);
   return width;
 }
 
@@ -691,6 +710,71 @@ NSString *glyphStringForCharacter(unichar character) {
   glyph = [[NSString alloc] initWithCharacters:&value length:1];
   cache[key] = glyph;
   return glyph;
+}
+
+RNTextEngineGlyphFieldRun *buildGlyphFieldRun(
+    NSMutableString *text,
+    RNTextEngineGlyphFieldVariant *variant,
+    NSInteger variantIndex,
+    CGFloat width) {
+  RNTextEngineGlyphFieldRun *run = [[RNTextEngineGlyphFieldRun alloc] init];
+  run.text = [text copy];
+  run.variant = variant;
+  run.variantIndex = variantIndex;
+  run.width = width;
+  return run;
+}
+
+NSArray<RNTextEngineGlyphFieldRow *> *buildGlyphFieldRows(
+    RNTextEngineGlyphField *field,
+    NSString *glyphs,
+    const std::vector<uint8_t>& variantIndices) {
+  NSMutableArray<RNTextEngineGlyphFieldRow *> *rows = [NSMutableArray arrayWithCapacity:field.rows];
+
+  for (NSInteger row = 0; row < field.rows; row += 1) {
+    NSMutableArray<RNTextEngineGlyphFieldRun *> *runs = [NSMutableArray array];
+    NSMutableString *runText = [NSMutableString stringWithCapacity:field.columns];
+    RNTextEngineGlyphFieldVariant *runVariant = nil;
+    NSInteger runVariantIndex = -1;
+    CGFloat runWidth = 0;
+    CGFloat rowWidth = 0;
+    NSUInteger rowStart = static_cast<NSUInteger>(row * field.columns);
+
+    auto flushRun = [&] {
+      if (runVariant == nil || runText.length == 0) return;
+      [runs addObject:buildGlyphFieldRun(runText, runVariant, runVariantIndex, runWidth)];
+      rowWidth += runWidth;
+      runText = [NSMutableString stringWithCapacity:field.columns];
+      runVariant = nil;
+      runVariantIndex = -1;
+      runWidth = 0;
+    };
+
+    for (NSInteger column = 0; column < field.columns; column += 1) {
+      NSUInteger cellIndex = rowStart + static_cast<NSUInteger>(column);
+      unichar glyphCharacter = [glyphs characterAtIndex:cellIndex];
+      NSInteger variantIndex = variantIndices[cellIndex];
+      RNTextEngineGlyphFieldVariant *variant = field.variants[variantIndex];
+
+      if (runVariantIndex != variantIndex) {
+        flushRun();
+        runVariant = variant;
+        runVariantIndex = variantIndex;
+      }
+
+      [runText appendString:glyphStringForCharacter(glyphCharacter)];
+      runWidth += measureGlyphWidth(variant, glyphCharacter);
+    }
+
+    flushRun();
+
+    RNTextEngineGlyphFieldRow *rowData = [[RNTextEngineGlyphFieldRow alloc] init];
+    rowData.runs = runs;
+    rowData.width = rowWidth;
+    [rows addObject:rowData];
+  }
+
+  return rows;
 }
 
 Handle storeGlyphField(const GlyphFieldConfig& config) {
@@ -727,13 +811,77 @@ RNTextEngineGlyphField *getGlyphFieldIfPresent(Handle handle) {
   return glyphFields[toKey(handle)];
 }
 
-void invalidateGlyphFieldViews(RNTextEngineGlyphField *field) {
+bool glyphFieldRunEquals(RNTextEngineGlyphFieldRun *left, RNTextEngineGlyphFieldRun *right) {
+  if (left == right) return true;
+  if (left == nil || right == nil) return false;
+  return left.variantIndex == right.variantIndex && [left.text isEqualToString:right.text];
+}
+
+bool glyphFieldRowEquals(RNTextEngineGlyphFieldRow *left, RNTextEngineGlyphFieldRow *right) {
+  if (left == right) return true;
+  if (left == nil || right == nil) return false;
+  if (left.runs.count != right.runs.count) return false;
+
+  for (NSUInteger index = 0; index < left.runs.count; index += 1) {
+    if (!glyphFieldRunEquals(left.runs[index], right.runs[index])) return false;
+  }
+
+  return true;
+}
+
+std::vector<NSRange> buildGlyphFieldDirtyRanges(
+    NSArray<RNTextEngineGlyphFieldRow *> *previousRows,
+    NSArray<RNTextEngineGlyphFieldRow *> *nextRows,
+    NSInteger rowCount) {
+  std::vector<NSRange> dirtyRanges;
+  NSInteger rangeStart = NSNotFound;
+
+  for (NSInteger row = 0; row < rowCount; row += 1) {
+    RNTextEngineGlyphFieldRow *previousRow = row < static_cast<NSInteger>(previousRows.count) ? previousRows[row] : nil;
+    RNTextEngineGlyphFieldRow *nextRow = row < static_cast<NSInteger>(nextRows.count) ? nextRows[row] : nil;
+    bool didChange = !glyphFieldRowEquals(previousRow, nextRow);
+
+    if (didChange && rangeStart == NSNotFound) {
+      rangeStart = row;
+      continue;
+    }
+
+    if (!didChange && rangeStart != NSNotFound) {
+      dirtyRanges.push_back(NSMakeRange(rangeStart, row - rangeStart));
+      rangeStart = NSNotFound;
+    }
+  }
+
+  if (rangeStart != NSNotFound) {
+    dirtyRanges.push_back(NSMakeRange(rangeStart, rowCount - rangeStart));
+  }
+
+  return dirtyRanges;
+}
+
+void invalidateGlyphFieldViews(RNTextEngineGlyphField *field, const std::vector<NSRange>& dirtyRanges) {
+  if (dirtyRanges.empty()) return;
+
   NSArray<UIView *> *views = field.views.allObjects;
   if (views.count == 0) return;
 
   dispatch_block_t invalidate = ^{
+    bool shouldRedrawWholeView =
+        dirtyRanges.size() == 1 && dirtyRanges.front().location == 0 && dirtyRanges.front().length >= field.rows;
+
     for (UIView *view in views) {
-      [view setNeedsDisplay];
+      if (shouldRedrawWholeView || CGRectIsEmpty(view.bounds)) {
+        [view setNeedsDisplay];
+        continue;
+      }
+
+      CGFloat topInset = MAX(0, (CGRectGetHeight(view.bounds) - field.rows * field.lineHeight) * 0.5);
+      for (const NSRange& range : dirtyRanges) {
+        CGFloat y = topInset + range.location * field.lineHeight;
+        CGFloat height = range.length * field.lineHeight;
+        CGRect dirtyRect = CGRectIntegral(CGRectMake(0, y, CGRectGetWidth(view.bounds), height));
+        [view setNeedsDisplayInRect:dirtyRect];
+      }
     }
   };
 
@@ -765,29 +913,16 @@ void updateGlyphField(Runtime& runtime, Handle handle, const std::string& glyphs
     }
   }
 
-  field.glyphs = glyphs;
-  field.variantIndices = [NSData dataWithBytes:variantIndices.data() length:variantIndices.size()];
-  invalidateGlyphFieldViews(field);
+  NSArray<RNTextEngineGlyphFieldRow *> *nextRows = buildGlyphFieldRows(field, glyphs, variantIndices);
+  NSArray<RNTextEngineGlyphFieldRow *> *previousRows = field.rowsData;
+  std::vector<NSRange> dirtyRanges = buildGlyphFieldDirtyRanges(previousRows, nextRows, field.rows);
+  field.rowsData = nextRows;
+  invalidateGlyphFieldViews(field, dirtyRanges);
 }
 
 void releaseGlyphFieldHandle(Handle handle) {
   std::lock_guard<std::mutex> lock(glyphFieldMutex);
   [glyphFields removeObjectForKey:toKey(handle)];
-}
-
-CGFloat glyphFieldRowWidth(RNTextEngineGlyphField *field, NSUInteger rowIndex) {
-  const uint8_t *variantIndices = static_cast<const uint8_t *>(field.variantIndices.bytes);
-  if (variantIndices == nullptr) return 0;
-
-  CGFloat width = 0;
-  NSUInteger rowStart = rowIndex * field.columns;
-  for (NSInteger column = 0; column < field.columns; column += 1) {
-    NSUInteger cellIndex = rowStart + column;
-    unichar glyphCharacter = [field.glyphs characterAtIndex:cellIndex];
-    RNTextEngineGlyphFieldVariant *variant = field.variants[variantIndices[cellIndex]];
-    width += measureGlyphWidth(variant, glyphStringForCharacter(glyphCharacter));
-  }
-  return width;
 }
 
 CGFloat glyphFieldRowOriginX(RNTextEngineGlyphField *field, CGRect bounds, CGFloat rowWidth) {
@@ -1083,31 +1218,30 @@ void unregisterGlyphFieldView(uint64_t handle, UIView *view) {
   [field.views removeObject:view];
 }
 
-void drawGlyphFieldHandle(uint64_t handle, CGContextRef context, CGRect bounds) {
+void drawGlyphFieldHandle(uint64_t handle, CGContextRef context, CGRect bounds, CGRect dirtyRect) {
   if (handle == 0 || context == nullptr) return;
 
   RNTextEngineGlyphField *field = getGlyphFieldIfPresent(static_cast<Handle>(handle));
-  if (field == nil || field.glyphs.length == 0 || field.variantIndices.length == 0) return;
+  if (field == nil || field.rowsData.count == 0) return;
 
   CGFloat contentHeight = field.rows * field.lineHeight;
   CGFloat topInset = MAX(0, (CGRectGetHeight(bounds) - contentHeight) * 0.5);
-  const uint8_t *variantIndices = static_cast<const uint8_t *>(field.variantIndices.bytes);
-  if (variantIndices == nullptr) return;
 
-  for (NSInteger row = 0; row < field.rows; row += 1) {
-    CGFloat rowWidth = glyphFieldRowWidth(field, row);
-    CGFloat x = glyphFieldRowOriginX(field, bounds, rowWidth);
-    NSUInteger rowStart = static_cast<NSUInteger>(row * field.columns);
+  NSInteger startRow = MAX(0, static_cast<NSInteger>(floor((CGRectGetMinY(dirtyRect) - topInset) / field.lineHeight)));
+  NSInteger endRow = MIN(field.rows, static_cast<NSInteger>(ceil((CGRectGetMaxY(dirtyRect) - topInset) / field.lineHeight)));
+  if (CGRectIsEmpty(dirtyRect)) {
+    startRow = 0;
+    endRow = field.rows;
+  }
 
-    for (NSInteger column = 0; column < field.columns; column += 1) {
-      NSUInteger cellIndex = rowStart + static_cast<NSUInteger>(column);
-      unichar glyphCharacter = [field.glyphs characterAtIndex:cellIndex];
-      RNTextEngineGlyphFieldVariant *variant = field.variants[variantIndices[cellIndex]];
-      NSString *glyph = glyphStringForCharacter(glyphCharacter);
-      CGFloat glyphWidth = measureGlyphWidth(variant, glyph);
-      CGFloat y = topInset + row * field.lineHeight + MAX(0, (field.lineHeight - variant.font.lineHeight) * 0.5);
-      [glyph drawAtPoint:CGPointMake(x, y) withAttributes:variant.attributes];
-      x += glyphWidth;
+  for (NSInteger row = startRow; row < endRow; row += 1) {
+    RNTextEngineGlyphFieldRow *rowData = field.rowsData[row];
+    CGFloat x = glyphFieldRowOriginX(field, bounds, rowData.width);
+
+    for (RNTextEngineGlyphFieldRun *run in rowData.runs) {
+      CGFloat y = topInset + row * field.lineHeight + MAX(0, (field.lineHeight - run.variant.font.lineHeight) * 0.5);
+      [run.text drawAtPoint:CGPointMake(x, y) withAttributes:run.variant.attributes];
+      x += run.width;
     }
   }
 }

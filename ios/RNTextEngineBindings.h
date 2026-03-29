@@ -13,7 +13,7 @@ void cleanup();
 void install(facebook::jsi::Runtime& runtime);
 #ifdef __OBJC__
 NSAttributedString *preparedAttributedTextForHandle(uint64_t handle);
-void drawGlyphFieldHandle(uint64_t handle, CGContextRef context, CGRect bounds);
+void drawGlyphFieldHandle(uint64_t handle, CGContextRef context, CGRect bounds, CGRect dirtyRect);
 void registerGlyphFieldView(uint64_t handle, UIView *view);
 void unregisterGlyphFieldView(uint64_t handle, UIView *view);
 #endif

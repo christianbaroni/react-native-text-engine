@@ -85,6 +85,18 @@ internal object RNTextEngineBindings {
         val yOffset: Float,
     )
 
+    private data class GlyphFieldRunData(
+        val text: String,
+        val variant: GlyphFieldVariantData,
+        val variantIndex: Int,
+        val width: Float,
+    )
+
+    private data class GlyphFieldRowData(
+        val runs: List<GlyphFieldRunData>,
+        val width: Float,
+    )
+
     private data class GlyphFieldData(
         val columns: Int,
         val lineHeightPx: Float,
@@ -92,8 +104,7 @@ internal object RNTextEngineBindings {
         val textAlign: String?,
         val variants: List<GlyphFieldVariantData>,
         val views: CopyOnWriteArrayList<WeakReference<android.view.View>> = CopyOnWriteArrayList(),
-        @Volatile var glyphs: String = "",
-        @Volatile var variantIndices: ByteArray = ByteArray(0),
+        @Volatile var renderedRows: List<GlyphFieldRowData> = emptyList(),
     )
 
     @JvmStatic
@@ -178,9 +189,10 @@ internal object RNTextEngineBindings {
             }
         }
 
-        field.glyphs = glyphs
-        field.variantIndices = variantIndices.copyOf()
-        invalidateGlyphFieldViews(field)
+        val nextRows = buildGlyphFieldRows(field, glyphs, variantIndices)
+        val dirtyRanges = buildGlyphFieldDirtyRanges(field.renderedRows, nextRows, field.rows)
+        field.renderedRows = nextRows
+        invalidateGlyphFieldViews(field, dirtyRanges)
     }
 
     @JvmStatic
@@ -203,27 +215,27 @@ internal object RNTextEngineBindings {
 
     internal fun drawGlyphField(handle: Long, canvas: Canvas, width: Float, height: Float) {
         val field = glyphFields[handle] ?: return
-        if (field.glyphs.isEmpty() || field.variantIndices.isEmpty()) return
+        if (field.renderedRows.isEmpty()) return
 
         val topInset = max(0f, (height - field.rows * field.lineHeightPx) * 0.5f)
-        for (row in 0 until field.rows) {
-            val rowWidth = glyphFieldRowWidth(field, row)
+        val clipBounds = canvas.clipBounds
+        val startRow = max(0, floor((clipBounds.top - topInset) / field.lineHeightPx).toInt())
+        val endRow = min(field.rows, ceil((clipBounds.bottom - topInset) / field.lineHeightPx).toInt())
+        val rows = field.renderedRows
+
+        for (row in startRow until endRow) {
+            val rowData = rows.getOrNull(row) ?: continue
             var x =
                 when (field.textAlign) {
-                    "right" -> width - rowWidth
-                    "center" -> (width - rowWidth) * 0.5f
+                    "right" -> width - rowData.width
+                    "center" -> (width - rowData.width) * 0.5f
                     else -> 0f
                 }
-            val rowStart = row * field.columns
 
-            for (column in 0 until field.columns) {
-                val cellIndex = rowStart + column
-                val glyph = field.glyphs[cellIndex].toString()
-                val variant = field.variants[field.variantIndices[cellIndex].toInt() and 0xFF]
-                val glyphWidth = measureGlyphWidth(variant, glyph)
-                val baseline = topInset + row * field.lineHeightPx + variant.yOffset
-                canvas.drawText(glyph, x, baseline, variant.textPaint)
-                x += glyphWidth
+            for (run in rowData.runs) {
+                val baseline = topInset + row * field.lineHeightPx + run.variant.yOffset
+                canvas.drawText(run.text, x, baseline, run.variant.textPaint)
+                x += run.width
             }
         }
     }
@@ -857,35 +869,121 @@ internal object RNTextEngineBindings {
         return doubleArrayOf(line.start, line.end, line.width, line.bottom)
     }
 
-    private fun invalidateGlyphFieldViews(field: GlyphFieldData) {
+    private fun buildGlyphFieldRows(field: GlyphFieldData, glyphs: String, variantIndices: ByteArray): List<GlyphFieldRowData> {
+        val rows = ArrayList<GlyphFieldRowData>(field.rows)
+
+        repeat(field.rows) { row ->
+            val runs = ArrayList<GlyphFieldRunData>()
+            val rowStart = row * field.columns
+            var rowWidth = 0f
+            var runText = StringBuilder(field.columns)
+            var runVariantIndex = -1
+            var runVariant: GlyphFieldVariantData? = null
+            var runWidth = 0f
+
+            fun flushRun() {
+                val variant = runVariant ?: return
+                if (runText.isEmpty()) return
+
+                runs +=
+                    GlyphFieldRunData(
+                        text = runText.toString(),
+                        variant = variant,
+                        variantIndex = runVariantIndex,
+                        width = runWidth,
+                    )
+                rowWidth += runWidth
+                runText = StringBuilder(field.columns)
+                runVariantIndex = -1
+                runVariant = null
+                runWidth = 0f
+            }
+
+            repeat(field.columns) { column ->
+                val cellIndex = rowStart + column
+                val glyph = glyphs[cellIndex]
+                val variantIndex = variantIndices[cellIndex].toInt() and 0xFF
+                val variant = field.variants[variantIndex]
+
+                if (runVariantIndex != variantIndex) {
+                    flushRun()
+                    runVariantIndex = variantIndex
+                    runVariant = variant
+                }
+
+                runText.append(glyph)
+                runWidth += measureGlyphWidth(variant, glyph)
+            }
+
+            flushRun()
+            rows += GlyphFieldRowData(runs = runs, width = rowWidth)
+        }
+
+        return rows
+    }
+
+    private fun buildGlyphFieldDirtyRanges(
+        previousRows: List<GlyphFieldRowData>,
+        nextRows: List<GlyphFieldRowData>,
+        rowCount: Int,
+    ): List<IntRange> {
+        val dirtyRanges = ArrayList<IntRange>()
+        var rangeStart = -1
+
+        repeat(rowCount) { row ->
+            val previousRow = previousRows.getOrNull(row)
+            val nextRow = nextRows.getOrNull(row)
+            val didChange = previousRow != nextRow
+
+            if (didChange && rangeStart == -1) {
+                rangeStart = row
+                return@repeat
+            }
+
+            if (!didChange && rangeStart != -1) {
+                dirtyRanges += rangeStart until row
+                rangeStart = -1
+            }
+        }
+
+        if (rangeStart != -1) {
+            dirtyRanges += rangeStart until rowCount
+        }
+
+        return dirtyRanges
+    }
+
+    private fun invalidateGlyphFieldViews(field: GlyphFieldData, dirtyRanges: List<IntRange>) {
+        if (dirtyRanges.isEmpty()) return
+
         field.views.removeAll { reference ->
             val view = reference.get()
             if (view == null) {
                 true
             } else {
-                view.postInvalidateOnAnimation()
+                val shouldInvalidateWholeView =
+                    dirtyRanges.size == 1 && dirtyRanges.first().first == 0 && dirtyRanges.first().last + 1 >= field.rows
+
+                if (shouldInvalidateWholeView || view.height <= 0 || view.width <= 0) {
+                    view.postInvalidateOnAnimation()
+                } else {
+                    val topInset = max(0f, (view.height - field.rows * field.lineHeightPx) * 0.5f)
+                    dirtyRanges.forEach { rows ->
+                        val top = floor(topInset + rows.first * field.lineHeightPx).toInt().coerceAtLeast(0)
+                        val bottom = ceil(topInset + (rows.last + 1) * field.lineHeightPx).toInt().coerceAtMost(view.height)
+                        view.postInvalidateOnAnimation(0, top, view.width, bottom)
+                    }
+                }
                 false
             }
         }
     }
 
-    private fun measureGlyphWidth(variant: GlyphFieldVariantData, glyph: String): Float {
-        val codePoint = glyph.firstOrNull()?.code ?: 0
+    private fun measureGlyphWidth(variant: GlyphFieldVariantData, glyph: Char): Float {
+        val codePoint = glyph.code
         return variant.widthCache.getOrPut(codePoint) {
-            variant.textPaint.measureText(glyph)
+            variant.textPaint.measureText(glyph.toString())
         }
-    }
-
-    private fun glyphFieldRowWidth(field: GlyphFieldData, row: Int): Float {
-        var width = 0f
-        val rowStart = row * field.columns
-        for (column in 0 until field.columns) {
-            val cellIndex = rowStart + column
-            val glyph = field.glyphs[cellIndex].toString()
-            val variant = field.variants[field.variantIndices[cellIndex].toInt() and 0xFF]
-            width += measureGlyphWidth(variant, glyph)
-        }
-        return width
     }
 
     private fun resolveTextStyle(
