@@ -36,24 +36,9 @@ if(REACT_NATIVE_WORKLETS_DIR)
             "${REACT_NATIVE_DIR}/ReactCommon/callinvoker"
             "${REACT_NATIVE_DIR}/ReactCommon/runtimeexecutor"
             "${REACT_NATIVE_DIR}/ReactCommon/jsiexecutor"
-            "${REACT_NATIVE_DIR}/ReactCommon/react/renderer/graphics/platform/cxx"
-            "${REACT_NATIVE_WORKLETS_DIR}/Common/cpp"
-            "${REACT_NATIVE_WORKLETS_DIR}/android/src/main/cpp")
-
-    if(${CMAKE_BUILD_TYPE} MATCHES "Debug")
-        set(BUILD_TYPE "debug")
-    else()
-        set(BUILD_TYPE "release")
-    endif()
-
-    set(WORKLETS_LIBRARY_PATH
-            "${REACT_NATIVE_WORKLETS_DIR}/android/build/intermediates/cmake/${BUILD_TYPE}/obj/${ANDROID_ABI}/libworklets.so")
-
-    if(EXISTS "${WORKLETS_LIBRARY_PATH}")
-        add_library(worklets SHARED IMPORTED)
-        set_target_properties(worklets PROPERTIES IMPORTED_LOCATION "${WORKLETS_LIBRARY_PATH}")
-        set(RNTEXTENGINE_HAS_WORKLETS 1)
-    endif()
+            "${REACT_NATIVE_DIR}/ReactCommon/react/renderer/graphics/platform/cxx")
+    find_package(react-native-worklets REQUIRED CONFIG)
+    set(RNTEXTENGINE_HAS_WORKLETS 1)
 endif()
 
 target_compile_definitions(rn-text-engine PRIVATE RNTEXTENGINE_HAS_WORKLETS=${RNTEXTENGINE_HAS_WORKLETS})
@@ -66,6 +51,6 @@ target_link_libraries(rn-text-engine
         ReactAndroid::reactnative
         ReactAndroid::jsi)
 
-if(TARGET worklets)
-    target_link_libraries(rn-text-engine worklets)
+if(TARGET react-native-worklets::worklets)
+    target_link_libraries(rn-text-engine react-native-worklets::worklets)
 endif()

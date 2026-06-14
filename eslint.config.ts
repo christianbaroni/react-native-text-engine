@@ -1,7 +1,6 @@
 import typescriptPlugin from '@typescript-eslint/eslint-plugin';
 import typescriptParser from '@typescript-eslint/parser';
 import jsdocPlugin from 'eslint-plugin-jsdoc';
-import prettierPlugin from 'eslint-plugin-prettier';
 import prettierRecommended from 'eslint-plugin-prettier/recommended';
 import reactHooksPlugin from 'eslint-plugin-react-hooks';
 
@@ -11,25 +10,17 @@ export default [
       '**/node_modules/',
       '**/lib/',
       '**/tmp/',
-      '**/.wrangler/',
       '**/android/.cxx/',
       '**/android/build/',
       '**/examples/android/.cxx/',
       '**/examples/android/.gradle/',
       '**/examples/android/**/build/',
+      '**/examples/generated/',
       '**/examples/ios/Pods/',
       '**/examples/ios/build/',
     ],
   },
   prettierRecommended,
-  {
-    plugins: {
-      prettier: prettierPlugin,
-    },
-    rules: {
-      'prettier/prettier': 'error',
-    },
-  },
   {
     files: ['**/*.ts', '**/*.tsx'],
     languageOptions: {
@@ -59,23 +50,14 @@ export default [
   {
     languageOptions: {
       globals: {
-        window: 'readonly',
-        document: 'readonly',
-        process: 'readonly',
         console: 'readonly',
         setTimeout: 'readonly',
         clearTimeout: 'readonly',
         setInterval: 'readonly',
         clearInterval: 'readonly',
         queueMicrotask: 'readonly',
-        AbortController: 'readonly',
-        global: 'readonly',
-        __dirname: 'readonly',
-        __filename: 'readonly',
-        Buffer: 'readonly',
-        Promise: 'readonly',
+        globalThis: 'readonly',
       },
-      ecmaVersion: 2021,
     },
     linterOptions: {
       reportUnusedDisableDirectives: true,

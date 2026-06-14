@@ -1,7 +1,8 @@
 {
   "name": "react-native-text-engine",
   "version": "0.1.0",
-  "description": "Worklet-friendly prepared text measurement and layout for React Native",
+  "packageManager": "yarn@4.13.0",
+  "description": "Fast, worklet-compatible text primitives for React Native",
   "main": "lib/commonjs/index",
   "module": "lib/module/index",
   "types": "lib/typescript/index.d.ts",
@@ -15,12 +16,24 @@
       "require": "./lib/commonjs/index.js",
       "default": "./lib/module/index.js"
     },
+    "./config": {
+      "types": "./lib/typescript/config.d.ts",
+      "react-native": "./src/config.ts",
+      "import": "./lib/module/config.js",
+      "require": "./lib/commonjs/config.js",
+      "default": "./lib/module/config.js"
+    },
     "./worklets": {
       "types": "./lib/typescript/worklets.d.ts",
       "react-native": "./src/worklets.ts",
       "import": "./lib/module/worklets.js",
       "require": "./lib/commonjs/worklets.js",
       "default": "./lib/module/worklets.js"
+    },
+    "./package.json": "./package.json",
+    "./babel-plugin": {
+      "types": "./scripts/babel-plugin-textview.d.cts",
+      "default": "./scripts/babel-plugin-textview.cjs"
     }
   },
   "files": [
@@ -29,8 +42,10 @@
     "android",
     "common",
     "ios",
+    "react-native.config.js",
     "README.md",
     "LICENSE",
+    "scripts",
     "*.podspec",
     "!lib/typescript/example",
     "!ios/build",
@@ -46,16 +61,21 @@
   ],
   "scripts": {
     "typescript": "tsc --noEmit",
+    "clean:src-artifacts": "node ./scripts/clean-source-artifacts.mjs",
+    "test:ts": "yarn clean:src-artifacts && node ./scripts/sync-text-engine-config.mjs && vitest run --config vitest.config.ts && tsc -p tsconfig.vitest.json --noEmit",
+    "perf:android": "./scripts/run-android-performance-tests.sh",
+    "perf:ios": "./scripts/run-ios-performance-tests.sh",
     "lint": "yarn lint:eslint && yarn lint:prettier",
     "lint:eslint": "eslint . --ext .ts,.tsx",
     "lint:prettier": "prettier --check .",
     "format": "prettier --write --log-level warn --ignore-path .prettierignore .",
     "format:check": "prettier --check .",
+    "sync-config": "node ./scripts/sync-text-engine-config.mjs",
     "prepare": "yarn build",
-    "clean": "del-cli lib",
+    "clean": "del-cli lib && yarn clean:src-artifacts",
     "build:js": "bob build",
     "build:types": "yarn exec tsc -p tsconfig.build.json --declaration --emitDeclarationOnly --outDir lib/typescript",
-    "build": "yarn build:js && yarn build:types",
+    "build": "yarn clean:src-artifacts && node ./scripts/sync-text-engine-config.mjs && yarn build:js && yarn build:types",
     "prepack": "yarn build"
   },
   "keywords": [
@@ -76,10 +96,13 @@
     "url": "https://github.com/christianbaroni/react-native-text-engine/issues"
   },
   "homepage": "https://github.com/christianbaroni/react-native-text-engine#readme",
+  "engines": {
+    "node": ">=20.19.0"
+  },
   "peerDependencies": {
     "react": ">=18.2.0",
     "react-native": ">=0.72.0",
-    "react-native-worklets": ">=0.8.1"
+    "react-native-worklets": ">=0.8.3"
   },
   "peerDependenciesMeta": {
     "react-native-worklets": {
@@ -87,6 +110,9 @@
     }
   },
   "devDependencies": {
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/react": "^16.3.0",
+    "@types/node": "^24.10.1",
     "@types/react": "^19.2.0",
     "@types/react-native": "^0.72.0",
     "@typescript-eslint/eslint-plugin": "^8.33.1",
@@ -98,11 +124,15 @@
     "eslint-plugin-prettier": "^5.4.1",
     "eslint-plugin-react-hooks": "^7.0.0",
     "jiti": "^2.6.1",
+    "jsdom": "^26.1.0",
     "prettier": "^3.5.3",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
     "react-native-builder-bob": "^0.20.0",
-    "react-native-worklets": "^0.8.1",
+    "react-native-worklets": "^0.8.3",
     "release-it": "^15.0.0",
-    "typescript": "^5.0.0"
+    "typescript": "^5.0.0",
+    "vitest": "^4.0.8"
   },
   "react-native-builder-bob": {
     "source": "src",

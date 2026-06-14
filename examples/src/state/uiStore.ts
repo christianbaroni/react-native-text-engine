@@ -1,6 +1,6 @@
 import { createBaseStore, createStoreActions } from '@storesjs/stores';
 
-export type Demo = 'chat' | 'field';
+export type Demo = 'chat' | 'field' | 'fire' | 'type';
 export type WidthMode = 'compact' | 'phone' | 'wide';
 
 type UiState = {

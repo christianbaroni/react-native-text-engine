@@ -1,4 +1,5 @@
-import React, { forwardRef, type ComponentRef } from 'react';
+import { forwardRef, type ComponentRef } from 'react';
+import textEngineAppDefaults from './generated/TextEngineAppDefaults';
 import NativePreparedTextView, {
   type NativeProps as NativePreparedTextViewProps,
 } from './specs/RNTextEnginePreparedTextViewNativeComponent';
@@ -7,6 +8,10 @@ import NativePreparedTextView, {
  * Props for the native prepared-handle render surface.
  *
  * `selectable` opts into the interaction-oriented native text owner.
+ *
+ * `anchorToCapHeight` aligns the view band from the first line's cap top to
+ * the last visible line's baseline without trimming ascenders or descenders
+ * outside that band.
  */
 export type PreparedTextViewProps = NativePreparedTextViewProps & {
   ellipsizeMode?: 'clip' | 'head' | 'middle' | 'tail';
@@ -19,6 +24,7 @@ export type PreparedTextViewProps = NativePreparedTextViewProps & {
  */
 export const PreparedTextView = forwardRef<ComponentRef<typeof NativePreparedTextView>, PreparedTextViewProps>(
   function PreparedTextView(props, ref) {
-    return <NativePreparedTextView ref={ref} {...props} />;
+    const anchorToCapHeight = props.anchorToCapHeight ?? textEngineAppDefaults.anchorToCapHeight;
+    return <NativePreparedTextView ref={ref} {...props} anchorToCapHeight={anchorToCapHeight} />;
   }
 );

@@ -10,3 +10,9 @@ ios/build
 .pnp.cjs
 .pnp.loader.mjs
 .yarn
+/examples/generated
+/android/.cxx
+src/**/*.js
+src/**/*.jsx
+src/**/*.map
+examples/.watchman*

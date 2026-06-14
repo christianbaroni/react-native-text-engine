@@ -46,12 +46,14 @@ plugins {
     id 'org.jetbrains.kotlin.android'
 }
 
+def resolveNodeExecutable() {
+    return System.getenv("NODE_BINARY") ?: "node"
+}
+
 def reactNativeRootDir = resolveReactNativeDirectory()
 def reactNativeWorkletsRootDir = resolveReactNativeWorkletsDirectory()
 
-if (isNewArchitectureEnabled()) {
-    apply plugin: 'com.facebook.react'
-}
+apply plugin: 'com.facebook.react'
 
 android {
     namespace "com.rntextengine"
@@ -59,6 +61,17 @@ android {
 
     buildFeatures {
         prefab true
+    }
+
+    packaging {
+        jniLibs {
+            excludes += [
+                    "**/libc++_shared.so",
+                    "**/libjsi.so",
+                    "**/libreactnative.so",
+                    "**/libworklets.so",
+            ]
+        }
     }
 
     // Used to override the NDK path/version on internal CI or by allowing
@@ -74,6 +87,8 @@ android {
         minSdkVersion safeExtGet('minSdkVersion', 21)
         targetSdkVersion safeExtGet('targetSdkVersion', 33)
         buildConfigField("boolean", "IS_NEW_ARCHITECTURE_ENABLED", isNewArchitectureEnabled().toString())
+        testInstrumentationRunner "androidx.benchmark.junit4.AndroidBenchmarkRunner"
+        testInstrumentationRunnerArguments["androidx.benchmark.suppressErrors"] = "EMULATOR"
         externalNativeBuild {
             cmake {
                 cppFlags "-std=c++20"
@@ -85,14 +100,12 @@ android {
         }
     }
 
+    testBuildType "release"
+
     sourceSets {
         main {
             if (isNewArchitectureEnabled()) {
-                java.srcDirs += [
-                        'src/fabric',
-                        // Codegen output directory
-                        project.file("${project.buildDir}/generated/source/codegen/java")
-                ]
+                java.srcDirs += ['src/fabric']
             } else {
                 java.srcDirs += ['src/paper']
             }
@@ -106,6 +119,10 @@ android {
         }
     }
 
+    testOptions {
+        unitTests.includeAndroidResources = true
+    }
+
     externalNativeBuild {
         cmake {
             path "src/main/jni/CMakeLists.txt"
@@ -115,5 +132,74 @@ android {
 
 dependencies {
     implementation "org.jetbrains.kotlin:kotlin-stdlib"
-    compileOnly "com.facebook.react:react-native:${safeExtGet('reactNativeVersion', '+')}"
+    // The shipped Android classes subclass React Android runtime types, so consumers need the
+    // runtime dependency on their packaging/instrumentation classpath as well, not just compile.
+    implementation "com.facebook.react:react-native:${safeExtGet('reactNativeVersion', '+')}"
+    if (project != rootProject && rootProject.subprojects.find { it.name == "react-native-worklets" }) {
+        implementation project(":react-native-worklets")
+    }
+    androidTestImplementation "androidx.benchmark:benchmark-junit4:1.4.1"
+    androidTestImplementation "androidx.test:core:1.7.0"
+    androidTestImplementation "androidx.test.ext:junit:1.3.0"
+    androidTestImplementation "androidx.test:runner:1.7.0"
+    androidTestImplementation "com.facebook.react:react-native:${safeExtGet('reactNativeVersion', '+')}"
+    testImplementation "androidx.test:core:1.7.0"
+    testImplementation "com.facebook.react:react-native:${safeExtGet('reactNativeVersion', '+')}"
+    testImplementation "junit:junit:4.13.2"
+    testImplementation "org.robolectric:robolectric:4.16.1"
+}
+
+if (project != rootProject) {
+    def workletsProject = rootProject.subprojects.find { it.name == "react-native-worklets" }
+    if (workletsProject != null) {
+        evaluationDependsOn(":react-native-worklets")
+
+        afterEvaluate {
+            tasks.named("externalNativeBuildDebug").configure {
+                dependsOn(workletsProject.tasks.named("externalNativeBuildDebug"))
+            }
+            tasks.named("externalNativeBuildRelease").configure {
+                dependsOn(workletsProject.tasks.named("externalNativeBuildRelease"))
+            }
+        }
+    }
+}
+
+def syncTextEngineDefaults = tasks.register("syncTextEngineDefaults", Exec) {
+    def packageRoot = projectDir.parentFile
+    def appRoot = rootProject.projectDir.parentFile
+
+    workingDir(appRoot)
+    commandLine(
+            resolveNodeExecutable(),
+            new File(packageRoot, "scripts/sync-text-engine-config.mjs").absolutePath,
+            "--app-root",
+            appRoot.absolutePath,
+            "--package-root",
+            packageRoot.absolutePath,
+    )
+}
+
+def overlayFabricTextViewCodegenOverrides = tasks.register("overlayFabricTextViewCodegenOverrides", Copy) {
+    dependsOn("generateCodegenArtifactsFromSchema")
+
+    from("src/main/jni") {
+        include "RNTextEngineBindings.h"
+    }
+
+    from("src/main/jni/react/renderer/components/RNTextEngineSpec") {
+        into "react/renderer/components/RNTextEngineSpec"
+        include "ComponentDescriptors.h"
+        include "ShadowNodes.h"
+        include "RNTextEngineTextViewShadowNode.h"
+        include "RNTextEngineTextViewShadowNode.cpp"
+    }
+
+    into(layout.buildDirectory.dir("generated/source/codegen/jni"))
+}
+
+preBuild.dependsOn(syncTextEngineDefaults)
+
+if (isNewArchitectureEnabled()) {
+    preBuild.dependsOn(overlayFabricTextViewCodegenOverrides)
 }

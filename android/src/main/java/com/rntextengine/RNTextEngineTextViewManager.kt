@@ -1,64 +1,38 @@
 package com.rntextengine
 
+import android.content.Context
 import android.graphics.Color
+import android.graphics.Paint
 import android.os.Build
 import android.text.Layout
-import android.text.Spannable
-import android.text.SpannableString
-import android.text.TextPaint
 import android.text.TextUtils
-import android.text.style.LineHeightSpan
-import android.text.style.MetricAffectingSpan
-import android.util.TypedValue
 import android.view.Gravity
+import android.view.View
 import androidx.appcompat.widget.AppCompatTextView
 import com.facebook.react.bridge.ReadableArray
 import com.facebook.react.bridge.ReadableMap
+import com.facebook.react.common.mapbuffer.MapBuffer
 import com.facebook.react.module.annotations.ReactModule
 import com.facebook.react.uimanager.PixelUtil
-import com.facebook.react.uimanager.SimpleViewManager
+import com.facebook.react.uimanager.ReactStylesDiffMap
+import com.facebook.react.uimanager.StateWrapper
 import com.facebook.react.uimanager.ThemedReactContext
+import com.facebook.react.uimanager.ViewGroupManager
 import com.facebook.react.uimanager.ViewManagerDelegate
 import com.facebook.react.uimanager.ViewProps
 import com.facebook.react.uimanager.annotations.ReactProp
+import com.facebook.react.uimanager.common.UIManagerType
+import com.facebook.react.uimanager.common.ViewUtil
 import com.facebook.react.viewmanagers.RNTextEngineTextViewManagerDelegate
 import com.facebook.react.viewmanagers.RNTextEngineTextViewManagerInterface
-import com.facebook.react.views.text.ReactTypefaceUtils
-import kotlin.math.ceil
-import kotlin.math.floor
-import kotlin.math.max
 import kotlin.math.min
 
 @ReactModule(name = RNTextEngineTextViewManager.REACT_CLASS)
 internal class RNTextEngineTextViewManager :
-    SimpleViewManager<RNTextEngineTextViewManager.RNTextEngineTextView>(),
+    ViewGroupManager<RNTextEngineTextViewManager.RNTextEngineTextView>(),
     RNTextEngineTextViewManagerInterface<RNTextEngineTextViewManager.RNTextEngineTextView> {
     private val delegate: ViewManagerDelegate<RNTextEngineTextView> =
         RNTextEngineTextViewManagerDelegate<RNTextEngineTextView, RNTextEngineTextViewManager>(this)
-    data class TextRunStyle(
-        val color: String?,
-        val fontFamily: String?,
-        val fontSize: Double,
-        val fontStyle: String?,
-        val fontWeight: String?,
-        val hasColor: Boolean,
-        val hasFontFamily: Boolean,
-        val hasFontSize: Boolean,
-        val hasFontStyle: Boolean,
-        val hasFontWeight: Boolean,
-        val hasLetterSpacing: Boolean,
-        val hasLineHeight: Boolean,
-        val hasTabularNumbers: Boolean,
-        val letterSpacing: Double,
-        val lineHeight: Double,
-        val tabularNumbers: Boolean,
-    )
-
-    data class TextRun(
-        val end: Int,
-        val start: Int,
-        val style: TextRunStyle,
-    )
 
     override fun getName(): String = REACT_CLASS
 
@@ -66,202 +40,496 @@ internal class RNTextEngineTextViewManager :
         return RNTextEngineTextView(reactContext)
     }
 
+    override fun createShadowNodeInstance(): RNTextEngineTextShadowNode = RNTextEngineTextShadowNode()
+
+    override fun getShadowNodeClass(): Class<RNTextEngineTextShadowNode> = RNTextEngineTextShadowNode::class.java
+
     override fun getDelegate(): ViewManagerDelegate<RNTextEngineTextView> = delegate
+
+    override fun updateExtraData(root: RNTextEngineTextView, extraData: Any) {
+        val payload = extraData as? RNTextEngineTextShadowNode.RNTextEngineResolvedTextPayload
+        if (payload == null || !payload.hasNested) {
+            root.applyResolvedNestedPayload(null)
+            return
+        }
+
+        root.applyResolvedNestedPayload(payload)
+    }
+
+    override fun updateState(
+        view: RNTextEngineTextView,
+        props: ReactStylesDiffMap,
+        stateWrapper: StateWrapper,
+    ): Any? {
+        val state = stateWrapper.stateDataMapBuffer ?: return RNTextEngineTextShadowNode.RNTextEngineResolvedTextPayload.EMPTY
+        return parseResolvedPayload(state)
+    }
+
+    override fun setBackgroundColor(view: RNTextEngineTextView, backgroundColor: Int) {
+        super.setBackgroundColor(view, backgroundColor)
+        view.reapplyPaperOpacity()
+    }
+
+    override fun setOpacity(view: RNTextEngineTextView, opacity: Float) {
+        view.setPaperOpacity(opacity)
+    }
 
     override fun onAfterUpdateTransaction(view: RNTextEngineTextView) {
         super.onAfterUpdateTransaction(view)
         view.flushTextDisplayIfNeeded()
     }
 
+    override fun needsCustomLayoutForChildren(): Boolean = true
+
+    override fun addView(parent: RNTextEngineTextView, child: View, index: Int) {
+        parent.addReactChild(child, index)
+    }
+
+    override fun getChildCount(parent: RNTextEngineTextView): Int = parent.reactChildCount()
+
+    override fun getChildAt(parent: RNTextEngineTextView, index: Int): View {
+        return parent.getReactChildAt(index)
+            ?: throw IndexOutOfBoundsException("RNTextEngine: missing React child at index $index.")
+    }
+
+    override fun removeViewAt(parent: RNTextEngineTextView, index: Int) {
+        parent.removeReactChildAt(index)
+    }
+
+    override fun onDropViewInstance(view: RNTextEngineTextView) {
+        super.onDropViewInstance(view)
+        view.clearReactChildren()
+    }
+
     @ReactProp(name = "text")
     override fun setText(view: RNTextEngineTextView, text: String?) {
-        view.textValue = text ?: ""
-        view.invalidateTextDisplay()
+        view.setTextValue(text ?: "")
     }
 
     @ReactProp(name = "color", customType = "Color")
     override fun setColor(view: RNTextEngineTextView, color: Int?) {
-        view.setTextColor(color ?: view.defaultTextColor)
+        view.textContentView.setTextColor(color ?: view.textContentView.defaultTextColor)
         view.invalidateTextDisplay()
     }
 
     @ReactProp(name = "fontFamily")
     override fun setFontFamily(view: RNTextEngineTextView, fontFamily: String?) {
-        view.fontFamily = fontFamily
-        view.updateTypeface()
+        view.textContentView.fontFamily = fontFamily
         view.invalidateTextDisplay()
     }
 
     @ReactProp(name = "fontSize", defaultFloat = 14f)
     override fun setFontSize(view: RNTextEngineTextView, fontSize: Double) {
-        view.setTextSizePx(PixelUtil.toPixelFromDIP(fontSize.toFloat()))
+        view.textContentView.setFontSizeValue(fontSize.toFloat())
+        view.invalidateTextDisplay()
+    }
+
+    @ReactProp(name = "allowFontScaling", defaultBoolean = false)
+    override fun setAllowFontScaling(view: RNTextEngineTextView, allowFontScaling: Boolean) {
+        view.textContentView.setAllowFontScalingEnabled(allowFontScaling)
         view.invalidateTextDisplay()
     }
 
     @ReactProp(name = "fontStyle")
     override fun setFontStyle(view: RNTextEngineTextView, fontStyle: String?) {
-        view.fontStyle = fontStyle
-        view.updateTypeface()
+        view.textContentView.fontStyle = fontStyle
         view.invalidateTextDisplay()
     }
 
     @ReactProp(name = "fontWeight")
     override fun setFontWeight(view: RNTextEngineTextView, fontWeight: String?) {
-        view.fontWeight = fontWeight
-        view.updateTypeface()
+        view.textContentView.fontWeight = fontWeight
         view.invalidateTextDisplay()
     }
 
     @ReactProp(name = "letterSpacing", defaultFloat = 0f)
     override fun setLetterSpacing(view: RNTextEngineTextView, letterSpacing: Double) {
-        view.setLetterSpacingPx(PixelUtil.toPixelFromDIP(letterSpacing.toFloat()))
+        view.textContentView.setLetterSpacingValue(letterSpacing.toFloat())
         view.invalidateTextDisplay()
     }
 
+    @ReactProp(name = "rnteHasAllowFontScaling", defaultBoolean = false)
+    override fun setRnteHasAllowFontScaling(view: RNTextEngineTextView, value: Boolean) = Unit
+
+    @ReactProp(name = "rnteHasLetterSpacing", defaultBoolean = false)
+    override fun setRnteHasLetterSpacing(view: RNTextEngineTextView, value: Boolean) = Unit
+
     @ReactProp(name = "lineHeight")
     override fun setLineHeight(view: RNTextEngineTextView, lineHeight: Double) {
-        view.setLineHeightPx(
+        view.textContentView.setLineHeightValue(
             if (lineHeight.isNaN()) {
                 Float.NaN
             } else {
-                PixelUtil.toPixelFromDIP(lineHeight.toFloat())
+                lineHeight.toFloat()
             },
         )
         view.invalidateTextDisplay()
     }
 
+    @ReactProp(name = "tabularNumbers", defaultBoolean = false)
+    override fun setTabularNumbers(view: RNTextEngineTextView, tabularNumbers: Boolean) {
+        view.textContentView.setTabularNumbersEnabled(tabularNumbers)
+        view.invalidateTextDisplay()
+    }
+
+    @ReactProp(name = "rnteHasTabularNumbers", defaultBoolean = false)
+    override fun setRnteHasTabularNumbers(view: RNTextEngineTextView, value: Boolean) = Unit
+
+    @ReactProp(name = "rnteIsVirtualTextSpan", defaultBoolean = false)
+    override fun setRnteIsVirtualTextSpan(view: RNTextEngineTextView, value: Boolean) = Unit
+
+    @ReactProp(name = "textDecorationLine")
+    override fun setTextDecorationLine(view: RNTextEngineTextView, textDecorationLine: String?) {
+        view.setTextDecorationLineValue(textDecorationLine)
+    }
+
+    @ReactProp(name = "textDecorationColor", customType = "Color")
+    override fun setTextDecorationColor(view: RNTextEngineTextView, textDecorationColor: Int?) = Unit
+
+    @ReactProp(name = "textDecorationStyle")
+    override fun setTextDecorationStyle(view: RNTextEngineTextView, textDecorationStyle: String?) = Unit
+
     @ReactProp(name = ViewProps.NUMBER_OF_LINES, defaultInt = 0)
     override fun setNumberOfLines(view: RNTextEngineTextView, numberOfLines: Int) {
-        view.maxLines = if (numberOfLines > 0) numberOfLines else Int.MAX_VALUE
-        view.setSingleLine(false)
+        view.setNumberOfLines(numberOfLines)
     }
 
     @ReactProp(name = "selectable", defaultBoolean = false)
     override fun setSelectable(view: RNTextEngineTextView, selectable: Boolean) {
-        view.setTextIsSelectable(selectable)
-        view.isFocusable = selectable
-        view.isFocusableInTouchMode = selectable
-        view.isClickable = selectable
-        view.isLongClickable = selectable
+        view.setSelectable(selectable)
+    }
+
+    @ReactProp(name = "anchorToCapHeight", defaultBoolean = false)
+    override fun setAnchorToCapHeight(view: RNTextEngineTextView, anchorToCapHeight: Boolean) {
+        view.anchorToCapHeight = anchorToCapHeight
     }
 
     @ReactProp(name = "ellipsizeMode")
     override fun setEllipsizeMode(view: RNTextEngineTextView, ellipsizeMode: String?) {
-        view.ellipsize = when (ellipsizeMode) {
-            "head" -> TextUtils.TruncateAt.START
-            "middle" -> TextUtils.TruncateAt.MIDDLE
-            "tail" -> TextUtils.TruncateAt.END
-            else -> null
-        }
+        view.setEllipsizeMode(ellipsizeMode)
     }
 
     @ReactProp(name = "runs")
     fun setRuns(view: RNTextEngineTextView, runs: ReadableArray?) {
-        view.runs = parseRuns(runs)
+        view.textContentView.runs = parseRuns(runs)
         view.invalidateTextDisplay()
     }
 
     @ReactProp(name = "runStarts")
     override fun setRunStarts(view: RNTextEngineTextView, runStarts: ReadableArray?) {
-        view.runStarts = runStarts
+        view.textContentView.runStarts = runStarts
         view.invalidateTextDisplay()
     }
 
     @ReactProp(name = "runEnds")
     override fun setRunEnds(view: RNTextEngineTextView, runEnds: ReadableArray?) {
-        view.runEnds = runEnds
+        view.textContentView.runEnds = runEnds
         view.invalidateTextDisplay()
     }
 
     @ReactProp(name = "runStyleMasks")
     override fun setRunStyleMasks(view: RNTextEngineTextView, runStyleMasks: ReadableArray?) {
-        view.runStyleMasks = runStyleMasks
+        view.textContentView.runStyleMasks = runStyleMasks
         view.invalidateTextDisplay()
     }
 
     @ReactProp(name = "runColors")
     override fun setRunColors(view: RNTextEngineTextView, runColors: ReadableArray?) {
-        view.runColors = runColors
+        view.textContentView.runColors = runColors
         view.invalidateTextDisplay()
     }
 
     @ReactProp(name = "runCount", defaultInt = 0)
     override fun setRunCount(view: RNTextEngineTextView, runCount: Int) {
-        view.runCount = runCount
+        view.textContentView.runCount = runCount
         view.invalidateTextDisplay()
     }
 
     @ReactProp(name = "runFontFamilies")
     override fun setRunFontFamilies(view: RNTextEngineTextView, runFontFamilies: ReadableArray?) {
-        view.runFontFamilies = runFontFamilies
+        view.textContentView.runFontFamilies = runFontFamilies
         view.invalidateTextDisplay()
     }
 
     @ReactProp(name = "runFontSizes")
     override fun setRunFontSizes(view: RNTextEngineTextView, runFontSizes: ReadableArray?) {
-        view.runFontSizes = runFontSizes
+        view.textContentView.runFontSizes = runFontSizes
         view.invalidateTextDisplay()
     }
 
     @ReactProp(name = "runFontWeights")
     override fun setRunFontWeights(view: RNTextEngineTextView, runFontWeights: ReadableArray?) {
-        view.runFontWeights = runFontWeights
+        view.textContentView.runFontWeights = runFontWeights
         view.invalidateTextDisplay()
     }
 
     @ReactProp(name = "runFontStyles")
     override fun setRunFontStyles(view: RNTextEngineTextView, runFontStyles: ReadableArray?) {
-        view.runFontStyles = runFontStyles
+        view.textContentView.runFontStyles = runFontStyles
         view.invalidateTextDisplay()
     }
 
     @ReactProp(name = "runLetterSpacings")
     override fun setRunLetterSpacings(view: RNTextEngineTextView, runLetterSpacings: ReadableArray?) {
-        view.runLetterSpacings = runLetterSpacings
+        view.textContentView.runLetterSpacings = runLetterSpacings
         view.invalidateTextDisplay()
     }
 
     @ReactProp(name = "runLineHeights")
     override fun setRunLineHeights(view: RNTextEngineTextView, runLineHeights: ReadableArray?) {
-        view.runLineHeights = runLineHeights
+        view.textContentView.runLineHeights = runLineHeights
         view.invalidateTextDisplay()
     }
 
     @ReactProp(name = "runTabularNumbers")
     override fun setRunTabularNumbers(view: RNTextEngineTextView, runTabularNumbers: ReadableArray?) {
-        view.runTabularNumbers = runTabularNumbers
+        view.textContentView.runTabularNumbers = runTabularNumbers
         view.invalidateTextDisplay()
     }
 
     @Suppress("WrongConstant")
     @ReactProp(name = ViewProps.TEXT_ALIGN)
     override fun setTextAlign(view: RNTextEngineTextView, textAlign: String?) {
-        val horizontalGravity =
-            when (textAlign) {
-                null, "auto" -> Gravity.NO_GRAVITY
-                "left" -> Gravity.LEFT
-                "right" -> Gravity.RIGHT
-                "center" -> Gravity.CENTER_HORIZONTAL
-                "justify" -> Gravity.LEFT
-                else -> Gravity.NO_GRAVITY
+        view.setTextAlignValue(textAlign)
+    }
+
+    @ReactProp(name = "textShadowColor", customType = "Color")
+    override fun setTextShadowColor(view: RNTextEngineTextView, textShadowColor: Int?) {
+        view.setTextShadowColorValue(textShadowColor)
+    }
+
+    @ReactProp(name = "textShadowOffset")
+    override fun setTextShadowOffset(view: RNTextEngineTextView, textShadowOffset: ReadableMap?) {
+        val widthPx =
+            if (textShadowOffset?.hasKey("width") == true && !textShadowOffset.isNull("width")) {
+                PixelUtil.toPixelFromDIP(textShadowOffset.getDouble("width").toFloat())
+            } else {
+                0f
+            }
+        val heightPx =
+            if (textShadowOffset?.hasKey("height") == true && !textShadowOffset.isNull("height")) {
+                PixelUtil.toPixelFromDIP(textShadowOffset.getDouble("height").toFloat())
+            } else {
+                0f
             }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            view.justificationMode =
-                if (textAlign == "justify") Layout.JUSTIFICATION_MODE_INTER_WORD else Layout.JUSTIFICATION_MODE_NONE
-        }
+        view.setTextShadowOffsetPx(widthPx, heightPx)
+    }
 
-        val verticalGravity = view.gravity and Gravity.VERTICAL_GRAVITY_MASK
-        view.gravity = horizontalGravity or verticalGravity
+    @ReactProp(name = "textShadowRadius", defaultFloat = 0f)
+    override fun setTextShadowRadius(view: RNTextEngineTextView, textShadowRadius: Double) {
+        view.setTextShadowRadiusPx(PixelUtil.toPixelFromDIP(textShadowRadius.toFloat()))
+    }
+
+    @ReactProp(name = "textTransform")
+    override fun setTextTransform(view: RNTextEngineTextView, textTransform: String?) {
+        view.textContentView.setTextTransformValue(textTransform)
         view.invalidateTextDisplay()
     }
 
-    internal class RNTextEngineTextView(context: ThemedReactContext) : AppCompatTextView(context) {
+    override fun setPadding(view: RNTextEngineTextView, left: Int, top: Int, right: Int, bottom: Int) {
+        view.setContentPadding(left, top, right, bottom)
+    }
+
+    internal class RNTextEngineTextView(context: Context) : RNTextEngineCapAnchoredContainer(context) {
+        private val attributedDisplayView = RNTextEngineAttributedTextDisplayView(context)
+        val textContentView = RNTextEngineTextContentView(context)
+        val displayView: RNTextEngineAttributedTextDisplayView
+            get() = attributedDisplayView
+        private var currentPreparedText: RNTextEngineBindings.PreparedTextViewData? = null
+        private val reactChildren = ArrayList<View>()
+
+        override val opacityTargetView: View
+            get() = if (textContentView.parent === this) textContentView else attributedDisplayView
+
+        override fun measureAnchoredContent(width: Int, height: Int) {
+            val widthSpec = View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY)
+            val heightSpec = View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY)
+            attributedDisplayView.measure(widthSpec, heightSpec)
+            if (textContentView.parent === this) {
+                textContentView.measure(widthSpec, heightSpec)
+            }
+        }
+
+        override fun prepareAnchoredContentForLayout() {
+            flushTextDisplayIfNeeded()
+        }
+
+        override fun resolveCapHeightInsets(width: Int): RNTextEngineCapHeightInsetsPx {
+            return attributedDisplayView.resolveCapHeightInsets(width)
+        }
+
+        override fun applyAnchoredContentFrame(left: Int, top: Int, right: Int, bottom: Int, translationY: Float) {
+            attributedDisplayView.layout(left, top, right, bottom)
+            attributedDisplayView.translationY = translationY
+            if (textContentView.parent === this) {
+                textContentView.layout(left, top, right, bottom)
+                textContentView.translationY = translationY
+            }
+        }
+
+        init {
+            super.addView(
+                attributedDisplayView,
+                LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT),
+            )
+        }
+
+        fun setTextValue(value: String) {
+            if (textContentView.textValue == value) return
+            textContentView.textValue = value
+            invalidateTextDisplay()
+            syncPaperLocalDataIfNeeded(value)
+        }
+
+        fun addReactChild(child: View, index: Int) {
+            val insertionIndex = index.coerceIn(0, reactChildren.size)
+            reactChildren.add(insertionIndex, child)
+        }
+
+        fun reactChildCount(): Int = reactChildren.size
+
+        fun getReactChildAt(index: Int): View? = reactChildren.getOrNull(index)
+
+        fun removeReactChildAt(index: Int) {
+            if (index in 0 until reactChildren.size) {
+                reactChildren.removeAt(index)
+            }
+        }
+
+        fun clearReactChildren() {
+            reactChildren.clear()
+        }
+
+        fun flushTextDisplayIfNeeded() {
+            currentPreparedText = textContentView.flushPreparedTextIfNeeded(currentPreparedText)
+            textContentView.setPreparedData(currentPreparedText)
+            attributedDisplayView.setPreparedText(currentPreparedText)
+        }
+
+        fun invalidateTextDisplay() {
+            textContentView.invalidateTextDisplay()
+            requestCapAnchorLayout()
+        }
+
+        fun applyResolvedNestedPayload(payload: RNTextEngineTextShadowNode.RNTextEngineResolvedTextPayload?) {
+            textContentView.setResolvedNestedPayload(payload)
+            invalidateTextDisplay()
+        }
+
+        fun setNumberOfLines(numberOfLines: Int) {
+            textContentView.maxLines = if (numberOfLines > 0) numberOfLines else Int.MAX_VALUE
+            textContentView.setSingleLine(false)
+            attributedDisplayView.numberOfLines = numberOfLines
+            requestCapAnchorLayout()
+        }
+
+        fun setSelectable(value: Boolean) {
+            flushTextDisplayIfNeeded()
+            textContentView.setTextIsSelectable(value)
+            textContentView.isFocusable = value
+            textContentView.isFocusableInTouchMode = value
+            textContentView.isClickable = value
+            textContentView.isLongClickable = value
+            syncInteractionTextView(value)
+            reapplyPaperOpacity()
+            requestCapAnchorLayout()
+        }
+
+        fun setEllipsizeMode(mode: String?) {
+            textContentView.ellipsize =
+                when (mode) {
+                    "head" -> TextUtils.TruncateAt.START
+                    "middle" -> TextUtils.TruncateAt.MIDDLE
+                    "tail" -> TextUtils.TruncateAt.END
+                    else -> null
+                }
+            attributedDisplayView.ellipsizeMode = mode
+            requestCapAnchorLayout()
+        }
+
+        @Suppress("WrongConstant")
+        fun setTextAlignValue(value: String?) {
+            val horizontalGravity =
+                when (value) {
+                    null, "auto" -> Gravity.NO_GRAVITY
+                    "left" -> Gravity.LEFT
+                    "right" -> Gravity.RIGHT
+                    "center" -> Gravity.CENTER_HORIZONTAL
+                    "justify" -> Gravity.LEFT
+                    else -> Gravity.NO_GRAVITY
+                }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                textContentView.justificationMode =
+                    if (value == "justify") Layout.JUSTIFICATION_MODE_INTER_WORD else Layout.JUSTIFICATION_MODE_NONE
+            }
+
+            val verticalGravity = textContentView.gravity and Gravity.VERTICAL_GRAVITY_MASK
+            textContentView.gravity = horizontalGravity or verticalGravity
+            attributedDisplayView.setTextAlignValue(value)
+            requestCapAnchorLayout()
+        }
+
+        fun setTextDecorationLineValue(value: String?) {
+            textContentView.setTextDecorationLineValue(value)
+            attributedDisplayView.setTextDecorationLineValue(value)
+        }
+
+        fun setTextShadowColorValue(value: Int?) {
+            textContentView.setTextShadowColorValue(value)
+            attributedDisplayView.setTextShadowColorValue(value)
+        }
+
+        fun setTextShadowOffsetPx(widthPx: Float, heightPx: Float) {
+            textContentView.setTextShadowOffsetPx(widthPx, heightPx)
+            attributedDisplayView.setTextShadowOffsetPx(widthPx, heightPx)
+        }
+
+        fun setTextShadowRadiusPx(value: Float) {
+            textContentView.setTextShadowRadiusPx(value)
+            attributedDisplayView.setTextShadowRadiusPx(value)
+        }
+
+        fun setContentPadding(left: Int, top: Int, right: Int, bottom: Int) {
+            textContentView.setPadding(left, top, right, bottom)
+            attributedDisplayView.setPadding(left, top, right, bottom)
+            requestCapAnchorLayout()
+        }
+
+        @Suppress("DEPRECATION")
+        private fun syncPaperLocalDataIfNeeded(text: String) {
+            if (id == View.NO_ID || ViewUtil.getUIManagerType(this) == UIManagerType.FABRIC) return
+            (context as? ThemedReactContext)
+                ?.getNativeModule(com.facebook.react.uimanager.UIManagerModule::class.java)
+                ?.setViewLocalData(id, RNTextEngineTextLocalData(text))
+        }
+
+        private fun syncInteractionTextView(selectable: Boolean) {
+            if (selectable) {
+                if (textContentView.parent !== this) {
+                    super.addView(
+                        textContentView,
+                        LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT),
+                    )
+                }
+                textContentView.setPreparedData(currentPreparedText)
+                attributedDisplayView.visibility = View.INVISIBLE
+                return
+            }
+
+            if (textContentView.parent === this) {
+                super.removeView(textContentView)
+            }
+            attributedDisplayView.visibility = View.VISIBLE
+        }
+    }
+
+    internal class RNTextEngineTextContentView(context: Context) : AppCompatTextView(context) {
         var fontFamily: String? = null
         var fontStyle: String? = null
         var fontWeight: String? = null
         val defaultTextColor: Int = currentTextColor
-        var runs: List<TextRun> = emptyList()
+        var runs: List<RNTextEngineTextRun> = emptyList()
         var runColors: ReadableArray? = null
         var runCount: Int = 0
         var runEnds: ReadableArray? = null
@@ -275,8 +543,21 @@ internal class RNTextEngineTextViewManager :
         var runStyleMasks: ReadableArray? = null
         var runTabularNumbers: ReadableArray? = null
         var textValue: String = ""
+        private var baseCapHeightPx = 0f
         private var textDisplayDirty = true
-        private var lineHeightPx = Float.NaN
+        private var allowFontScaling = false
+        private var fontSizeValue = 14f
+        private var letterSpacingValue = 0f
+        private var lineHeightValue = Float.NaN
+        private var tabularNumbers = false
+        private var textTransform: String? = null
+        private var textDecorationLine: String? = null
+        private var textShadowColor: Int? = null
+        private var textShadowOffsetHeightPx = 0f
+        private var textShadowOffsetWidthPx = 0f
+        private var textShadowRadiusPx = 0f
+        private var uniformCapHeightPx: Float? = 0f
+        private var resolvedNestedPayload: RNTextEngineTextShadowNode.RNTextEngineResolvedTextPayload? = null
 
         init {
             includeFontPadding = false
@@ -284,107 +565,228 @@ internal class RNTextEngineTextViewManager :
             isClickable = false
             setBackgroundColor(Color.TRANSPARENT)
             setLineSpacing(0f, 1f)
+            applyTextViewLineBreakConfig(this, Layout.BREAK_STRATEGY_HIGH_QUALITY, Layout.HYPHENATION_FREQUENCY_NORMAL)
         }
 
-        fun setTextSizePx(size: Float) {
-            setTextSize(TypedValue.COMPLEX_UNIT_PX, size)
-            updateLetterSpacing()
-            updateLineHeightSpacing()
-            updateTypeface()
+        fun setFontSizeValue(value: Float) {
+            if (fontSizeValue == value) return
+            fontSizeValue = value
         }
 
-        fun setLetterSpacingPx(letterSpacingPx: Float) {
-            val currentTextSize = textSize
-            letterSpacing = if (currentTextSize > 0f) letterSpacingPx / currentTextSize else 0f
+        fun setAllowFontScalingEnabled(value: Boolean) {
+            if (allowFontScaling == value) return
+            allowFontScaling = value
         }
 
-        fun setLineHeightPx(value: Float) {
-            lineHeightPx = value
-            updateLineHeightSpacing()
+        fun setLetterSpacingValue(value: Float) {
+            if (letterSpacingValue == value) return
+            letterSpacingValue = value
         }
 
-        fun updateTypeface() {
-            val style = ReactTypefaceUtils.parseFontStyle(fontStyle)
-            val weight = ReactTypefaceUtils.parseFontWeight(fontWeight)
-            typeface =
-                ReactTypefaceUtils.applyStyles(
-                    typeface,
-                    style,
-                    weight,
-                    fontFamily,
-                    context.assets,
-                )
+        fun setLineHeightValue(value: Float) {
+            if (lineHeightValue == value) return
+            lineHeightValue = value
         }
 
-        private fun updateLetterSpacing() {
-            val current = letterSpacing
-            if (current.isNaN()) {
-                letterSpacing = 0f
-            }
+        fun setTextShadowColorValue(value: Int?) {
+            textShadowColor = value
+            updateTextShadow()
         }
 
-        private fun updateLineHeightSpacing() {
-            if (lineHeightPx.isNaN()) {
-                setLineSpacing(0f, 1f)
+        fun setTextShadowOffsetPx(widthPx: Float, heightPx: Float) {
+            textShadowOffsetHeightPx = heightPx
+            textShadowOffsetWidthPx = widthPx
+            updateTextShadow()
+        }
+
+        fun setTextShadowRadiusPx(value: Float) {
+            textShadowRadiusPx = value
+            updateTextShadow()
+        }
+
+        fun setTabularNumbersEnabled(value: Boolean) {
+            if (tabularNumbers == value) return
+            tabularNumbers = value
+        }
+
+        fun setTextDecorationLineValue(value: String?) {
+            if (textDecorationLine == value) return
+            textDecorationLine = value
+            updateTextDecorationFlags()
+        }
+
+        fun setTextTransformValue(value: String?) {
+            if (textTransform == value) return
+            textTransform = value
+        }
+
+        fun setResolvedNestedPayload(payload: RNTextEngineTextShadowNode.RNTextEngineResolvedTextPayload?) {
+            val nextPayload = payload?.takeIf { it.hasNested }
+            val currentPayload = resolvedNestedPayload?.takeIf { it.hasNested }
+            if (
+                currentPayload === nextPayload ||
+                (currentPayload != null &&
+                    nextPayload != null &&
+                    currentPayload.hash == nextPayload.hash &&
+                    currentPayload.text == nextPayload.text)
+            ) {
                 return
             }
 
-            val metrics = paint.fontMetricsInt
-            val fontHeight = (-metrics.ascent + metrics.descent).toFloat()
-            setLineSpacing(max(0f, lineHeightPx - fontHeight), 1f)
+            if (currentPayload == null && nextPayload == null) return
+
+            resolvedNestedPayload = nextPayload
+            invalidateTextDisplay()
         }
 
-        fun updateTextDisplay() {
-            val resolvedRuns = resolveAnimatedRuns()
-            val activeRuns = if (resolvedRuns.isNotEmpty()) resolvedRuns else runs
-
-            if (activeRuns.isEmpty()) {
-                includeFontPadding = false
-                updateLineHeightSpacing()
-                text = textValue
-                return
-            }
-
-            includeFontPadding = false
-            setLineSpacing(0f, 1f)
-
-            val styledText = SpannableString(textValue)
-            lineHeightPx.takeUnless(Float::isNaN)?.let { applyBaseLineHeightSpans(styledText, textValue.length, it, activeRuns) }
-
-            activeRuns.forEach { run ->
-                val runPaint = TextPaint(paint)
-                applyRunStyle(runPaint, run.style)
-                styledText.setSpan(
-                    RNTextEngineTextPaintSpan(runPaint),
-                    run.start,
-                    run.end,
-                    Spannable.SPAN_EXCLUSIVE_EXCLUSIVE,
-                )
-
-                if (run.style.hasLineHeight) {
-                    styledText.setSpan(
-                        RNTextEngineLineHeightSpan(PixelUtil.toPixelFromDIP(run.style.lineHeight.toFloat())),
-                        run.start,
-                        run.end,
-                        Spannable.SPAN_EXCLUSIVE_EXCLUSIVE,
-                    )
+        private fun updateTextDecorationFlags() {
+            var flags = paintFlags and Paint.UNDERLINE_TEXT_FLAG.inv() and Paint.STRIKE_THRU_TEXT_FLAG.inv()
+            textDecorationLine?.split(" ")?.forEach { decoration ->
+                when (decoration) {
+                    "underline" -> flags = flags or Paint.UNDERLINE_TEXT_FLAG
+                    "line-through" -> flags = flags or Paint.STRIKE_THRU_TEXT_FLAG
                 }
             }
-
-            text = styledText
+            paintFlags = flags
         }
 
-        fun flushTextDisplayIfNeeded() {
-            if (!textDisplayDirty) return
+        private fun updateTextShadow() {
+            val resolvedColor = textShadowColor ?: Color.TRANSPARENT
+            setShadowLayer(textShadowRadiusPx, textShadowOffsetWidthPx, textShadowOffsetHeightPx, resolvedColor)
+        }
+
+        fun setPreparedData(prepared: RNTextEngineBindings.PreparedTextViewData?) {
+            val applied =
+                applyPreparedTextViewData(
+                    textView = this,
+                    prepared = prepared,
+                    defaultTextColor = defaultTextColor,
+                )
+            baseCapHeightPx = applied.baseCapHeightPx
+            uniformCapHeightPx = applied.uniformCapHeightPx
+            updateTextDecorationFlags()
+            updateTextShadow()
+        }
+
+        private fun buildRunsFromResolvedPayload(
+            payload: RNTextEngineTextShadowNode.RNTextEngineResolvedTextPayload
+        ): List<RNTextEngineTextRun> {
+            if (payload.runStarts.isEmpty() || payload.runEnds.isEmpty() || payload.runStyleMasks.isEmpty()) return emptyList()
+
+            val runCount = minOf(payload.runStarts.size, payload.runEnds.size, payload.runStyleMasks.size)
+            val resolvedRuns = ArrayList<RNTextEngineTextRun>(runCount)
+            var previousEnd = 0
+
+            for (index in 0 until runCount) {
+                val start = payload.runStarts[index]
+                val end = payload.runEnds[index]
+                val styleMask = payload.runStyleMasks[index]
+                if (styleMask == 0 || start < previousEnd || start < 0 || end <= start) continue
+
+                val style =
+                    RNTextEngineTextRunStyle(
+                        color = payload.runColors.getOrNull(index),
+                        fontFamily = payload.runFontFamilies.getOrNull(index),
+                        fontSize = payload.runFontSizes.getOrNull(index) ?: 0.0,
+                        fontStyle = payload.runFontStyles.getOrNull(index),
+                        fontWeight = payload.runFontWeights.getOrNull(index),
+                        hasColor = styleMask and RUN_STYLE_HAS_COLOR != 0,
+                        hasFontFamily = styleMask and RUN_STYLE_HAS_FONT_FAMILY != 0,
+                        hasFontSize = styleMask and RUN_STYLE_HAS_FONT_SIZE != 0,
+                        hasFontStyle = styleMask and RUN_STYLE_HAS_FONT_STYLE != 0,
+                        hasFontWeight = styleMask and RUN_STYLE_HAS_FONT_WEIGHT != 0,
+                        hasLetterSpacing = styleMask and RUN_STYLE_HAS_LETTER_SPACING != 0,
+                        hasLineHeight = styleMask and RUN_STYLE_HAS_LINE_HEIGHT != 0,
+                        hasTabularNumbers = styleMask and RUN_STYLE_HAS_TABULAR_NUMBERS != 0,
+                        letterSpacing = payload.runLetterSpacings.getOrNull(index) ?: 0.0,
+                        lineHeight = payload.runLineHeights.getOrNull(index) ?: 0.0,
+                        tabularNumbers = payload.runTabularNumbers.getOrNull(index) ?: false,
+                    )
+
+                resolvedRuns.add(RNTextEngineTextRun(end = end, start = start, style = style))
+                previousEnd = end
+            }
+
+            return resolvedRuns
+        }
+
+        private fun buildDisplayData(): RNTextEngineBindings.PreparedTextViewData {
+            val nestedPayload = resolvedNestedPayload
+            return if (nestedPayload != null) {
+                RNTextEngineBindings.buildTextViewDisplayData(
+                    text = nestedPayload.text,
+                    textTransform = null,
+                    color = currentTextColor,
+                    fontFamily = fontFamily,
+                    fontSize = resolvePreparedTypographyValue(fontSizeValue),
+                    fontWeight = fontWeight,
+                    fontStyle = fontStyle,
+                    letterSpacing = resolvePreparedTypographyValue(letterSpacingValue),
+                    lineHeight = resolvePreparedLineHeightValue(),
+                    allowFontScaling = false,
+                    tabularNumbers = tabularNumbers,
+                    textBreakStrategy = null,
+                    runs = buildRunsFromResolvedPayload(nestedPayload),
+                )
+            } else {
+                val animatedRuns = resolveAnimatedRuns()
+                val activeRuns = if (animatedRuns.isNotEmpty()) animatedRuns else runs
+                RNTextEngineBindings.buildTextViewDisplayData(
+                    text = textValue,
+                    textTransform = textTransform,
+                    color = currentTextColor,
+                    fontFamily = fontFamily,
+                    fontSize = fontSizeValue.toDouble(),
+                    fontWeight = fontWeight,
+                    fontStyle = fontStyle,
+                    letterSpacing = letterSpacingValue.toDouble(),
+                    lineHeight = if (lineHeightValue.isNaN()) Double.NaN else lineHeightValue.toDouble(),
+                    allowFontScaling = allowFontScaling,
+                    tabularNumbers = tabularNumbers,
+                    textBreakStrategy = null,
+                    runs = activeRuns,
+                )
+            }
+        }
+
+        private fun resolvePreparedLineHeightValue(): Double {
+            return if (lineHeightValue.isNaN()) {
+                Double.NaN
+            } else {
+                resolvePreparedTypographyValue(lineHeightValue)
+            }
+        }
+
+        private fun resolvePreparedTypographyValue(value: Float): Double {
+            return if (allowFontScaling) {
+                value * RNTextEngineBindings.currentFontScaleMultiplier()
+            } else {
+                value.toDouble()
+            }
+        }
+
+        fun flushPreparedTextIfNeeded(currentPreparedText: RNTextEngineBindings.PreparedTextViewData?): RNTextEngineBindings.PreparedTextViewData? {
+            if (!textDisplayDirty) return currentPreparedText
             textDisplayDirty = false
-            updateTextDisplay()
+            return buildDisplayData()
         }
 
         fun invalidateTextDisplay() {
             textDisplayDirty = true
         }
 
-        private fun resolveAnimatedRuns(): List<TextRun> {
+        fun resolveCapHeightInsets(width: Int): RNTextEngineCapHeightInsetsPx {
+            return resolveCapHeightInsetsPx(
+                layout = buildLayoutForTextView(this, width),
+                text = text ?: "",
+                defaultCapHeightPx = baseCapHeightPx,
+                uniformCapHeightPx = uniformCapHeightPx,
+            )
+        }
+
+        fun resolveLayout(width: Int): Layout? = buildLayoutForTextView(this, width)
+
+        private fun resolveAnimatedRuns(): List<RNTextEngineTextRun> {
             val starts = runStarts ?: return emptyList()
             val ends = runEnds ?: return emptyList()
             val styleMasks = runStyleMasks ?: return emptyList()
@@ -396,7 +798,7 @@ internal class RNTextEngineTextViewManager :
                 }
             if (resolvedRunCount == 0) return emptyList()
 
-            val resolvedRuns = ArrayList<TextRun>(resolvedRunCount)
+            val resolvedRuns = ArrayList<RNTextEngineTextRun>(resolvedRunCount)
             var previousEnd = 0
 
             for (index in 0 until resolvedRunCount) {
@@ -408,7 +810,7 @@ internal class RNTextEngineTextViewManager :
                 if (styleMask == 0 || start < previousEnd || start < 0 || end <= start) continue
 
                 val style =
-                    TextRunStyle(
+                    RNTextEngineTextRunStyle(
                         color = if (styleMask and RUN_STYLE_HAS_COLOR != 0 && index < (runColors?.size() ?: 0)) runColors?.getString(index) else null,
                         fontFamily = if (styleMask and RUN_STYLE_HAS_FONT_FAMILY != 0 && index < (runFontFamilies?.size() ?: 0)) runFontFamilies?.getString(index) else null,
                         fontSize = if (styleMask and RUN_STYLE_HAS_FONT_SIZE != 0 && index < (runFontSizes?.size() ?: 0)) runFontSizes?.getDouble(index) ?: 0.0 else 0.0,
@@ -427,86 +829,18 @@ internal class RNTextEngineTextViewManager :
                         tabularNumbers = styleMask and RUN_STYLE_HAS_TABULAR_NUMBERS != 0 && index < (runTabularNumbers?.size() ?: 0) && (runTabularNumbers?.getBoolean(index) ?: false),
                     )
 
-                resolvedRuns.add(TextRun(end = end, start = start, style = style))
+                resolvedRuns.add(RNTextEngineTextRun(end = end, start = start, style = style))
                 previousEnd = end
             }
 
             return resolvedRuns
         }
-
-        private fun applyRunStyle(textPaint: TextPaint, style: TextRunStyle) {
-            if (style.hasColor) {
-                textPaint.color = resolveColor(style.color) ?: defaultTextColor
-            }
-
-            val resolvedFontFamily = if (style.hasFontFamily) style.fontFamily else this.fontFamily
-            val resolvedFontStyle = if (style.hasFontStyle) style.fontStyle else this.fontStyle
-            val resolvedFontWeight = if (style.hasFontWeight) style.fontWeight else this.fontWeight
-            val fontSizePx =
-                if (style.hasFontSize) PixelUtil.toPixelFromDIP(style.fontSize.toFloat()) else textSize
-
-            textPaint.typeface =
-                ReactTypefaceUtils.applyStyles(
-                    textPaint.typeface,
-                    ReactTypefaceUtils.parseFontStyle(resolvedFontStyle),
-                    ReactTypefaceUtils.parseFontWeight(resolvedFontWeight),
-                    resolvedFontFamily,
-                    context.assets,
-                )
-            textPaint.textSize = fontSizePx
-
-            if (style.hasLetterSpacing) {
-                textPaint.letterSpacing =
-                    if (fontSizePx > 0f) PixelUtil.toPixelFromDIP(style.letterSpacing.toFloat()) / fontSizePx else 0f
-            }
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP && style.hasTabularNumbers) {
-                textPaint.fontFeatureSettings = if (style.tabularNumbers) "'tnum'" else null
-            }
-        }
-
-        private fun resolveColor(value: String?): Int? {
-            return RNTextEngineColorParser.parse(value)
-        }
-
-        private fun applyBaseLineHeightSpans(
-            styledText: SpannableString,
-            textLength: Int,
-            baseLineHeightPx: Float,
-            runs: List<TextRun>,
-        ) {
-            var cursor = 0
-
-            runs.forEach { run ->
-                if (run.style.hasLineHeight && cursor < run.start) {
-                    styledText.setSpan(
-                        RNTextEngineLineHeightSpan(baseLineHeightPx),
-                        cursor,
-                        run.start,
-                        Spannable.SPAN_EXCLUSIVE_EXCLUSIVE,
-                    )
-                }
-
-                if (run.style.hasLineHeight) {
-                    cursor = run.end
-                }
-            }
-
-            if (cursor < textLength) {
-                styledText.setSpan(
-                    RNTextEngineLineHeightSpan(baseLineHeightPx),
-                    cursor,
-                    textLength,
-                    Spannable.SPAN_EXCLUSIVE_EXCLUSIVE,
-                )
-            }
-        }
     }
 
-    private fun parseRuns(runs: ReadableArray?): List<TextRun> {
+    private fun parseRuns(runs: ReadableArray?): List<RNTextEngineTextRun> {
         if (runs == null) return emptyList()
 
-        val resolvedRuns = ArrayList<TextRun>(runs.size())
+        val resolvedRuns = ArrayList<RNTextEngineTextRun>(runs.size())
         var previousEnd = 0
 
         for (index in 0 until runs.size()) {
@@ -519,15 +853,15 @@ internal class RNTextEngineTextViewManager :
             val style = parseRunStyle(styleMap)
             if (!hasAnyOverride(style)) continue
 
-            resolvedRuns.add(TextRun(end = end, start = start, style = style))
+            resolvedRuns.add(RNTextEngineTextRun(end = end, start = start, style = style))
             previousEnd = end
         }
 
         return resolvedRuns
     }
 
-    private fun parseRunStyle(style: ReadableMap): TextRunStyle {
-        return TextRunStyle(
+    private fun parseRunStyle(style: ReadableMap): RNTextEngineTextRunStyle {
+        return RNTextEngineTextRunStyle(
             color = style.getString("color"),
             fontFamily = style.getString("fontFamily"),
             fontSize = if (style.hasKey("fontSize") && !style.isNull("fontSize")) style.getDouble("fontSize") else 0.0,
@@ -547,47 +881,71 @@ internal class RNTextEngineTextViewManager :
         )
     }
 
-    private fun hasAnyOverride(style: TextRunStyle): Boolean {
+    private fun hasAnyOverride(style: RNTextEngineTextRunStyle): Boolean {
         return style.hasColor || style.hasFontFamily || style.hasFontSize || style.hasFontStyle || style.hasFontWeight || style.hasLetterSpacing || style.hasLineHeight || style.hasTabularNumbers
     }
 
-    private class RNTextEngineTextPaintSpan(textPaint: TextPaint) : MetricAffectingSpan() {
-        private val spanPaint = TextPaint(textPaint)
+    private fun parseResolvedPayload(state: MapBuffer): RNTextEngineTextShadowNode.RNTextEngineResolvedTextPayload {
+        val hasNested = state.contains(STATE_HAS_NESTED_KEY) && state.getBoolean(STATE_HAS_NESTED_KEY)
+        if (!hasNested) return RNTextEngineTextShadowNode.RNTextEngineResolvedTextPayload.EMPTY
 
-        override fun updateMeasureState(textPaint: TextPaint) {
-            apply(textPaint)
-        }
+        return RNTextEngineTextShadowNode.RNTextEngineResolvedTextPayload(
+            hasNested = true,
+            hash = if (state.contains(STATE_HASH_KEY)) state.getLong(STATE_HASH_KEY) else 0L,
+            text = if (state.contains(STATE_TEXT_KEY)) state.getString(STATE_TEXT_KEY) else "",
+            runStarts = parseIntArray(state, STATE_RUN_STARTS_KEY),
+            runEnds = parseIntArray(state, STATE_RUN_ENDS_KEY),
+            runStyleMasks = parseIntArray(state, STATE_RUN_STYLE_MASKS_KEY),
+            runColors = parseNullableStringArray(state, STATE_RUN_COLORS_KEY),
+            runFontFamilies = parseNullableStringArray(state, STATE_RUN_FONT_FAMILIES_KEY),
+            runFontSizes = parseDoubleArray(state, STATE_RUN_FONT_SIZES_KEY),
+            runFontWeights = parseNullableStringArray(state, STATE_RUN_FONT_WEIGHTS_KEY),
+            runFontStyles = parseNullableStringArray(state, STATE_RUN_FONT_STYLES_KEY),
+            runLetterSpacings = parseDoubleArray(state, STATE_RUN_LETTER_SPACINGS_KEY),
+            runLineHeights = parseDoubleArray(state, STATE_RUN_LINE_HEIGHTS_KEY),
+            runTabularNumbers = parseBooleanArray(state, STATE_RUN_TABULAR_NUMBERS_KEY),
+        )
+    }
 
-        override fun updateDrawState(textPaint: TextPaint) {
-            apply(textPaint)
-        }
-
-        private fun apply(textPaint: TextPaint) {
-            textPaint.typeface = spanPaint.typeface
-            textPaint.textSize = spanPaint.textSize
-            textPaint.letterSpacing = spanPaint.letterSpacing
-            textPaint.color = spanPaint.color
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                textPaint.fontFeatureSettings = spanPaint.fontFeatureSettings
-            }
+    private fun parseIntArray(state: MapBuffer, key: Int): IntArray {
+        if (!state.contains(key)) return IntArray(0)
+        val map = state.getMapBuffer(key)
+        val count = if (map.contains(STATE_ARRAY_LENGTH_KEY)) map.getInt(STATE_ARRAY_LENGTH_KEY).coerceAtLeast(0) else 0
+        return IntArray(count) { index ->
+            val valueKey = index + 1
+            if (map.contains(valueKey)) map.getInt(valueKey) else 0
         }
     }
 
-    private class RNTextEngineLineHeightSpan(height: Float) : LineHeightSpan {
-        private val lineHeight = ceil(height.toDouble()).toInt()
+    private fun parseDoubleArray(state: MapBuffer, key: Int): DoubleArray {
+        if (!state.contains(key)) return DoubleArray(0)
+        val map = state.getMapBuffer(key)
+        val count = if (map.contains(STATE_ARRAY_LENGTH_KEY)) map.getInt(STATE_ARRAY_LENGTH_KEY).coerceAtLeast(0) else 0
+        return DoubleArray(count) { index ->
+            val valueKey = index + 1
+            if (map.contains(valueKey)) map.getDouble(valueKey) else 0.0
+        }
+    }
 
-        override fun chooseHeight(text: CharSequence, start: Int, end: Int, spanstartv: Int, v: Int, fm: android.graphics.Paint.FontMetricsInt) {
-            val leading = lineHeight - ((-fm.ascent) + fm.descent)
-            fm.ascent -= ceil(leading / 2.0f).toInt()
-            fm.descent += floor(leading / 2.0f).toInt()
+    private fun parseBooleanArray(state: MapBuffer, key: Int): BooleanArray {
+        if (!state.contains(key)) return BooleanArray(0)
+        val map = state.getMapBuffer(key)
+        val count = if (map.contains(STATE_ARRAY_LENGTH_KEY)) map.getInt(STATE_ARRAY_LENGTH_KEY).coerceAtLeast(0) else 0
+        return BooleanArray(count) { index ->
+            val valueKey = index + 1
+            map.contains(valueKey) && map.getBoolean(valueKey)
+        }
+    }
 
-            if (start == 0) {
-                fm.top = fm.ascent
-            }
-            if (end == text.length) {
-                fm.bottom = fm.descent
-            }
+    private fun parseNullableStringArray(state: MapBuffer, key: Int): Array<String?> {
+        if (!state.contains(key)) return emptyArray()
+        val map = state.getMapBuffer(key)
+        val count = if (map.contains(STATE_ARRAY_LENGTH_KEY)) map.getInt(STATE_ARRAY_LENGTH_KEY).coerceAtLeast(0) else 0
+        return Array(count) { index ->
+            val valueKey = index + 1
+            if (!map.contains(valueKey)) return@Array null
+            val value = map.getString(valueKey)
+            if (value.isEmpty()) null else value
         }
     }
 
@@ -601,5 +959,21 @@ internal class RNTextEngineTextViewManager :
         private const val RUN_STYLE_HAS_LETTER_SPACING = 1 shl 5
         private const val RUN_STYLE_HAS_LINE_HEIGHT = 1 shl 6
         private const val RUN_STYLE_HAS_TABULAR_NUMBERS = 1 shl 7
+
+        private const val STATE_HAS_NESTED_KEY = 1
+        private const val STATE_HASH_KEY = 2
+        private const val STATE_TEXT_KEY = 3
+        private const val STATE_RUN_STARTS_KEY = 4
+        private const val STATE_RUN_ENDS_KEY = 5
+        private const val STATE_RUN_STYLE_MASKS_KEY = 6
+        private const val STATE_RUN_COLORS_KEY = 7
+        private const val STATE_RUN_FONT_FAMILIES_KEY = 8
+        private const val STATE_RUN_FONT_SIZES_KEY = 9
+        private const val STATE_RUN_FONT_WEIGHTS_KEY = 10
+        private const val STATE_RUN_FONT_STYLES_KEY = 11
+        private const val STATE_RUN_LETTER_SPACINGS_KEY = 12
+        private const val STATE_RUN_LINE_HEIGHTS_KEY = 13
+        private const val STATE_RUN_TABULAR_NUMBERS_KEY = 14
+        private const val STATE_ARRAY_LENGTH_KEY = 0
     }
 }

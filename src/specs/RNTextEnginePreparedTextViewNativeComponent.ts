@@ -1,9 +1,11 @@
-import { codegenNativeComponent, type CodegenTypes, type ViewProps } from 'react-native';
+import { codegenNativeComponent, type ViewProps } from 'react-native';
+import type { Double, Int32 } from 'react-native/Libraries/Types/CodegenTypes';
 
 export interface NativeProps extends ViewProps {
+  anchorToCapHeight?: boolean;
   ellipsizeMode?: string;
-  handle?: CodegenTypes.Double;
-  numberOfLines?: CodegenTypes.Int32;
+  handle?: Double;
+  numberOfLines?: Int32;
   selectable?: boolean;
 }
 

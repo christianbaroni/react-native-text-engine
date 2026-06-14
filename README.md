@@ -1,58 +1,22 @@
 # React Native Text Engine
 
-Native text measurement and rendering primitives for React Native.
+Native text measurement, layout, and rendering primitives for React Native.
 
-Use `react-native-text-engine` when you need text work to happen natively instead of inside normal React text rendering. In practice, that usually means one of two things:
+`react-native-text-engine` exposes those primitives to JavaScript and Worklet threads through three APIs:
 
-1. You need exact text layout before render.
-2. You need a fixed-grid text surface whose content changes cell by cell.
+- `TextView` renders text from direct props.
+- Prepared text stores text and typography in a native handle that can be measured, laid out at different widths, and rendered later.
+- Glyph fields draw a fixed grid of character cells whose contents can be replaced without rebuilding the grid.
 
-This package gives you a native primitive for each case.
-
-## What it provides
-
-### Prepared text
-
-Prepared text is for normal flowing text.
-
-You create a prepared text once, then ask the native text engine to lay that same text out at different widths later.
-
-Use it for:
-
-- chat bubbles
-- exact virtualization
-- worklet-driven layout
-- custom UI that needs line counts or widths before render
-
-### Glyph fields
-
-Glyph fields are for fixed-grid text surfaces.
-
-You create a field with stable geometry and a stable style palette, then replace the current glyphs and style indices later.
-
-Use it for:
-
-- proportional ASCII
-- terminal-like surfaces
-- text art driven by simulation
-- any effect where the changing value is which glyph appears in each cell
-
-Prepared text and glyph fields are different on purpose.
-
-- Prepared text owns flowing text.
-- Glyph fields own cell content.
-
-If you try to force one through the other, you pay for the wrong work.
+Operations are synchronous and handle based, so measurement, layout, and grid updates can run in animation, virtualization, and custom layout code.
 
 ## Installation
-
-Install the package:
 
 ```sh
 yarn add react-native-text-engine
 ```
 
-If you want the worklet helpers, also install `react-native-worklets`:
+Worklet helpers require `react-native-worklets`:
 
 ```sh
 yarn add react-native-worklets
@@ -65,45 +29,122 @@ cd ios
 pod install
 ```
 
-## Prepared text
+## TextView
 
-### Create once, layout many times
+`TextView` is the direct rendering API. Text and typography are passed as props, and the view can be wrapped with `Animated.createAnimatedComponent`.
+
+```tsx
+import { TextView } from 'react-native-text-engine';
+
+export function PriceLabel() {
+  return <TextView color="#111" fontFamily="Inter" fontSize={17} fontWeight="700" tabularNumbers text="$123.45" />;
+}
+```
+
+The primary text input is the `text` prop. `TextView` also accepts text props, including:
+
+- `allowFontScaling`
+- `anchorToCapHeight`
+- `color`
+- `ellipsizeMode`
+- `fontFamily`
+- `fontSize`
+- `fontWeight`
+- `fontStyle`
+- `includeFontPadding`
+- `letterSpacing`
+- `lineHeight`
+- `numberOfLines`
+- `selectable`
+- `tabularNumbers`
+- `textAlign`
+
+`selectable` enables native text selection. Without it, the view is display only.
+
+`anchorToCapHeight` changes the measured text band. When it is true, the band starts at the first visible line's cap-height top and ends at the last visible line's baseline. The glyphs are still drawn normally.
+
+### Inline Runs
+
+Inline runs apply style ranges inside one string.
+
+```tsx
+import { TextView, createTextViewRunPayload } from 'react-native-text-engine';
+
+const runs = createTextViewRunPayload([
+  { start: 0, end: 4, style: { fontWeight: '700' } },
+  { start: 5, end: 9, style: { fontStyle: 'italic' } },
+]);
+
+<TextView text="Bold text" fontSize={17} lineHeight={24} {...runs} />;
+```
+
+Run ranges are UTF-16 offsets. They must be sorted, non-overlapping, and inside the string bounds.
+
+### JSX Children
+
+Plain textual children can be compiled to the `text` prop with the optional Babel plugin:
+
+```js
+module.exports = {
+  presets: ['module:@react-native/babel-preset'],
+  plugins: ['react-native-text-engine/babel-plugin'],
+};
+```
+
+`TextView` does not flatten arbitrary children during render. The plugin only rewrites child text when the conversion can happen at build time.
+
+## Prepared Text
+
+Prepared text is text plus typography stored in native memory. The JavaScript object contains a numeric handle. That handle is valid for measurement, layout, line geometry, rendering, and Worklet calls until it is released.
 
 ```ts
 import { createPreparedText, type TextMeasureStyle } from 'react-native-text-engine';
 
 const style: TextMeasureStyle = {
-  fontFamily: 'SF Pro Rounded',
+  fontFamily: 'Inter',
   fontSize: 17,
-  fontWeight: '600',
-  letterSpacing: 0.5,
   lineHeight: 24,
 };
 
 const message = createPreparedText('Hello world', style);
 
-const metrics = message.layout({
+const layout = message.layout({
   width: 320,
   maxLines: 3,
   ellipsizeMode: 'tail',
 });
 
-metrics.width;
-metrics.height;
-metrics.lineCount;
-metrics.lastLineWidth;
+layout.width;
+layout.height;
+layout.lineCount;
+layout.lastLineWidth;
 
 message.release();
 ```
 
-The split is simple:
+`createPreparedText()` prepares the string and style. `layout()` supplies the width and line options for a particular layout result.
 
-- `createPreparedText()` owns text and typography.
-- `message.layout()` owns width-dependent results.
+### PreparedTextView
 
-### One-shot measurement
+`PreparedTextView` renders an existing prepared handle.
 
-If you do not need a persistent resource:
+```tsx
+import { PreparedTextView, createPreparedText } from 'react-native-text-engine';
+
+const title = createPreparedText('Prepared once', {
+  fontFamily: 'Inter',
+  fontSize: 20,
+  lineHeight: 26,
+});
+
+<PreparedTextView handle={title.handle} style={{ width: 320 }} />;
+```
+
+Rendering does not release the handle. Release it when it is no longer needed.
+
+### One-Shot Measurement
+
+One-shot measurement returns metrics without keeping a prepared handle.
 
 ```ts
 import { measureText, measureTextWidth } from 'react-native-text-engine';
@@ -117,27 +158,9 @@ const width = measureTextWidth('123.45', {
 const block = measureText('Long paragraph...', { fontSize: 17, lineHeight: 24 }, { width: 320 });
 ```
 
-### Inline runs
+### Batch APIs
 
-Prepared text can include inline style overrides inside one string:
-
-```ts
-import { createPreparedText, type TextMeasureRun } from 'react-native-text-engine';
-
-const text = 'Ship bold code exactly';
-const runs: readonly TextMeasureRun[] = [
-  { start: 5, end: 9, style: { fontWeight: '700' } },
-  { start: 10, end: 14, style: { fontFamily: 'Menlo' } },
-];
-
-const prepared = createPreparedText(text, { fontSize: 17, lineHeight: 24 }, runs);
-```
-
-Runs are UTF-16 ranges into the source string. They must be sorted and non-overlapping.
-
-### Batch work
-
-For large collections:
+Prepared text functions accept either a single item or an array.
 
 ```ts
 import { createPreparedText, layoutPreparedText, releasePreparedText } from 'react-native-text-engine';
@@ -148,22 +171,26 @@ const layouts = layoutPreparedText(prepared, { width: contentWidth });
 releasePreparedText(prepared);
 ```
 
-### Per-line geometry
+The array form prepares, lays out, or releases many handles in one native call.
 
-If you need exact line metadata:
+### Line Geometry
+
+`lines()` returns every visible line for a layout request.
+
+`nextLine()` returns the next visible line beginning at a UTF-16 offset. Its width argument applies to that line, so callers can build variable-width text flows.
 
 ```ts
 const lines = message.lines({ width: 320 });
 const next = message.nextLine(0, 220);
 ```
 
-Use `message.lines()` when one width applies to the whole block. Use `message.nextLine()` when width changes line by line.
+Line ranges use UTF-16 offsets. A line's `end` and `width` describe visible text. Trailing whitespace is not included.
 
-## Glyph fields
+## Glyph Fields
 
-Create a glyph field when you have a fixed cell grid and a small style palette.
+A glyph field is a fixed `columns` by `rows` grid. Creation sets the grid geometry, typography, alignment, and style variants. Updates replace the glyph and variant index for each cell.
 
-```ts
+```tsx
 import { GlyphFieldView, createGlyphField, type GlyphFieldVariant } from 'react-native-text-engine';
 
 const variants: readonly GlyphFieldVariant[] = [
@@ -187,56 +214,45 @@ const variantIndices = new Uint8Array(cellCount);
 
 field.update(glyphs, variantIndices);
 
-// Later:
-field.release();
+<GlyphFieldView handle={field.handle} style={{ width: 360, height: 480 }} />;
 ```
 
-Render the field from its handle:
+`field.update()` accepts a string of glyphs or a `Uint8Array` of indices into `glyphPalette`. `variantIndices` selects the style variant for each cell.
 
-```tsx
-<GlyphFieldView handle={field.handle} style={{ width: 360, height: 480 }} />
-```
+Every update must match the grid:
 
-The update contract is strict:
+- `glyphs.length === columns * rows`, or `glyphIndices.length === columns * rows`
+- `variantIndices.length === columns * rows`
+- every variant index points to an entry in `variants`
 
-- `glyphs.length` must equal `columns * rows`
-- `variantIndices.length` must equal `columns * rows`
-- each `variantIndices[i]` must point at one entry in `variants`
-
-That is the whole model. The native field owns drawing and style caches. Your code only owns the current cell content.
-
-## Native render surfaces
-
-The package also exposes two minimal native text views:
-
-```ts
-import { PreparedTextView, TextView } from 'react-native-text-engine';
-```
-
-- `TextView` renders direct text props.
-- `PreparedTextView` renders from a prepared handle.
-
-Use them when you want a native text surface but do not want React’s `<Text>` component to own layout on that path.
-
-`selectable` opts into the interaction-oriented native owner. Leaving it off keeps the cheaper display path.
+`field.release()` frees the native grid.
 
 ## Worklets
 
-The core API is synchronous and React-free, so it can be used from worklets after the current runtime has been installed.
-
-### Install into the UI runtime
-
-If UI worklets will call the text engine directly, do this once during startup:
+Importing the Worklets entrypoint installs Text Engine functions into the Worklets UI runtime.
 
 ```ts
-import { installTextEngineInUIRuntime } from 'react-native-text-engine/worklets';
-
-installTextEngineInUIRuntime();
+import { measureTextsInRuntime } from 'react-native-text-engine/worklets';
 ```
 
-### Dedicated worklet runtime
+The Worklets entrypoint exports:
 
-If you want a separate runtime for text-heavy work:
+- `createPreparedTextsInRuntime()`
+- `measureTextsInRuntime()`
+- `layoutPreparedTextsInRuntime()`
+- `layoutNextLineInRuntime()`
+- `updateGlyphFieldInRuntime()`
+- `createGlyphFieldBuffersInRuntime()`
+- `commitGlyphFieldBuffersInRuntime()`
+
+```ts
+import { layoutNextLineInRuntime, updateGlyphFieldInRuntime } from 'react-native-text-engine/worklets';
+
+const next = layoutNextLineInRuntime(prepared.handle, 0, 220);
+updateGlyphFieldInRuntime(field.handle, glyphs, variantIndices);
+```
+
+`createTextEngineRuntime()` creates a dedicated Worklets runtime with Text Engine already installed. If an initializer is provided, it runs after installation.
 
 ```ts
 import { createTextEngineRuntime } from 'react-native-text-engine/worklets';
@@ -244,64 +260,69 @@ import { createTextEngineRuntime } from 'react-native-text-engine/worklets';
 const runtime = createTextEngineRuntime({ name: 'text-engine-layout' });
 ```
 
-### Worklet helpers
+## App Defaults
 
-The worklet entry uses plain handle tokens so results can move across runtimes. It currently exposes:
+The package ships with no app-wide defaults.
 
-- `createPreparedTextsInRuntime()`
-- `measureTextsInRuntime()`
-- `layoutPreparedTextsInRuntime()`
-- `updateGlyphFieldInRuntime()`
-
-Example:
+An app can define build-time defaults in `react-native-text-engine.config.ts` or `react-native-text-engine.config.js` at the app root:
 
 ```ts
-import { updateGlyphFieldInRuntime } from 'react-native-text-engine/worklets';
+import { defineTextEngineDefaults } from 'react-native-text-engine/config';
 
-updateGlyphFieldInRuntime(field.handle, glyphs, variantIndices);
+export default defineTextEngineDefaults({
+  anchorToCapHeight: true,
+  fontFamily: 'Inter',
+  fontSize: 17,
+  lineHeight: 24,
+});
 ```
 
-## Lifecycle
+Defaults fill undefined fields only. Explicit props and options take precedence.
 
-Handles own native memory, so cleanup is explicit:
+Defaults are applied to:
 
-- `prepared.release()` for one prepared text
-- `releasePreparedText()` for one or many prepared texts
-- `field.release()` for one glyph field
+- prepared text creation
+- one-shot measurement
+- Worklet measurement and layout helpers
+- glyph-field typography fields omitted from `createGlyphField()`
+- selected direct view props such as `anchorToCapHeight`, `allowFontScaling`, and `tabularNumbers`
 
-## Style surface
+`TextView` does not read typography defaults from its `style` prop. Put typography on direct props when app defaults should fill missing values.
 
-`TextMeasureStyle` is intentionally small. It includes the text properties that materially affect layout or native rendering:
+The config is read during the native build. Rebuild the app after changing it.
 
-- font family
-- font size
-- font weight
-- font style
-- letter spacing
-- line height
-- color
-- tabular numbers
-- font scaling, font padding, and break strategy where relevant
+## Native Resources
 
-This package is not trying to mirror the full React Native text style API.
+Prepared text and glyph fields allocate native resources. Release handles when they are no longer needed:
 
-## When to use this package
+```ts
+prepared.release();
+releasePreparedText(preparedArray);
+field.release();
+```
 
-Use it when React should consume native text results instead of owning the whole text problem itself.
+## Text Style
 
-That includes:
+`TextMeasureStyle` contains the text fields used by measurement and Text Engine's native views:
 
-- exact text measurement before render
-- chat and feed virtualization
-- worklet-driven layout
-- custom text surfaces outside `<Text>`
-- fixed-grid glyph effects
+- `allowFontScaling`
+- `color`
+- `fontFamily`
+- `fontSize`
+- `fontStyle`
+- `fontWeight`
+- `includeFontPadding`
+- `letterSpacing`
+- `lineHeight`
+- `tabularNumbers`
+- `textBreakStrategy`
 
-Do not use it when normal React Native text layout is already good enough.
+Layout options are separate: `anchorToCapHeight`, `ellipsizeMode`, `maxLines`, and `width`.
 
-## Example app
+## Example App
 
-The example app in [`examples/`](./examples) demonstrates both primitives:
+The example app in [`examples/`](./examples) shows:
 
-- prepared text for chat measurement and rendering
-- glyph fields for the ASCII demo
+- `TextView` and prepared text in the type demo
+- prepared text measurement in the chat demo
+- glyph fields in the field and fire demos

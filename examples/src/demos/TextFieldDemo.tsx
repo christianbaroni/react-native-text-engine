@@ -1,14 +1,16 @@
 import React, { useEffect, useLayoutEffect, useMemo } from 'react';
-import { StyleSheet, Text, View, useWindowDimensions, type LayoutChangeEvent } from 'react-native';
+import { StyleSheet, View, useWindowDimensions, type LayoutChangeEvent } from 'react-native';
 import { useStableValue } from '@storesjs/stores';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { useFrameCallback, useSharedValue } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { GlyphFieldView, createGlyphField } from 'react-native-text-engine';
-import { installTextEngineInUIRuntime, updateGlyphFieldInRuntime } from 'react-native-text-engine/worklets';
+import { GlyphFieldView, TextView, createGlyphField } from 'react-native-text-engine';
+import { commitGlyphFieldBuffersInRuntime, createGlyphFieldBuffersInRuntime } from 'react-native-text-engine/worklets';
+import { runOnUISync } from 'react-native-worklets';
 import {
   FIELD_STYLE,
   FIELD_VARIANTS,
+  FIELD_GLYPH_PALETTE,
   createTextFieldFrameBuffer,
   createTextFieldRuntimeInput,
   resolveTextFieldConfig,
@@ -18,17 +20,24 @@ import {
 } from './textFieldEngine';
 import { demoTheme } from '../theme/demoTheme';
 
+type WorkletContextValue<T> = {
+  __workletContextObject: true;
+  current: T;
+};
+
 export function TextFieldDemo({ isActive = true }: { isActive?: boolean }) {
   const { height, width } = useWindowDimensions();
   const config = useMemo(() => resolveTextFieldConfig(width, height), [height, width]);
   const runtimeInput = useMemo(() => createTextFieldRuntimeInput(config), [config]);
   const frameBuffer = useStableValue<TextFieldFrameBuffer>(() => createTextFieldFrameBuffer(config.rows * config.cols));
+
   const field = useMemo(
     () =>
       createGlyphField({
         columns: config.cols,
         fontFamily: FIELD_STYLE.fontFamily,
         fontSize: FIELD_STYLE.fontSize ?? 18,
+        glyphPalette: FIELD_GLYPH_PALETTE,
         letterSpacing: FIELD_STYLE.letterSpacing,
         lineHeight: FIELD_STYLE.lineHeight ?? 20,
         rows: config.rows,
@@ -39,6 +48,11 @@ export function TextFieldDemo({ isActive = true }: { isActive?: boolean }) {
   );
 
   const active = useSharedValue(isActive ? 1 : 0);
+  const bufferContext = useStableValue<WorkletContextValue<TextFieldFrameBuffer | undefined>>(() => ({
+    __workletContextObject: true,
+    current: undefined,
+  }));
+
   const fieldFrame = useSharedValue({
     height: config.artHeight,
     width: config.artWidth,
@@ -55,11 +69,21 @@ export function TextFieldDemo({ isActive = true }: { isActive?: boolean }) {
 
   const fieldHandle = field.handle;
 
-  useEffect(() => {
-    installTextEngineInUIRuntime();
-  }, []);
+  useEffect(
+    () => () => {
+      runOnUISync(
+        (currentBufferContext, currentActive) => {
+          currentActive.value = 0;
+          currentBufferContext.current = undefined;
+        },
+        bufferContext,
+        active
+      );
 
-  useEffect(() => () => field.release(), [field]);
+      field.release();
+    },
+    [active, bufferContext, field]
+  );
 
   useLayoutEffect(() => {
     active.value = isActive ? 1 : 0;
@@ -74,9 +98,25 @@ export function TextFieldDemo({ isActive = true }: { isActive?: boolean }) {
       y: 0,
     };
 
+    runOnUISync(
+      (currentBufferContext, handle, cellCount) => {
+        const buffers = createGlyphFieldBuffersInRuntime(handle);
+        const nextFrameBuffer = createTextFieldFrameBuffer(cellCount);
+        nextFrameBuffer.current = {
+          emitters: nextFrameBuffer.current.emitters,
+          glyphIndices: buffers.glyphIndices,
+          variantIndices: buffers.variantIndices,
+        };
+        currentBufferContext.current = nextFrameBuffer;
+      },
+      bufferContext,
+      fieldHandle,
+      runtimeInput.cellCount
+    );
+
     const frame = stepTextFieldRuntime(runtimeInput, frameBuffer, 0, { active: false, x: 0, y: 0 });
-    field.update(frame.glyphs, frame.variantIndices);
-  }, [config.artHeight, config.artWidth, field, fieldFrame, frameBuffer, phase, runtimeInput]);
+    field.update(frame.glyphIndices, frame.variantIndices);
+  }, [bufferContext, config.artHeight, config.artWidth, field, fieldFrame, fieldHandle, frameBuffer, phase, runtimeInput]);
 
   const updateFieldFrame = (event: LayoutChangeEvent) => {
     const info = event.nativeEvent.layout;
@@ -85,9 +125,12 @@ export function TextFieldDemo({ isActive = true }: { isActive?: boolean }) {
 
   useFrameCallback(frameInfo => {
     if (active.value === 0) return;
+    const currentFrameBuffer = bufferContext.current;
+    if (!currentFrameBuffer) return;
+
     phase.value += (frameInfo.timeSincePreviousFrame ?? 16.67) / 1000;
-    const frame = stepTextFieldRuntime(runtimeInput, frameBuffer, phase.value, pointer.value);
-    updateGlyphFieldInRuntime(fieldHandle, frame.glyphs, frame.variantIndices);
+    stepTextFieldRuntime(runtimeInput, currentFrameBuffer, phase.value, pointer.value);
+    commitGlyphFieldBuffersInRuntime(fieldHandle);
   });
 
   const dragGesture = useMemo(
@@ -95,27 +138,28 @@ export function TextFieldDemo({ isActive = true }: { isActive?: boolean }) {
       Gesture.Pan()
         .minDistance(0)
         .onBegin(event => {
-          const frame = fieldFrame.value;
-          pointer.value = {
-            active: true,
-            x: event.x - frame.x,
-            y: event.y - frame.y,
-          };
+          pointer.modify(prev => {
+            const frame = fieldFrame.value;
+            prev.active = true;
+            prev.x = event.x - frame.x;
+            prev.y = event.y - frame.y;
+            return prev;
+          });
         })
         .onChange(event => {
-          const frame = fieldFrame.value;
-          pointer.value = {
-            active: true,
-            x: event.x - frame.x,
-            y: event.y - frame.y,
-          };
+          pointer.modify(prev => {
+            const frame = fieldFrame.value;
+            prev.active = true;
+            prev.x = event.x - frame.x;
+            prev.y = event.y - frame.y;
+            return prev;
+          });
         })
         .onFinalize(() => {
-          pointer.value = {
-            active: false,
-            x: pointer.value.x,
-            y: pointer.value.y,
-          };
+          pointer.modify(prev => {
+            prev.active = false;
+            return prev;
+          });
         }),
     [fieldFrame, pointer]
   );
@@ -131,7 +175,7 @@ export function TextFieldDemo({ isActive = true }: { isActive?: boolean }) {
       </GestureDetector>
 
       <View pointerEvents="none" style={styles.footer}>
-        <Text style={styles.footerText}>{config.rows * config.cols} characters</Text>
+        <TextView style={styles.footerText}>{config.rows * config.cols} characters</TextView>
       </View>
     </SafeAreaView>
   );
@@ -149,12 +193,11 @@ const styles = StyleSheet.create({
     right: 0,
   },
   footerText: {
-    color: demoTheme.textSecondary,
+    color: 'grey',
     fontFamily: 'Menlo',
     fontSize: 11,
     fontWeight: '600',
     letterSpacing: 0.28,
-    lineHeight: 15,
     paddingBottom: 24,
     textAlign: 'center',
   },

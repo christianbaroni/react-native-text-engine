@@ -1,4 +1,4 @@
-import React, { forwardRef, type ComponentRef } from 'react';
+import { forwardRef, type ComponentRef } from 'react';
 import NativeGlyphFieldView, { type NativeProps as NativeGlyphFieldViewProps } from './specs/RNTextEngineGlyphFieldViewNativeComponent';
 
 /**

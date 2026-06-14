@@ -4,10 +4,11 @@ import type { GlyphFieldConfig, LayoutOptions, NextTextLine, TextLayout, TextLay
 
 declare global {
   var __RNTextEngineCreateGlyphField: ((config: GlyphFieldConfig) => number) | undefined;
-  var __RNTextEngineInstallRuntime: ((runtimeToken: ArrayBuffer) => boolean) | undefined;
   var __RNTextEngineLayout: ((handle: number, options: LayoutOptions) => TextLayout) | undefined;
   var __RNTextEngineLayoutBatch: ((handles: readonly number[], options: LayoutOptions) => TextLayout[]) | undefined;
-  var __RNTextEngineLayoutNextLine: ((handle: number, start: number, width: number) => NextTextLine | null) | undefined;
+  var __RNTextEngineLayoutNextLine:
+    | ((handle: number, start: number, width: number, anchorToCapHeight?: boolean) => NextTextLine | null)
+    | undefined;
   var __RNTextEngineLayoutLines: ((handle: number, options: LayoutOptions) => TextLayoutLines) | undefined;
   var __RNTextEngineMeasure:
     | ((text: string, style: TextMeasureStyle | undefined, options: LayoutOptions, runs?: readonly TextMeasureRun[]) => TextLayout)
@@ -35,14 +36,14 @@ declare global {
   var __RNTextEngineRelease: ((handle: number) => void) | undefined;
   var __RNTextEngineReleaseMany: ((handles: readonly number[]) => void) | undefined;
   var __RNTextEngineUpdateGlyphField: ((handle: number, glyphs: string, variantIndices: Uint8Array) => void) | undefined;
+  var __RNTextEngineUpdateGlyphFieldIndices: ((handle: number, glyphIndices: Uint8Array, variantIndices: Uint8Array) => void) | undefined;
 }
 
 type RNTextEngineRuntime = {
   readonly createGlyphField: (config: GlyphFieldConfig) => number;
-  readonly installRuntime: (runtimeToken: ArrayBuffer) => void;
   readonly layout: (handle: number, options: LayoutOptions) => TextLayout;
   readonly layoutBatch: (handles: readonly number[], options: LayoutOptions) => TextLayout[];
-  readonly layoutNextLine: (handle: number, start: number, width: number) => NextTextLine | null;
+  readonly layoutNextLine: (handle: number, start: number, width: number, anchorToCapHeight?: boolean) => NextTextLine | null;
   readonly layoutLines: (handle: number, options: LayoutOptions) => TextLayoutLines;
   readonly measure: (
     text: string,
@@ -67,6 +68,7 @@ type RNTextEngineRuntime = {
   readonly release: (handle: number) => void;
   readonly releaseMany: (handles: readonly number[]) => void;
   readonly updateGlyphField: (handle: number, glyphs: string, variantIndices: Uint8Array) => void;
+  readonly updateGlyphFieldIndices: (handle: number, glyphIndices: Uint8Array, variantIndices: Uint8Array) => void;
 };
 
 let cachedRuntime: RNTextEngineRuntime | null = null;
@@ -87,13 +89,13 @@ function resolveInstallModule(): { install: () => boolean } | null {
 
 function buildRuntime(): RNTextEngineRuntime {
   const createGlyphField = globalThis.__RNTextEngineCreateGlyphField;
-  const installRuntime = globalThis.__RNTextEngineInstallRuntime;
   const prepare = globalThis.__RNTextEnginePrepare;
   const prepareBatch = globalThis.__RNTextEnginePrepareBatch;
   const releaseGlyphField = globalThis.__RNTextEngineReleaseGlyphField;
   const release = globalThis.__RNTextEngineRelease;
   const releaseMany = globalThis.__RNTextEngineReleaseMany;
   const updateGlyphField = globalThis.__RNTextEngineUpdateGlyphField;
+  const updateGlyphFieldIndices = globalThis.__RNTextEngineUpdateGlyphFieldIndices;
   const measureWidth = globalThis.__RNTextEngineMeasureWidth;
   const measure = globalThis.__RNTextEngineMeasure;
   const measureBatch = globalThis.__RNTextEngineMeasureBatch;
@@ -104,13 +106,13 @@ function buildRuntime(): RNTextEngineRuntime {
 
   if (
     !createGlyphField ||
-    !installRuntime ||
     !prepare ||
     !prepareBatch ||
     !releaseGlyphField ||
     !release ||
     !releaseMany ||
     !updateGlyphField ||
+    !updateGlyphFieldIndices ||
     !measureWidth ||
     !measure ||
     !measureBatch ||
@@ -123,26 +125,21 @@ function buildRuntime(): RNTextEngineRuntime {
   }
 
   return {
-    createGlyphField: config => createGlyphField(config),
-    installRuntime: runtimeToken => {
-      const didInstall = installRuntime(runtimeToken);
-      if (!didInstall) {
-        throw new Error('RNTextEngine: Failed to install bindings into the requested runtime.');
-      }
-    },
-    layout: (handle, options) => layout(handle, options),
-    layoutBatch: (handles, options) => layoutBatch(handles, options),
-    layoutNextLine: (handle, start, width) => layoutNextLine(handle, start, width),
-    layoutLines: (handle, options) => layoutLines(handle, options),
-    measure: (text, style, options, runs) => measure(text, style, options, runs),
-    measureBatch: (texts, style, options, runsByText) => measureBatch(texts, style, options, runsByText),
-    measureWidth: (text, style, runs) => measureWidth(text, style, runs),
-    prepare: (text, style, runs) => prepare(text, style, runs),
-    prepareBatch: (texts, style, runsByText) => prepareBatch(texts, style, runsByText),
-    releaseGlyphField: handle => releaseGlyphField(handle),
-    release: handle => release(handle),
-    releaseMany: handles => releaseMany(handles),
-    updateGlyphField: (handle, glyphs, variantIndices) => updateGlyphField(handle, glyphs, variantIndices),
+    createGlyphField,
+    layout,
+    layoutBatch,
+    layoutNextLine,
+    layoutLines,
+    measure,
+    measureBatch,
+    measureWidth,
+    prepare,
+    prepareBatch,
+    releaseGlyphField,
+    release,
+    releaseMany,
+    updateGlyphField,
+    updateGlyphFieldIndices,
   };
 }
 

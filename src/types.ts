@@ -63,9 +63,32 @@ export type TextMeasureRun = Readonly<{
 }>;
 
 /**
+ * App-wide build-time text policy applied anywhere the caller leaves a
+ * corresponding text fact unspecified.
+ *
+ * These defaults intentionally cover stable typography policy, not volatile
+ * per-call geometry such as widths or offsets.
+ */
+export type TextEngineDefaults = TextMeasureStyle & {
+  /**
+   * Aligns text bands to the first visible line's cap top and the last visible
+   * line's baseline whenever the relevant API leaves that choice unspecified.
+   */
+  anchorToCapHeight?: boolean;
+};
+
+/**
  * Width-constrained layout request against a prepared text block.
  */
 export type LayoutOptions = {
+  /**
+   * Aligns the returned layout band to the first line's cap top and the last
+   * visible line's baseline.
+   *
+   * This trims only the outer top and bottom edges of the full text block.
+   * Inter-line spacing remains unchanged.
+   */
+  anchorToCapHeight?: boolean;
   ellipsizeMode?: 'clip' | 'head' | 'middle' | 'tail';
   maxLines?: number;
   width: number;
@@ -73,6 +96,9 @@ export type LayoutOptions = {
 
 /**
  * Aggregate layout metrics for one text block at one width.
+ *
+ * When `LayoutOptions.anchorToCapHeight` is enabled, `height` reports the band
+ * from the first visible line's cap top to the last visible line's baseline.
  */
 export type TextLayout = {
   height: number;
@@ -85,7 +111,11 @@ export type TextLayout = {
  * Visible line geometry reported by the native text engine.
  *
  * `start` and `end` are UTF-16 offsets into the original string, matching
- * React Native/native string indexing semantics.
+ * React Native/native string indexing semantics. `width` tracks the visible
+ * line extent, so trailing whitespace trimmed from `end` does not widen it.
+ * `bottom` is measured from the full block's top edge; when
+ * `LayoutOptions.anchorToCapHeight` is enabled, that top edge is the first
+ * visible line's cap top.
  */
 export type TextLine = {
   bottom: number;
@@ -99,6 +129,10 @@ export type TextLine = {
  * One width-constrained visible line beginning at a caller-provided text offset.
  *
  * `start` and `end` are absolute UTF-16 offsets into the original text.
+ * `width` tracks the visible line extent, so trailing whitespace trimmed from
+ * `end` does not widen it. `bottom` is measured from that line's top edge; when
+ * `NextLineOptions.anchorToCapHeight` is enabled, that top edge is the line's
+ * cap top.
  */
 export type NextTextLine = {
   bottom: number;
@@ -130,15 +164,17 @@ export type GlyphFieldVariant = {
  * Stable geometry and styling contract for a native glyph field.
  *
  * `columns` × `rows` defines the fixed cell count. Each cell is updated later
- * through `GlyphField.update()` with one UTF-16 code unit in `glyphs` and one
- * variant index in `variantIndices`.
+ * through `GlyphField.update()` with either one UTF-16 code unit in `glyphs`
+ * or one byte index into `glyphPalette`, plus one variant index in
+ * `variantIndices`.
  */
 export type GlyphFieldConfig = {
   columns: number;
   fontFamily?: string;
-  fontSize: number;
+  fontSize?: number;
+  glyphPalette?: string;
   letterSpacing?: number;
-  lineHeight: number;
+  lineHeight?: number;
   rows: number;
   textAlign?: 'center' | 'left' | 'right';
   variants: readonly GlyphFieldVariant[];

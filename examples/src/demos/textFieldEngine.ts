@@ -1,5 +1,5 @@
-import { Platform } from 'react-native';
 import { measureTextWidth, type TextMeasureStyle } from 'react-native-text-engine';
+import { IS_IOS } from '../constants';
 
 type FontStyleVariant = 'italic' | 'normal';
 
@@ -17,13 +17,19 @@ export type TextFieldPointer = {
 };
 
 export type TextFieldRuntimeInput = {
-  cols: number;
-  lookupChars: readonly string[];
+  cellAmbientBrightness: Float32Array;
+  cellCount: number;
+  cellDiagonalWaveCos: Float32Array;
+  cellDiagonalWaveSin: Float32Array;
+  cellVerticalWaveCos: Float32Array;
+  cellVerticalWaveSin: Float32Array;
+  cellHorizontalWaveCos: Float32Array;
+  cellHorizontalWaveSin: Float32Array;
+  cellXs: Float32Array;
+  cellYs: Float32Array;
+  lookupGlyphIndices: Uint8Array;
   lookupVariantIndices: Uint8Array;
   height: number;
-  rows: number;
-  sampleXs: Float32Array;
-  sampleYs: Float32Array;
   width: number;
 };
 
@@ -40,12 +46,13 @@ export type TextFieldVariant = {
 };
 
 export type TextFieldFrame = {
-  glyphs: string;
+  glyphIndices: Uint8Array;
   variantIndices: Uint8Array;
 };
 
 export type TextFieldFrameBuffer = WorkletContextValue<{
   emitters: Float32Array;
+  glyphIndices: Uint8Array;
   variantIndices: Uint8Array;
 }>;
 
@@ -58,11 +65,11 @@ type PaletteEntry = {
 };
 
 type LookupTable = {
-  chars: readonly string[];
+  glyphIndices: Uint8Array;
   variantIndices: Uint8Array;
 };
 
-const FONT_FAMILY = Platform.OS === 'ios' ? 'Georgia' : 'serif';
+const FONT_FAMILY = IS_IOS ? 'Georgia' : 'serif';
 const CHARSET = ' .,:;!+-=*#@%&abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
 const WEIGHTS = ['300', '500', '800'] as const;
 const STYLES = ['normal', 'italic'] as const;
@@ -78,6 +85,8 @@ export const FIELD_STYLE: TextMeasureStyle = {
   letterSpacing: 0.04,
   lineHeight: 20,
 };
+
+export const FIELD_GLYPH_PALETTE = CHARSET;
 
 export const FIELD_VARIANTS: readonly TextFieldVariant[] = ALPHAS.flatMap((alpha, alphaIndex) =>
   STYLES.flatMap(fontStyle =>
@@ -127,37 +136,75 @@ export function resolveTextFieldConfig(width: number, height: number): TextField
 }
 
 export function createTextFieldRuntimeInput(config: TextFieldConfig): TextFieldRuntimeInput {
+  const cellCount = config.rows * config.cols;
   const cellWidth = config.artWidth / config.cols;
   const cellHeight = config.artHeight / config.rows;
-  const sampleXs = new Float32Array(config.cols);
-  const sampleYs = new Float32Array(config.rows);
+  const centerX = config.artWidth * 0.5;
+  const centerY = config.artHeight * 0.5;
+
+  const cellXs = new Float32Array(cellCount);
+  const cellYs = new Float32Array(cellCount);
+  const cellAmbientBrightness = new Float32Array(cellCount);
+  const cellHorizontalWaveSin = new Float32Array(cellCount);
+  const cellHorizontalWaveCos = new Float32Array(cellCount);
+  const cellVerticalWaveSin = new Float32Array(cellCount);
+  const cellVerticalWaveCos = new Float32Array(cellCount);
+  const cellDiagonalWaveSin = new Float32Array(cellCount);
+  const cellDiagonalWaveCos = new Float32Array(cellCount);
+
   const lookup = createLookup(cellWidth);
 
-  for (let index = 0; index < config.cols; index += 1) {
-    sampleXs[index] = (index + 0.5) * cellWidth;
-  }
+  let cellIndex = 0;
+  for (let rowIndex = 0; rowIndex < config.rows; rowIndex += 1) {
+    const y = (rowIndex + 0.5) * cellHeight;
+    const normalizedY = (y - centerY) / config.artHeight;
+    const verticalWave = normalizedY * 14.5;
 
-  for (let index = 0; index < config.rows; index += 1) {
-    sampleYs[index] = (index + 0.5) * cellHeight;
+    for (let colIndex = 0; colIndex < config.cols; colIndex += 1) {
+      const x = (colIndex + 0.5) * cellWidth;
+      const normalizedX = (x - centerX) / config.artWidth;
+      const horizontalWave = normalizedX * 10.5;
+      const diagonalWave = (normalizedX + normalizedY) * 18.0;
+      const vignette = 1 - smoothstep(0.1, 0.68, Math.hypot(normalizedX * 1.02, normalizedY * 1.28));
+
+      cellXs[cellIndex] = x;
+      cellYs[cellIndex] = y;
+      cellAmbientBrightness[cellIndex] = vignette * 0.06;
+      cellHorizontalWaveSin[cellIndex] = Math.sin(horizontalWave);
+      cellHorizontalWaveCos[cellIndex] = Math.cos(horizontalWave);
+      cellVerticalWaveSin[cellIndex] = Math.sin(verticalWave);
+      cellVerticalWaveCos[cellIndex] = Math.cos(verticalWave);
+      cellDiagonalWaveSin[cellIndex] = Math.sin(diagonalWave);
+      cellDiagonalWaveCos[cellIndex] = Math.cos(diagonalWave);
+      cellIndex += 1;
+    }
   }
 
   return {
-    cols: config.cols,
+    cellAmbientBrightness,
+    cellCount,
+    cellDiagonalWaveCos,
+    cellDiagonalWaveSin,
+    cellHorizontalWaveCos,
+    cellHorizontalWaveSin,
+    cellVerticalWaveCos,
+    cellVerticalWaveSin,
+    cellXs,
+    cellYs,
     height: config.artHeight,
-    lookupChars: lookup.chars,
+    lookupGlyphIndices: lookup.glyphIndices,
     lookupVariantIndices: lookup.variantIndices,
-    rows: config.rows,
-    sampleXs,
-    sampleYs,
     width: config.artWidth,
   };
 }
 
 export function createTextFieldFrameBuffer(cellCount: number): TextFieldFrameBuffer {
+  'worklet';
   return {
     __workletContextObject: true,
     current: {
       emitters: new Float32Array(20),
+      glyphIndices: new Uint8Array(cellCount),
       variantIndices: new Uint8Array(cellCount),
     },
   };
@@ -201,13 +248,13 @@ function createPalette(): readonly PaletteEntry[] {
 
 function createLookup(targetCellWidth?: number): LookupTable {
   const cellWidth = targetCellWidth ?? 10;
-  const chars = new Array<string>(256);
+  const glyphIndices = new Uint8Array(256);
   const variantIndices = new Uint8Array(256);
 
   for (let byte = 0; byte < 256; byte += 1) {
     const brightness = byte / 255;
     if (brightness < 0.035) {
-      chars[byte] = ' ';
+      glyphIndices[byte] = 0;
       variantIndices[byte] = 0;
       continue;
     }
@@ -216,19 +263,19 @@ function createLookup(targetCellWidth?: number): LookupTable {
     const band = resolveAlphaBand(brightness);
     const weightIndex = resolveWeightVariantIndex(match.fontWeight);
     const styleIndex = STYLES.indexOf(match.fontStyle);
-    chars[byte] = match.char;
+    glyphIndices[byte] = CHARSET.indexOf(match.char);
     variantIndices[byte] = band * VARIANT_COUNT + styleIndex * WEIGHTS.length + weightIndex;
   }
 
-  return { chars, variantIndices };
+  return { glyphIndices, variantIndices };
 }
 
 function findBestGlyph(targetBrightness: number, targetCellWidth: number): PaletteEntry {
-  let best = palette[0]!;
+  let best = palette[0];
   let bestScore = Number.POSITIVE_INFINITY;
 
   for (let index = 0; index < palette.length; index += 1) {
-    const entry = palette[index]!;
+    const entry = palette[index];
     const brightnessError = Math.abs(entry.brightness - targetBrightness) * 2.35;
     const widthError = Math.abs(entry.width - targetCellWidth) / targetCellWidth;
     const score = brightnessError + widthError;
@@ -259,10 +306,10 @@ function resolveAlphaBand(brightness: number): number {
 
 function populateEmitters(width: number, height: number, phase: number, pointer: TextFieldPointer, emitters: Float32Array): number {
   'worklet';
-
   const minSize = Math.min(width, height);
   const centerX = width / 2;
   const centerY = height / 2;
+
   const setEmitter = (index: number, x: number, y: number, r: number, opacity: number) => {
     const offset = index * 4;
     emitters[offset] = x;
@@ -300,49 +347,17 @@ function populateEmitters(width: number, height: number, phase: number, pointer:
   return 5;
 }
 
-function sampleBrightness(
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-  emitters: Float32Array,
-  emitterCount: number,
-  phase: number
-): number {
-  'worklet';
-
-  const normalizedX = (x - width / 2) / width;
-  const normalizedY = (y - height / 2) / height;
-  const vignette = 1 - smoothstep(0.1, 0.68, Math.hypot(normalizedX * 1.02, normalizedY * 1.28));
-  let brightness = vignette * 0.06;
-
-  for (let index = 0; index < emitterCount; index += 1) {
-    const offset = index * 4;
-    const dx = x - emitters[offset];
-    const dy = y - emitters[offset + 1];
-    const distance2 = dx * dx + dy * dy;
-    const radius2 = emitters[offset + 2] * emitters[offset + 2];
-    brightness += Math.exp(-distance2 / radius2) * emitters[offset + 3];
-  }
-
-  const wave =
-    Math.sin(normalizedX * 10.5 + phase * 0.8) * 0.028 +
-    Math.sin(normalizedY * 14.5 - phase * 0.66) * 0.023 +
-    Math.sin((normalizedX + normalizedY) * 18.0 + phase * 1.1) * 0.018;
-
-  return clampNumber(brightness + wave, 0, 1);
-}
-
 function ensureFrameBuffer(frameBuffer: TextFieldFrameBuffer, cellCount: number): Uint8Array {
   'worklet';
 
-  const current = frameBuffer.current.variantIndices;
+  const current = frameBuffer.current.glyphIndices;
   if (current.length === cellCount) return current;
 
   const next = new Uint8Array(cellCount);
   frameBuffer.current = {
     emitters: frameBuffer.current.emitters,
-    variantIndices: next,
+    glyphIndices: next,
+    variantIndices: new Uint8Array(cellCount),
   };
   return next;
 }
@@ -357,22 +372,45 @@ export function stepTextFieldRuntime(
 
   const emitters = frameBuffer.current.emitters;
   const emitterCount = populateEmitters(input.width, input.height, phase, pointer, emitters);
-  const variantIndices = ensureFrameBuffer(frameBuffer, input.rows * input.cols);
-  let cellIndex = 0;
-  let glyphs = '';
+  const glyphIndices = ensureFrameBuffer(frameBuffer, input.cellCount);
+  const variantIndices = frameBuffer.current.variantIndices;
+  const horizontalPhaseSin = Math.sin(phase * 0.8);
+  const horizontalPhaseCos = Math.cos(phase * 0.8);
+  const verticalPhaseSin = Math.sin(-phase * 0.66);
+  const verticalPhaseCos = Math.cos(-phase * 0.66);
+  const diagonalPhaseSin = Math.sin(phase * 1.1);
+  const diagonalPhaseCos = Math.cos(phase * 1.1);
+  const horizontalWaveSinFactor = horizontalPhaseSin * 0.028;
+  const horizontalWaveCosFactor = horizontalPhaseCos * 0.028;
+  const verticalWaveSinFactor = verticalPhaseSin * 0.023;
+  const verticalWaveCosFactor = verticalPhaseCos * 0.023;
+  const diagonalWaveSinFactor = diagonalPhaseSin * 0.018;
+  const diagonalWaveCosFactor = diagonalPhaseCos * 0.018;
+  for (let cellIndex = 0; cellIndex < input.cellCount; cellIndex += 1) {
+    let brightness =
+      input.cellAmbientBrightness[cellIndex] +
+      input.cellHorizontalWaveSin[cellIndex] * horizontalWaveCosFactor +
+      input.cellHorizontalWaveCos[cellIndex] * horizontalWaveSinFactor +
+      input.cellVerticalWaveSin[cellIndex] * verticalWaveCosFactor +
+      input.cellVerticalWaveCos[cellIndex] * verticalWaveSinFactor +
+      input.cellDiagonalWaveSin[cellIndex] * diagonalWaveCosFactor +
+      input.cellDiagonalWaveCos[cellIndex] * diagonalWaveSinFactor;
 
-  for (let rowIndex = 0; rowIndex < input.rows; rowIndex += 1) {
-    const y = input.sampleYs[rowIndex] ?? 0;
-
-    for (let colIndex = 0; colIndex < input.cols; colIndex += 1) {
-      const x = input.sampleXs[colIndex] ?? 0;
-      const brightness = sampleBrightness(x, y, input.width, input.height, emitters, emitterCount, phase);
-      const lookupIndex = clampInt(brightness * 255, 0, 255);
-      glyphs += input.lookupChars[lookupIndex] ?? ' ';
-      variantIndices[cellIndex] = input.lookupVariantIndices[lookupIndex] ?? 0;
-      cellIndex += 1;
+    const x = input.cellXs[cellIndex];
+    const y = input.cellYs[cellIndex];
+    for (let emitterIndex = 0; emitterIndex < emitterCount; emitterIndex += 1) {
+      const offset = emitterIndex * 4;
+      const dx = x - emitters[offset];
+      const dy = y - emitters[offset + 1];
+      const distance2 = dx * dx + dy * dy;
+      const radius2 = emitters[offset + 2] * emitters[offset + 2];
+      brightness += Math.exp(-distance2 / radius2) * emitters[offset + 3];
     }
+
+    const lookupIndex = clampInt(brightness * 255, 0, 255);
+    glyphIndices[cellIndex] = input.lookupGlyphIndices[lookupIndex] ?? 0;
+    variantIndices[cellIndex] = input.lookupVariantIndices[lookupIndex] ?? 0;
   }
 
-  return { glyphs, variantIndices };
+  return { glyphIndices, variantIndices };
 }

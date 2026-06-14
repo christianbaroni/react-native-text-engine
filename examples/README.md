@@ -30,6 +30,22 @@ It prepares message text once, measures layout for the active width, and feeds t
 
 This is the package’s example of flowing text whose layout needs to be known before rows mount.
 
+### Type
+
+The Type demo is a typographic composition built from prepared-text geometry.
+
+It uses exact line layout to resolve a real wrapped drop cap and a shrinkwrapped pull quote before render, then displays the result with native text surfaces.
+
+This is the package’s example of prepared text owning editorial composition rather than just plain block measurement.
+
+### Fire
+
+The Fire demo is a proportional typographic field driven by a live brightness simulation.
+
+It writes one native glyph field every frame using precomputed glyph lookup tables, measured serif variants, and a touch-reactive particle current.
+
+This is the package’s example of a glyph field owning the whole effect from stable geometry through final composition.
+
 ## Run
 
 Use Node 22 or newer.
@@ -69,6 +85,8 @@ That last part is already handled in the example’s Metro config.
 The app has one shell with a floating switch between:
 
 - `Text Field`
+- `Fire`
+- `Type`
 - `AI Chat`
 
 The shell keeps the chat demo mounted after first entry so switching back and forth does not rebuild the whole chat surface each time.

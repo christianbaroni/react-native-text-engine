@@ -1,14 +1,21 @@
 #import "RNTextEngineBindings.h"
+#import "RNTextEngineAttributedTextDisplayView.h"
 #import "RNTextEngineColorUtils.h"
+#import "RNTextEngineTextLayoutMetrics.h"
+#import "RNTextEngineTextTransform.h"
 
+#import <CoreText/CoreText.h>
 #import <CoreText/SFNTLayoutTypes.h>
 #import <React/RCTConvert.h>
 #import <React/RCTFont.h>
 #import <React/RCTUtils.h>
 
+#import <atomic>
 #import <mutex>
+#import <memory>
 #import <optional>
 #import <cstring>
+#import <unordered_map>
 #import <vector>
 
 #if __has_include(<worklets/WorkletRuntime/WorkletRuntime.h>)
@@ -20,36 +27,58 @@
 #endif
 
 @interface RNTextEnginePreparedText : NSObject
+{
+@private
+  std::atomic<CTTypesetterRef> _typesetter;
+}
 @property (nonatomic, strong) NSAttributedString *attributedText;
 @property (nonatomic, strong) NSString *text;
 @property (nonatomic, assign) CGFloat fallbackLineHeight;
+@property (nonatomic, assign) CGFloat uniformCapHeight;
+- (CTTypesetterRef)loadTypesetter;
+- (void)storeTypesetter:(CTTypesetterRef)typesetter;
 @end
 
 @implementation RNTextEnginePreparedText
+
+- (instancetype)init
+{
+  if ((self = [super init])) {
+    _typesetter.store(nullptr, std::memory_order_relaxed);
+  }
+  return self;
+}
+
+- (void)dealloc
+{
+  CTTypesetterRef typesetter = _typesetter.load(std::memory_order_relaxed);
+  if (typesetter != nullptr) {
+    CFRelease(typesetter);
+  }
+}
+
+- (CTTypesetterRef)loadTypesetter
+{
+  return _typesetter.load(std::memory_order_acquire);
+}
+
+- (void)storeTypesetter:(CTTypesetterRef)typesetter
+{
+  _typesetter.store(typesetter, std::memory_order_release);
+}
+
 @end
 
 @interface RNTextEngineGlyphFieldVariant : NSObject
 @property (nonatomic, strong) NSDictionary<NSAttributedStringKey, id> *attributes;
 @property (nonatomic, strong) UIFont *font;
-@property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *widthCache;
 @end
 
 @implementation RNTextEngineGlyphFieldVariant
-
-- (instancetype)init
-{
-  if ((self = [super init])) {
-    _widthCache = [[NSMutableDictionary alloc] init];
-  }
-
-  return self;
-}
-
 @end
 
 @interface RNTextEngineGlyphFieldRun : NSObject
 @property (nonatomic, copy) NSString *text;
-@property (nonatomic, assign) CGFloat width;
 @property (nonatomic, assign) NSInteger variantIndex;
 @property (nonatomic, strong) RNTextEngineGlyphFieldVariant *variant;
 @end
@@ -58,15 +87,29 @@
 @end
 
 @interface RNTextEngineGlyphFieldRow : NSObject
+@property (nonatomic, assign) CGFloat baselineOffset;
+@property (nonatomic, assign) CTLineRef line;
 @property (nonatomic, copy) NSArray<RNTextEngineGlyphFieldRun *> *runs;
 @property (nonatomic, assign) CGFloat width;
 @end
 
 @implementation RNTextEngineGlyphFieldRow
+
+- (void)dealloc
+{
+  if (_line != nullptr) {
+    CFRelease(_line);
+  }
+}
+
 @end
 
 @interface RNTextEngineGlyphField : NSObject
 @property (nonatomic, assign) NSInteger columns;
+@property (nonatomic, copy) NSString *glyphPalette;
+@property (nonatomic, strong) NSData *lastGlyphIndexData;
+@property (nonatomic, copy) NSString *lastGlyphString;
+@property (nonatomic, strong) NSData *lastVariantIndexData;
 @property (nonatomic, assign) CGFloat lineHeight;
 @property (nonatomic, assign) NSInteger rows;
 @property (nonatomic, assign) NSTextAlignment textAlign;
@@ -80,6 +123,10 @@
 - (instancetype)init
 {
   if ((self = [super init])) {
+    _glyphPalette = @"";
+    _lastGlyphIndexData = nil;
+    _lastGlyphString = nil;
+    _lastVariantIndexData = nil;
     _rowsData = @[];
     _views = [NSHashTable weakObjectsHashTable];
   }
@@ -96,6 +143,30 @@ namespace rntextengine {
 namespace {
 
 using Handle = uint64_t;
+
+struct GlyphFieldMutableBuffer : public MutableBuffer {
+  explicit GlyphFieldMutableBuffer(size_t size) : bytes(size) {}
+
+  size_t size() const override {
+    return bytes.size();
+  }
+
+  uint8_t *data() override {
+    return bytes.data();
+  }
+
+  std::vector<uint8_t> bytes;
+};
+
+struct GlyphFieldBufferSet {
+  std::shared_ptr<GlyphFieldMutableBuffer> glyphIndices;
+  std::shared_ptr<GlyphFieldMutableBuffer> variantIndices;
+};
+
+struct Uint8ArrayView {
+  const uint8_t *data = nullptr;
+  size_t length = 0;
+};
 
 struct TextMeasureStyle {
   bool allowFontScaling = false;
@@ -118,6 +189,7 @@ struct TextMeasureStyle {
 
 struct ResolvedTextStyle {
   NSDictionary<NSAttributedStringKey, id> *attributes = nil;
+  CGFloat capHeight = 0;
   CGFloat fallbackLineHeight = 0;
 };
 
@@ -146,11 +218,87 @@ struct TextMeasureRun {
   TextMeasureRunStyle style;
 };
 
+struct TextLayoutMeasurement {
+  CGFloat height = 0;
+  CGFloat lastLineWidth = 0;
+  NSInteger lineCount = 0;
+  CGFloat width = 0;
+};
+
 struct LayoutOptions {
+  bool anchorToCapHeight = false;
   std::optional<std::string> ellipsizeMode;
   std::optional<int> maxLines;
   double width = 0;
 };
+
+struct PreparedLayoutCacheKey {
+  uint64_t widthBits = 0;
+  NSInteger maxLines = 0;
+  NSInteger lineBreakMode = NSLineBreakByWordWrapping;
+  bool anchorToCapHeight = false;
+};
+
+struct PreparedNextLineCacheKey {
+  NSInteger start = 0;
+  uint64_t widthBits = 0;
+  bool anchorToCapHeight = false;
+};
+
+struct PreparedNextLineMeasurement {
+  NSInteger end = 0;
+  CGFloat bottom = 0;
+  CGFloat width = 0;
+};
+
+inline bool operator==(const PreparedLayoutCacheKey& lhs, const PreparedLayoutCacheKey& rhs) {
+  return lhs.widthBits == rhs.widthBits &&
+      lhs.maxLines == rhs.maxLines &&
+      lhs.lineBreakMode == rhs.lineBreakMode &&
+      lhs.anchorToCapHeight == rhs.anchorToCapHeight;
+}
+
+inline bool operator==(const PreparedNextLineCacheKey& lhs, const PreparedNextLineCacheKey& rhs) {
+  return lhs.start == rhs.start &&
+      lhs.widthBits == rhs.widthBits &&
+      lhs.anchorToCapHeight == rhs.anchorToCapHeight;
+}
+
+template <typename T>
+inline void hashCombine(size_t& seed, const T& value) {
+  seed ^= std::hash<T> {}(value) + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2);
+}
+
+struct PreparedLayoutCacheKeyHash {
+  size_t operator()(const PreparedLayoutCacheKey& key) const {
+    size_t seed = 0;
+    hashCombine(seed, key.widthBits);
+    hashCombine(seed, key.maxLines);
+    hashCombine(seed, key.lineBreakMode);
+    hashCombine(seed, key.anchorToCapHeight);
+    return seed;
+  }
+};
+
+struct PreparedNextLineCacheKeyHash {
+  size_t operator()(const PreparedNextLineCacheKey& key) const {
+    size_t seed = 0;
+    hashCombine(seed, key.start);
+    hashCombine(seed, key.widthBits);
+    hashCombine(seed, key.anchorToCapHeight);
+    return seed;
+  }
+};
+
+struct PreparedQueryOwner {
+  std::mutex mutex;
+  std::unordered_map<PreparedLayoutCacheKey, TextLayoutMeasurement, PreparedLayoutCacheKeyHash> layoutsByKey;
+  std::unordered_map<PreparedNextLineCacheKey, PreparedNextLineMeasurement, PreparedNextLineCacheKeyHash> nextLinesByKey;
+};
+
+uint64_t resolveCGFloatBits(CGFloat value);
+PreparedLayoutCacheKey resolvePreparedLayoutCacheKey(const LayoutOptions& options);
+PreparedNextLineCacheKey resolvePreparedNextLineCacheKey(NSInteger start, CGFloat width, bool anchorToCapHeight);
 
 struct GlyphFieldVariantConfig {
   std::string color;
@@ -164,6 +312,7 @@ struct GlyphFieldConfig {
   NSInteger columns = 0;
   bool hasFontFamily = false;
   double fontSize = 14;
+  std::string glyphPalette;
   double letterSpacing = 0;
   double lineHeight = 0;
   NSInteger rows = 0;
@@ -174,10 +323,23 @@ struct GlyphFieldConfig {
 
 static std::mutex preparedMutex;
 static NSMutableDictionary<NSNumber *, RNTextEnginePreparedText *> *preparedTexts;
+static std::mutex preparedQueryMutex;
+static std::unordered_map<Handle, std::shared_ptr<PreparedQueryOwner>> preparedQueryOwners;
+static std::atomic<bool> preparedQueryOwnersActive = false;
 static Handle nextHandle = 1;
+
+static NSInteger RNTextEngineRunStyleHasFontFamily = 1 << 1;
+static NSInteger RNTextEngineRunStyleHasFontSize = 1 << 2;
+static NSInteger RNTextEngineRunStyleHasFontStyle = 1 << 3;
+static NSInteger RNTextEngineRunStyleHasFontWeight = 1 << 4;
+static NSInteger RNTextEngineRunStyleHasLetterSpacing = 1 << 5;
+static NSInteger RNTextEngineRunStyleHasLineHeight = 1 << 6;
+static NSInteger RNTextEngineRunStyleHasTabularNumbers = 1 << 7;
 static std::mutex glyphFieldMutex;
 static NSMutableDictionary<NSNumber *, RNTextEngineGlyphField *> *glyphFields;
 static Handle nextGlyphFieldHandle = 1;
+static std::mutex glyphFieldBufferMutex;
+static std::unordered_map<Handle, std::shared_ptr<GlyphFieldBufferSet>> glyphFieldBuffers;
 
 NSNumber *toKey(Handle handle) {
   return [NSNumber numberWithUnsignedLongLong:handle];
@@ -185,6 +347,10 @@ NSNumber *toKey(Handle handle) {
 
 NSString *toNSString(const std::string& value) {
   return [NSString stringWithUTF8String:value.c_str()] ?: @"";
+}
+
+std::string fromNSString(NSString *value) {
+  return value != nil ? std::string(value.UTF8String ?: "") : std::string{};
 }
 
 TextMeasureStyle parseStyle(Runtime& runtime, const Value* value, size_t index, size_t count) {
@@ -196,14 +362,12 @@ TextMeasureStyle parseStyle(Runtime& runtime, const Value* value, size_t index, 
   Object object = value[index].asObject(runtime);
 
   auto readBool = [&](const char* name, bool& target) {
-    if (!object.hasProperty(runtime, name)) return;
     Value field = object.getProperty(runtime, name);
     if (!field.isBool()) return;
     target = field.getBool();
   };
 
   auto readNumber = [&](const char* name, bool& hasValue, double& target) {
-    if (!object.hasProperty(runtime, name)) return;
     Value field = object.getProperty(runtime, name);
     if (!field.isNumber()) return;
     hasValue = true;
@@ -211,7 +375,6 @@ TextMeasureStyle parseStyle(Runtime& runtime, const Value* value, size_t index, 
   };
 
   auto readString = [&](const char* name, bool& hasValue, std::string& target) {
-    if (!object.hasProperty(runtime, name)) return;
     Value field = object.getProperty(runtime, name);
     if (!field.isString()) return;
     hasValue = true;
@@ -235,7 +398,6 @@ TextMeasureRunStyle parseRunStyle(Runtime& runtime, const Object& object) {
   TextMeasureRunStyle style;
 
   auto readBool = [&](const char* name, bool& hasValue, bool& target) {
-    if (!object.hasProperty(runtime, name)) return;
     Value field = object.getProperty(runtime, name);
     if (!field.isBool()) return;
     hasValue = true;
@@ -243,7 +405,6 @@ TextMeasureRunStyle parseRunStyle(Runtime& runtime, const Object& object) {
   };
 
   auto readNumber = [&](const char* name, bool& hasValue, double& target) {
-    if (!object.hasProperty(runtime, name)) return;
     Value field = object.getProperty(runtime, name);
     if (!field.isNumber()) return;
     hasValue = true;
@@ -251,7 +412,6 @@ TextMeasureRunStyle parseRunStyle(Runtime& runtime, const Object& object) {
   };
 
   auto readString = [&](const char* name, bool& hasValue, std::string& target) {
-    if (!object.hasProperty(runtime, name)) return;
     Value field = object.getProperty(runtime, name);
     if (!field.isString()) return;
     hasValue = true;
@@ -293,10 +453,6 @@ std::vector<TextMeasureRun> parseRuns(Runtime& runtime, const Value& value, NSIn
     }
 
     Object runObject = item.asObject(runtime);
-    if (!runObject.hasProperty(runtime, "start") || !runObject.hasProperty(runtime, "end")) {
-      throw JSError(runtime, "RNTextEngine: each text run must include start and end offsets.");
-    }
-
     Value startValue = runObject.getProperty(runtime, "start");
     Value endValue = runObject.getProperty(runtime, "end");
     if (!startValue.isNumber() || !endValue.isNumber()) {
@@ -310,10 +466,6 @@ std::vector<TextMeasureRun> parseRuns(Runtime& runtime, const Value& value, NSIn
     }
     if (start < previousEnd) {
       throw JSError(runtime, "RNTextEngine: text runs must be sorted and non-overlapping.");
-    }
-
-    if (!runObject.hasProperty(runtime, "style")) {
-      throw JSError(runtime, "RNTextEngine: each text run must include a style object.");
     }
 
     Value styleValue = runObject.getProperty(runtime, "style");
@@ -337,6 +489,105 @@ std::vector<TextMeasureRun> parseRuns(Runtime& runtime, const Value& value, NSIn
   return runs;
 }
 
+std::vector<TextMeasureRun> buildTextViewRuns(
+    NSInteger textLength,
+    NSArray<NSNumber *> *runStarts,
+    NSArray<NSNumber *> *runEnds,
+    NSArray<NSNumber *> *runStyleMasks,
+    NSArray<NSString *> *runFontFamilies,
+    NSArray<NSNumber *> *runFontSizes,
+    NSArray<NSString *> *runFontStyles,
+    NSArray<NSString *> *runFontWeights,
+    NSArray<NSNumber *> *runLetterSpacings,
+    NSArray<NSNumber *> *runLineHeights,
+    NSArray<NSNumber *> *runTabularNumbers) {
+  if (runStarts.count == 0 || runEnds.count == 0 || runStyleMasks.count == 0) return {};
+
+  NSInteger runCount = MIN(runStarts.count, MIN(runEnds.count, runStyleMasks.count));
+  std::vector<TextMeasureRun> runs;
+  runs.reserve(runCount);
+  NSInteger previousEnd = 0;
+
+  for (NSInteger index = 0; index < runCount; index += 1) {
+    NSNumber *startValue = [runStarts[index] isKindOfClass:[NSNumber class]] ? runStarts[index] : nil;
+    NSNumber *endValue = [runEnds[index] isKindOfClass:[NSNumber class]] ? runEnds[index] : nil;
+    NSNumber *styleMaskValue = [runStyleMasks[index] isKindOfClass:[NSNumber class]] ? runStyleMasks[index] : nil;
+    if (startValue == nil || endValue == nil || styleMaskValue == nil) continue;
+
+    NSInteger start = startValue.integerValue;
+    NSInteger end = endValue.integerValue;
+    NSInteger styleMask = styleMaskValue.integerValue;
+    if (styleMask == 0 || start < previousEnd || start < 0 || end > textLength || end <= start) continue;
+
+    TextMeasureRunStyle style;
+
+    if ((styleMask & RNTextEngineRunStyleHasFontFamily) != 0 && index < runFontFamilies.count) {
+      NSString *fontFamily = [runFontFamilies[index] isKindOfClass:[NSString class]] ? runFontFamilies[index] : nil;
+      if (fontFamily.length > 0) {
+        style.hasFontFamily = true;
+        style.fontFamily = fromNSString(fontFamily);
+      }
+    }
+
+    if ((styleMask & RNTextEngineRunStyleHasFontSize) != 0 && index < runFontSizes.count) {
+      NSNumber *fontSize = [runFontSizes[index] isKindOfClass:[NSNumber class]] ? runFontSizes[index] : nil;
+      if (fontSize != nil) {
+        style.hasFontSize = true;
+        style.fontSize = fontSize.doubleValue;
+      }
+    }
+
+    if ((styleMask & RNTextEngineRunStyleHasFontStyle) != 0 && index < runFontStyles.count) {
+      NSString *fontStyle = [runFontStyles[index] isKindOfClass:[NSString class]] ? runFontStyles[index] : nil;
+      if (fontStyle.length > 0) {
+        style.hasFontStyle = true;
+        style.fontStyle = fromNSString(fontStyle);
+      }
+    }
+
+    if ((styleMask & RNTextEngineRunStyleHasFontWeight) != 0 && index < runFontWeights.count) {
+      NSString *fontWeight = [runFontWeights[index] isKindOfClass:[NSString class]] ? runFontWeights[index] : nil;
+      if (fontWeight.length > 0) {
+        style.hasFontWeight = true;
+        style.fontWeight = fromNSString(fontWeight);
+      }
+    }
+
+    if ((styleMask & RNTextEngineRunStyleHasLetterSpacing) != 0 && index < runLetterSpacings.count) {
+      NSNumber *letterSpacing = [runLetterSpacings[index] isKindOfClass:[NSNumber class]] ? runLetterSpacings[index] : nil;
+      if (letterSpacing != nil) {
+        style.hasLetterSpacing = true;
+        style.letterSpacing = letterSpacing.doubleValue;
+      }
+    }
+
+    if ((styleMask & RNTextEngineRunStyleHasLineHeight) != 0 && index < runLineHeights.count) {
+      NSNumber *lineHeight = [runLineHeights[index] isKindOfClass:[NSNumber class]] ? runLineHeights[index] : nil;
+      if (lineHeight != nil) {
+        style.hasLineHeight = true;
+        style.lineHeight = lineHeight.doubleValue;
+      }
+    }
+
+    if ((styleMask & RNTextEngineRunStyleHasTabularNumbers) != 0 && index < runTabularNumbers.count) {
+      NSNumber *tabularNumbers = [runTabularNumbers[index] isKindOfClass:[NSNumber class]] ? runTabularNumbers[index] : nil;
+      if (tabularNumbers != nil) {
+        style.hasTabularNumbers = true;
+        style.tabularNumbers = tabularNumbers.boolValue;
+      }
+    }
+
+    TextMeasureRun run;
+    run.start = start;
+    run.end = end;
+    run.style = style;
+    runs.push_back(run);
+    previousEnd = end;
+  }
+
+  return runs;
+}
+
 LayoutOptions parseLayoutOptions(Runtime& runtime, const Value* value, size_t index, size_t count) {
   if (index >= count || !value[index].isObject()) {
     throw JSError(runtime, "RNTextEngine: layout options must be an object.");
@@ -344,26 +595,20 @@ LayoutOptions parseLayoutOptions(Runtime& runtime, const Value* value, size_t in
 
   LayoutOptions options;
   Object object = value[index].asObject(runtime);
-
-  if (!object.hasProperty(runtime, "width")) {
-    throw JSError(runtime, "RNTextEngine: layout options must include a width.");
-  }
-
   Value width = object.getProperty(runtime, "width");
   if (!width.isNumber()) {
     throw JSError(runtime, "RNTextEngine: layout width must be a number.");
   }
   options.width = width.asNumber();
 
-  if (object.hasProperty(runtime, "maxLines")) {
-    Value maxLines = object.getProperty(runtime, "maxLines");
-    if (maxLines.isNumber()) options.maxLines = static_cast<int>(maxLines.asNumber());
-  }
+  Value maxLines = object.getProperty(runtime, "maxLines");
+  if (maxLines.isNumber()) options.maxLines = static_cast<int>(maxLines.asNumber());
 
-  if (object.hasProperty(runtime, "ellipsizeMode")) {
-    Value mode = object.getProperty(runtime, "ellipsizeMode");
-    if (mode.isString()) options.ellipsizeMode = mode.asString(runtime).utf8(runtime);
-  }
+  Value mode = object.getProperty(runtime, "ellipsizeMode");
+  if (mode.isString()) options.ellipsizeMode = mode.asString(runtime).utf8(runtime);
+
+  Value anchorToCapHeight = object.getProperty(runtime, "anchorToCapHeight");
+  if (anchorToCapHeight.isBool()) options.anchorToCapHeight = anchorToCapHeight.getBool();
 
   return options;
 }
@@ -410,6 +655,18 @@ GlyphFieldConfig parseGlyphFieldConfig(Runtime& runtime, const Value& value) {
     }
     config.hasFontFamily = true;
     config.fontFamily = fontFamily.asString(runtime).utf8(runtime);
+  }
+
+  if (object.hasProperty(runtime, "glyphPalette")) {
+    Value glyphPalette = object.getProperty(runtime, "glyphPalette");
+    if (!glyphPalette.isString()) {
+      throw JSError(runtime, "RNTextEngine: glyph field glyphPalette must be a string.");
+    }
+    config.glyphPalette = glyphPalette.asString(runtime).utf8(runtime);
+    NSString *resolvedGlyphPalette = toNSString(config.glyphPalette);
+    if (resolvedGlyphPalette.length == 0 || resolvedGlyphPalette.length > 256) {
+      throw JSError(runtime, "RNTextEngine: glyph field glyphPalette must contain between 1 and 256 UTF-16 code units.");
+    }
   }
 
   if (object.hasProperty(runtime, "letterSpacing")) {
@@ -486,7 +743,7 @@ GlyphFieldConfig parseGlyphFieldConfig(Runtime& runtime, const Value& value) {
   return config;
 }
 
-std::vector<uint8_t> parseUint8Array(Runtime& runtime, const Value& value, size_t expectedLength) {
+Uint8ArrayView parseUint8Array(Runtime& runtime, const Value& value, size_t expectedLength) {
   if (!value.isObject()) {
     throw JSError(runtime, "RNTextEngine: glyph field variantIndices must be a Uint8Array.");
   }
@@ -520,11 +777,7 @@ std::vector<uint8_t> parseUint8Array(Runtime& runtime, const Value& value, size_
     throw JSError(runtime, "RNTextEngine: glyph field variantIndices length must match columns * rows.");
   }
 
-  std::vector<uint8_t> values(length);
-  if (length > 0) {
-    std::memcpy(values.data(), buffer.data(runtime) + byteOffset, length);
-  }
-  return values;
+  return {.data = buffer.data(runtime) + byteOffset, .length = length};
 }
 
 UIFont *applyTabularNumbers(UIFont *font) {
@@ -597,6 +850,7 @@ ResolvedTextStyle resolveTextStyle(const TextMeasureStyle& style) {
 
   ResolvedTextStyle resolvedStyle;
   resolvedStyle.attributes = [attributes copy];
+  resolvedStyle.capHeight = font.capHeight;
   resolvedStyle.fallbackLineHeight = lineHeight;
   return resolvedStyle;
 }
@@ -684,17 +938,6 @@ RNTextEngineGlyphFieldVariant *buildGlyphFieldVariant(const GlyphFieldConfig& co
 
 NSString *glyphStringForCharacter(unichar character);
 
-CGFloat measureGlyphWidth(RNTextEngineGlyphFieldVariant *variant, unichar character) {
-  NSNumber *cachedWidth = variant.widthCache[@(character)];
-  if (cachedWidth != nil) return cachedWidth.doubleValue;
-
-  NSString *glyph = glyphStringForCharacter(character);
-  NSAttributedString *attributedGlyph = [[NSAttributedString alloc] initWithString:glyph attributes:variant.attributes];
-  CGFloat width = measureAttributedWidth(attributedGlyph);
-  variant.widthCache[@(character)] = @(width);
-  return width;
-}
-
 NSString *glyphStringForCharacter(unichar character) {
   static NSMutableDictionary<NSNumber *, NSString *> *cache;
   static dispatch_once_t onceToken;
@@ -715,71 +958,264 @@ NSString *glyphStringForCharacter(unichar character) {
 RNTextEngineGlyphFieldRun *buildGlyphFieldRun(
     NSMutableString *text,
     RNTextEngineGlyphFieldVariant *variant,
-    NSInteger variantIndex,
-    CGFloat width) {
+    NSInteger variantIndex) {
   RNTextEngineGlyphFieldRun *run = [[RNTextEngineGlyphFieldRun alloc] init];
   run.text = [text copy];
   run.variant = variant;
   run.variantIndex = variantIndex;
-  run.width = width;
   return run;
+}
+
+bool glyphFieldRowMatchesIndices(
+    NSInteger row,
+    NSInteger columns,
+    const uint8_t *glyphIndices,
+    const uint8_t *variantIndices,
+    const uint8_t *previousGlyphIndices,
+    const uint8_t *previousVariantIndices) {
+  if (previousGlyphIndices == nullptr || previousVariantIndices == nullptr) return false;
+
+  size_t rowOffset = static_cast<size_t>(row * columns);
+  size_t rowSize = static_cast<size_t>(columns);
+  return std::memcmp(glyphIndices + rowOffset, previousGlyphIndices + rowOffset, rowSize) == 0 &&
+      std::memcmp(variantIndices + rowOffset, previousVariantIndices + rowOffset, rowSize) == 0;
+}
+
+bool glyphFieldRowMatchesString(
+    NSInteger row,
+    NSInteger columns,
+    NSString *glyphs,
+    const uint8_t *variantIndices,
+    NSString *previousGlyphs,
+    const uint8_t *previousVariantIndices) {
+  if (previousGlyphs == nil || previousVariantIndices == nullptr) return false;
+
+  NSUInteger rowStart = static_cast<NSUInteger>(row * columns);
+  for (NSInteger column = 0; column < columns; column += 1) {
+    NSUInteger cellIndex = rowStart + static_cast<NSUInteger>(column);
+    if ([glyphs characterAtIndex:cellIndex] != [previousGlyphs characterAtIndex:cellIndex]) {
+      return false;
+    }
+  }
+
+  size_t rowOffset = static_cast<size_t>(row * columns);
+  size_t rowSize = static_cast<size_t>(columns);
+  return std::memcmp(variantIndices + rowOffset, previousVariantIndices + rowOffset, rowSize) == 0;
+}
+
+RNTextEngineGlyphFieldRow *buildGlyphFieldRowFromIndices(
+    RNTextEngineGlyphField *field,
+    NSString *glyphPalette,
+    const uint8_t *glyphIndices,
+    const uint8_t *variantIndices,
+    NSInteger row) {
+  NSMutableArray<RNTextEngineGlyphFieldRun *> *runs = [NSMutableArray array];
+  NSMutableString *runText = [NSMutableString stringWithCapacity:field.columns];
+  RNTextEngineGlyphFieldVariant *runVariant = nil;
+  NSInteger runVariantIndex = -1;
+  NSUInteger rowStart = static_cast<NSUInteger>(row * field.columns);
+
+  auto flushRun = [&] {
+    if (runVariant == nil || runText.length == 0) return;
+    [runs addObject:buildGlyphFieldRun(runText, runVariant, runVariantIndex)];
+    runText = [NSMutableString stringWithCapacity:field.columns];
+    runVariant = nil;
+    runVariantIndex = -1;
+  };
+
+  for (NSInteger column = 0; column < field.columns; column += 1) {
+    NSUInteger cellIndex = rowStart + static_cast<NSUInteger>(column);
+    NSInteger glyphIndex = glyphIndices[cellIndex];
+    NSInteger variantIndex = variantIndices[cellIndex];
+    RNTextEngineGlyphFieldVariant *variant = field.variants[variantIndex];
+
+    if (runVariantIndex != variantIndex) {
+      flushRun();
+      runVariant = variant;
+      runVariantIndex = variantIndex;
+    }
+
+    [runText appendString:glyphStringForCharacter([glyphPalette characterAtIndex:glyphIndex])];
+  }
+
+  flushRun();
+
+  NSMutableAttributedString *attributedRow = [[NSMutableAttributedString alloc] init];
+  for (RNTextEngineGlyphFieldRun *run in runs) {
+    NSAttributedString *attributedRun =
+        [[NSAttributedString alloc] initWithString:run.text attributes:run.variant.attributes];
+    [attributedRow appendAttributedString:attributedRun];
+  }
+
+  CGFloat ascent = 0;
+  CGFloat descent = 0;
+  CGFloat leading = 0;
+  CTLineRef line = CTLineCreateWithAttributedString((CFAttributedStringRef)attributedRow);
+  CGFloat rowWidth = static_cast<CGFloat>(CTLineGetTypographicBounds(line, &ascent, &descent, &leading));
+  CGFloat typographicHeight = ascent + descent;
+
+  RNTextEngineGlyphFieldRow *rowData = [[RNTextEngineGlyphFieldRow alloc] init];
+  rowData.baselineOffset = MAX(0, (field.lineHeight - typographicHeight) * 0.5) + ascent;
+  rowData.line = line;
+  rowData.runs = runs;
+  rowData.width = rowWidth;
+  return rowData;
+}
+
+RNTextEngineGlyphFieldRow *buildGlyphFieldRowFromString(
+    RNTextEngineGlyphField *field,
+    NSString *glyphs,
+    const uint8_t *variantIndices,
+    NSInteger row) {
+  NSMutableArray<RNTextEngineGlyphFieldRun *> *runs = [NSMutableArray array];
+  NSMutableString *runText = [NSMutableString stringWithCapacity:field.columns];
+  RNTextEngineGlyphFieldVariant *runVariant = nil;
+  NSInteger runVariantIndex = -1;
+  NSUInteger rowStart = static_cast<NSUInteger>(row * field.columns);
+
+  auto flushRun = [&] {
+    if (runVariant == nil || runText.length == 0) return;
+    [runs addObject:buildGlyphFieldRun(runText, runVariant, runVariantIndex)];
+    runText = [NSMutableString stringWithCapacity:field.columns];
+    runVariant = nil;
+    runVariantIndex = -1;
+  };
+
+  for (NSInteger column = 0; column < field.columns; column += 1) {
+    NSUInteger cellIndex = rowStart + static_cast<NSUInteger>(column);
+    unichar glyphCharacter = [glyphs characterAtIndex:cellIndex];
+    NSInteger variantIndex = variantIndices[cellIndex];
+    RNTextEngineGlyphFieldVariant *variant = field.variants[variantIndex];
+
+    if (runVariantIndex != variantIndex) {
+      flushRun();
+      runVariant = variant;
+      runVariantIndex = variantIndex;
+    }
+
+    [runText appendString:glyphStringForCharacter(glyphCharacter)];
+  }
+
+  flushRun();
+
+  NSMutableAttributedString *attributedRow = [[NSMutableAttributedString alloc] init];
+  for (RNTextEngineGlyphFieldRun *run in runs) {
+    NSAttributedString *attributedRun =
+        [[NSAttributedString alloc] initWithString:run.text attributes:run.variant.attributes];
+    [attributedRow appendAttributedString:attributedRun];
+  }
+
+  CGFloat ascent = 0;
+  CGFloat descent = 0;
+  CGFloat leading = 0;
+  CTLineRef line = CTLineCreateWithAttributedString((CFAttributedStringRef)attributedRow);
+  CGFloat rowWidth = static_cast<CGFloat>(CTLineGetTypographicBounds(line, &ascent, &descent, &leading));
+  CGFloat typographicHeight = ascent + descent;
+
+  RNTextEngineGlyphFieldRow *rowData = [[RNTextEngineGlyphFieldRow alloc] init];
+  rowData.baselineOffset = MAX(0, (field.lineHeight - typographicHeight) * 0.5) + ascent;
+  rowData.line = line;
+  rowData.runs = runs;
+  rowData.width = rowWidth;
+  return rowData;
 }
 
 NSArray<RNTextEngineGlyphFieldRow *> *buildGlyphFieldRows(
     RNTextEngineGlyphField *field,
     NSString *glyphs,
-    const std::vector<uint8_t>& variantIndices) {
+    const uint8_t *variantIndices,
+    NSArray<RNTextEngineGlyphFieldRow *> *previousRows,
+    NSString *previousGlyphs,
+    const uint8_t *previousVariantIndices) {
   NSMutableArray<RNTextEngineGlyphFieldRow *> *rows = [NSMutableArray arrayWithCapacity:field.rows];
 
   for (NSInteger row = 0; row < field.rows; row += 1) {
-    NSMutableArray<RNTextEngineGlyphFieldRun *> *runs = [NSMutableArray array];
-    NSMutableString *runText = [NSMutableString stringWithCapacity:field.columns];
-    RNTextEngineGlyphFieldVariant *runVariant = nil;
-    NSInteger runVariantIndex = -1;
-    CGFloat runWidth = 0;
-    CGFloat rowWidth = 0;
-    NSUInteger rowStart = static_cast<NSUInteger>(row * field.columns);
+    bool shouldReusePreviousRow =
+        row < static_cast<NSInteger>(previousRows.count) &&
+        glyphFieldRowMatchesString(
+            row,
+            field.columns,
+            glyphs,
+            variantIndices,
+            previousGlyphs,
+            previousVariantIndices);
 
-    auto flushRun = [&] {
-      if (runVariant == nil || runText.length == 0) return;
-      [runs addObject:buildGlyphFieldRun(runText, runVariant, runVariantIndex, runWidth)];
-      rowWidth += runWidth;
-      runText = [NSMutableString stringWithCapacity:field.columns];
-      runVariant = nil;
-      runVariantIndex = -1;
-      runWidth = 0;
-    };
-
-    for (NSInteger column = 0; column < field.columns; column += 1) {
-      NSUInteger cellIndex = rowStart + static_cast<NSUInteger>(column);
-      unichar glyphCharacter = [glyphs characterAtIndex:cellIndex];
-      NSInteger variantIndex = variantIndices[cellIndex];
-      RNTextEngineGlyphFieldVariant *variant = field.variants[variantIndex];
-
-      if (runVariantIndex != variantIndex) {
-        flushRun();
-        runVariant = variant;
-        runVariantIndex = variantIndex;
-      }
-
-      [runText appendString:glyphStringForCharacter(glyphCharacter)];
-      runWidth += measureGlyphWidth(variant, glyphCharacter);
+    if (shouldReusePreviousRow) {
+      [rows addObject:previousRows[row]];
+      continue;
     }
 
-    flushRun();
-
-    RNTextEngineGlyphFieldRow *rowData = [[RNTextEngineGlyphFieldRow alloc] init];
-    rowData.runs = runs;
-    rowData.width = rowWidth;
-    [rows addObject:rowData];
+    [rows addObject:buildGlyphFieldRowFromString(field, glyphs, variantIndices, row)];
   }
 
   return rows;
 }
 
+NSArray<RNTextEngineGlyphFieldRow *> *buildGlyphFieldRows(
+    RNTextEngineGlyphField *field,
+    NSString *glyphs,
+    const Uint8ArrayView& variantIndices) {
+  const uint8_t *previousVariantIndices = static_cast<const uint8_t *>(field.lastVariantIndexData.bytes);
+  return buildGlyphFieldRows(
+      field,
+      glyphs,
+      variantIndices.data,
+      field.rowsData,
+      field.lastGlyphString,
+      previousVariantIndices);
+}
+
+NSArray<RNTextEngineGlyphFieldRow *> *buildGlyphFieldRowsFromIndices(
+    RNTextEngineGlyphField *field,
+    const uint8_t *glyphIndices,
+    const uint8_t *variantIndices,
+    NSArray<RNTextEngineGlyphFieldRow *> *previousRows,
+    const uint8_t *previousGlyphIndices,
+    const uint8_t *previousVariantIndices) {
+  NSMutableArray<RNTextEngineGlyphFieldRow *> *rows = [NSMutableArray arrayWithCapacity:field.rows];
+  NSString *glyphPalette = field.glyphPalette;
+
+  for (NSInteger row = 0; row < field.rows; row += 1) {
+    bool shouldReusePreviousRow =
+        row < static_cast<NSInteger>(previousRows.count) &&
+        glyphFieldRowMatchesIndices(
+            row,
+            field.columns,
+            glyphIndices,
+            variantIndices,
+            previousGlyphIndices,
+            previousVariantIndices);
+
+    if (shouldReusePreviousRow) {
+      [rows addObject:previousRows[row]];
+      continue;
+    }
+
+    [rows addObject:buildGlyphFieldRowFromIndices(field, glyphPalette, glyphIndices, variantIndices, row)];
+  }
+
+  return rows;
+}
+
+NSArray<RNTextEngineGlyphFieldRow *> *buildGlyphFieldRowsFromIndices(
+    RNTextEngineGlyphField *field,
+    const Uint8ArrayView& glyphIndices,
+    const Uint8ArrayView& variantIndices) {
+  const uint8_t *previousGlyphIndices = static_cast<const uint8_t *>(field.lastGlyphIndexData.bytes);
+  const uint8_t *previousVariantIndices = static_cast<const uint8_t *>(field.lastVariantIndexData.bytes);
+  return buildGlyphFieldRowsFromIndices(
+      field,
+      glyphIndices.data,
+      variantIndices.data,
+      field.rowsData,
+      previousGlyphIndices,
+      previousVariantIndices);
+}
+
 Handle storeGlyphField(const GlyphFieldConfig& config) {
   RNTextEngineGlyphField *field = [[RNTextEngineGlyphField alloc] init];
   field.columns = config.columns;
+  field.glyphPalette = toNSString(config.glyphPalette);
   field.rows = config.rows;
   field.lineHeight = config.lineHeight;
   field.textAlign = resolveGlyphFieldTextAlignment(config.textAlign);
@@ -809,6 +1245,29 @@ RNTextEngineGlyphField *getGlyphField(Runtime& runtime, Handle handle) {
 RNTextEngineGlyphField *getGlyphFieldIfPresent(Handle handle) {
   std::lock_guard<std::mutex> lock(glyphFieldMutex);
   return glyphFields[toKey(handle)];
+}
+
+std::shared_ptr<GlyphFieldBufferSet> getOrCreateGlyphFieldBuffers(Handle handle, size_t cellCount) {
+  std::lock_guard<std::mutex> lock(glyphFieldBufferMutex);
+  auto iterator = glyphFieldBuffers.find(handle);
+  if (iterator != glyphFieldBuffers.end()) {
+    return iterator->second;
+  }
+
+  auto buffers = std::make_shared<GlyphFieldBufferSet>();
+  buffers->glyphIndices = std::make_shared<GlyphFieldMutableBuffer>(cellCount);
+  buffers->variantIndices = std::make_shared<GlyphFieldMutableBuffer>(cellCount);
+  glyphFieldBuffers.emplace(handle, buffers);
+  return buffers;
+}
+
+std::shared_ptr<GlyphFieldBufferSet> getGlyphFieldBuffers(Runtime& runtime, Handle handle) {
+  std::lock_guard<std::mutex> lock(glyphFieldBufferMutex);
+  auto iterator = glyphFieldBuffers.find(handle);
+  if (iterator == glyphFieldBuffers.end()) {
+    throw JSError(runtime, "RNTextEngine: attempted to use glyph field buffers before creating them.");
+  }
+  return iterator->second;
 }
 
 bool glyphFieldRunEquals(RNTextEngineGlyphFieldRun *left, RNTextEngineGlyphFieldRun *right) {
@@ -864,10 +1323,13 @@ void invalidateGlyphFieldViews(RNTextEngineGlyphField *field, const std::vector<
 
   NSArray<UIView *> *views = field.views.allObjects;
   if (views.count == 0) return;
+  std::vector<NSRange> dirtyRangesCopy = dirtyRanges;
+  NSInteger rowCount = field.rows;
+  CGFloat lineHeight = field.lineHeight;
 
   dispatch_block_t invalidate = ^{
     bool shouldRedrawWholeView =
-        dirtyRanges.size() == 1 && dirtyRanges.front().location == 0 && dirtyRanges.front().length >= field.rows;
+        dirtyRangesCopy.size() == 1 && dirtyRangesCopy.front().location == 0 && dirtyRangesCopy.front().length >= rowCount;
 
     for (UIView *view in views) {
       if (shouldRedrawWholeView || CGRectIsEmpty(view.bounds)) {
@@ -875,10 +1337,10 @@ void invalidateGlyphFieldViews(RNTextEngineGlyphField *field, const std::vector<
         continue;
       }
 
-      CGFloat topInset = MAX(0, (CGRectGetHeight(view.bounds) - field.rows * field.lineHeight) * 0.5);
-      for (const NSRange& range : dirtyRanges) {
-        CGFloat y = topInset + range.location * field.lineHeight;
-        CGFloat height = range.length * field.lineHeight;
+      CGFloat topInset = MAX(0, (CGRectGetHeight(view.bounds) - rowCount * lineHeight) * 0.5);
+      for (const NSRange& range : dirtyRangesCopy) {
+        CGFloat y = topInset + range.location * lineHeight;
+        CGFloat height = range.length * lineHeight;
         CGRect dirtyRect = CGRectIntegral(CGRectMake(0, y, CGRectGetWidth(view.bounds), height));
         [view setNeedsDisplayInRect:dirtyRect];
       }
@@ -892,37 +1354,165 @@ void invalidateGlyphFieldViews(RNTextEngineGlyphField *field, const std::vector<
   }
 }
 
+void storeGlyphFieldStringSnapshot(
+    RNTextEngineGlyphField *field,
+    NSString *glyphs,
+    const uint8_t *variantIndices,
+    size_t cellCount) {
+  field.rowsData = @[];
+  field.lastGlyphString = glyphs;
+  field.lastGlyphIndexData = nil;
+  field.lastVariantIndexData = [NSData dataWithBytes:variantIndices length:cellCount];
+}
+
+void storeGlyphFieldIndexSnapshot(
+    RNTextEngineGlyphField *field,
+    const uint8_t *glyphIndices,
+    const uint8_t *variantIndices,
+    size_t cellCount) {
+  field.rowsData = @[];
+  field.lastGlyphString = nil;
+  field.lastGlyphIndexData = [NSData dataWithBytes:glyphIndices length:cellCount];
+  field.lastVariantIndexData = [NSData dataWithBytes:variantIndices length:cellCount];
+}
+
 Handle createGlyphField(const GlyphFieldConfig& config) {
   return storeGlyphField(config);
 }
 
-void updateGlyphField(Runtime& runtime, Handle handle, const std::string& glyphsValue, const std::vector<uint8_t>& variantIndices) {
+void updateGlyphField(Runtime& runtime, Handle handle, const std::string& glyphsValue, const Uint8ArrayView& variantIndices) {
   RNTextEngineGlyphField *field = getGlyphField(runtime, handle);
   size_t cellCount = static_cast<size_t>(field.columns * field.rows);
   NSString *glyphs = toNSString(glyphsValue);
   if (glyphs.length != static_cast<NSInteger>(cellCount)) {
     throw JSError(runtime, "RNTextEngine: glyph field glyphs length must match columns * rows.");
   }
-  if (variantIndices.size() != cellCount) {
+  if (variantIndices.length != cellCount) {
     throw JSError(runtime, "RNTextEngine: glyph field variantIndices length must match columns * rows.");
   }
 
-  for (uint8_t variantIndex : variantIndices) {
-    if (variantIndex >= field.variants.count) {
+  for (size_t index = 0; index < cellCount; index += 1) {
+    if (variantIndices.data[index] >= field.variants.count) {
       throw JSError(runtime, "RNTextEngine: glyph field variant index exceeded the configured variant count.");
     }
+  }
+
+  if (field.views.count == 0) {
+    storeGlyphFieldStringSnapshot(field, glyphs, variantIndices.data, cellCount);
+    return;
   }
 
   NSArray<RNTextEngineGlyphFieldRow *> *nextRows = buildGlyphFieldRows(field, glyphs, variantIndices);
   NSArray<RNTextEngineGlyphFieldRow *> *previousRows = field.rowsData;
   std::vector<NSRange> dirtyRanges = buildGlyphFieldDirtyRanges(previousRows, nextRows, field.rows);
   field.rowsData = nextRows;
+  field.lastGlyphString = glyphs;
+  field.lastGlyphIndexData = nil;
+  field.lastVariantIndexData = [NSData dataWithBytes:variantIndices.data length:cellCount];
+  invalidateGlyphFieldViews(field, dirtyRanges);
+}
+
+void updateGlyphFieldIndices(
+    Runtime& runtime,
+    Handle handle,
+    const Uint8ArrayView& glyphIndices,
+    const Uint8ArrayView& variantIndices) {
+  RNTextEngineGlyphField *field = getGlyphField(runtime, handle);
+  size_t cellCount = static_cast<size_t>(field.columns * field.rows);
+  if (field.glyphPalette.length == 0) {
+    throw JSError(runtime, "RNTextEngine: updateGlyphFieldIndices() requires glyphPalette on the glyph field config.");
+  }
+  if (glyphIndices.length != cellCount) {
+    throw JSError(runtime, "RNTextEngine: glyph field glyphIndices length must match columns * rows.");
+  }
+  if (variantIndices.length != cellCount) {
+    throw JSError(runtime, "RNTextEngine: glyph field variantIndices length must match columns * rows.");
+  }
+
+  for (size_t index = 0; index < cellCount; index += 1) {
+    if (glyphIndices.data[index] >= field.glyphPalette.length) {
+      throw JSError(runtime, "RNTextEngine: glyph field glyph index exceeded the configured glyphPalette length.");
+    }
+    if (variantIndices.data[index] >= field.variants.count) {
+      throw JSError(runtime, "RNTextEngine: glyph field variant index exceeded the configured variant count.");
+    }
+  }
+
+  if (field.views.count == 0) {
+    storeGlyphFieldIndexSnapshot(field, glyphIndices.data, variantIndices.data, cellCount);
+    return;
+  }
+
+  const uint8_t *previousGlyphIndices = static_cast<const uint8_t *>(field.lastGlyphIndexData.bytes);
+  const uint8_t *previousVariantIndices = static_cast<const uint8_t *>(field.lastVariantIndexData.bytes);
+  NSArray<RNTextEngineGlyphFieldRow *> *nextRows = buildGlyphFieldRowsFromIndices(
+      field,
+      glyphIndices.data,
+      variantIndices.data,
+      field.rowsData,
+      previousGlyphIndices,
+      previousVariantIndices);
+  NSArray<RNTextEngineGlyphFieldRow *> *previousRows = field.rowsData;
+  std::vector<NSRange> dirtyRanges = buildGlyphFieldDirtyRanges(previousRows, nextRows, field.rows);
+  field.rowsData = nextRows;
+  field.lastGlyphString = nil;
+  field.lastGlyphIndexData = [NSData dataWithBytes:glyphIndices.data length:cellCount];
+  field.lastVariantIndexData = [NSData dataWithBytes:variantIndices.data length:cellCount];
+  invalidateGlyphFieldViews(field, dirtyRanges);
+}
+
+void commitGlyphFieldBuffers(Runtime& runtime, Handle handle) {
+  RNTextEngineGlyphField *field = getGlyphField(runtime, handle);
+  size_t cellCount = static_cast<size_t>(field.columns * field.rows);
+  if (field.glyphPalette.length == 0) {
+    throw JSError(runtime, "RNTextEngine: commitGlyphFieldBuffers() requires glyphPalette on the glyph field config.");
+  }
+
+  std::shared_ptr<GlyphFieldBufferSet> buffers = getGlyphFieldBuffers(runtime, handle);
+  const uint8_t *glyphIndices = buffers->glyphIndices->data();
+  const uint8_t *variantIndices = buffers->variantIndices->data();
+
+  for (size_t index = 0; index < cellCount; index += 1) {
+    if (glyphIndices[index] >= field.glyphPalette.length) {
+      throw JSError(runtime, "RNTextEngine: glyph field glyph index exceeded the configured glyphPalette length.");
+    }
+    if (variantIndices[index] >= field.variants.count) {
+      throw JSError(runtime, "RNTextEngine: glyph field variant index exceeded the configured variant count.");
+    }
+  }
+
+  if (field.views.count == 0) {
+    storeGlyphFieldIndexSnapshot(field, glyphIndices, variantIndices, cellCount);
+    return;
+  }
+
+  const uint8_t *previousGlyphIndices = static_cast<const uint8_t *>(field.lastGlyphIndexData.bytes);
+  const uint8_t *previousVariantIndices = static_cast<const uint8_t *>(field.lastVariantIndexData.bytes);
+  NSArray<RNTextEngineGlyphFieldRow *> *nextRows = buildGlyphFieldRowsFromIndices(
+      field,
+      glyphIndices,
+      variantIndices,
+      field.rowsData,
+      previousGlyphIndices,
+      previousVariantIndices);
+  NSArray<RNTextEngineGlyphFieldRow *> *previousRows = field.rowsData;
+  std::vector<NSRange> dirtyRanges = buildGlyphFieldDirtyRanges(previousRows, nextRows, field.rows);
+  field.rowsData = nextRows;
+  field.lastGlyphString = nil;
+  field.lastGlyphIndexData = [NSData dataWithBytes:glyphIndices length:cellCount];
+  field.lastVariantIndexData = [NSData dataWithBytes:variantIndices length:cellCount];
   invalidateGlyphFieldViews(field, dirtyRanges);
 }
 
 void releaseGlyphFieldHandle(Handle handle) {
-  std::lock_guard<std::mutex> lock(glyphFieldMutex);
-  [glyphFields removeObjectForKey:toKey(handle)];
+  {
+    std::lock_guard<std::mutex> lock(glyphFieldMutex);
+    [glyphFields removeObjectForKey:toKey(handle)];
+  }
+  {
+    std::lock_guard<std::mutex> lock(glyphFieldBufferMutex);
+    glyphFieldBuffers.erase(handle);
+  }
 }
 
 CGFloat glyphFieldRowOriginX(RNTextEngineGlyphField *field, CGRect bounds, CGFloat rowWidth) {
@@ -931,81 +1521,260 @@ CGFloat glyphFieldRowOriginX(RNTextEngineGlyphField *field, CGRect bounds, CGFlo
   return 0;
 }
 
-NSString *trimTrailingWhitespace(NSString *text) {
+NSArray<RNTextEngineGlyphFieldRow *> *resolveGlyphFieldRows(RNTextEngineGlyphField *field) {
+  if (field.rowsData.count > 0) return field.rowsData;
+
+  @synchronized(field) {
+    if (field.rowsData.count > 0) return field.rowsData;
+
+    size_t cellCount = static_cast<size_t>(field.columns * field.rows);
+    NSData *variantData = field.lastVariantIndexData;
+    if (variantData.length != cellCount) return field.rowsData;
+
+    const uint8_t *variantIndices = static_cast<const uint8_t *>(variantData.bytes);
+    if (field.lastGlyphString != nil) {
+      field.rowsData = buildGlyphFieldRows(field, field.lastGlyphString, variantIndices, @[], nil, nullptr);
+      return field.rowsData;
+    }
+
+    NSData *glyphData = field.lastGlyphIndexData;
+    if (glyphData.length != cellCount || field.glyphPalette.length == 0) return field.rowsData;
+
+    field.rowsData = buildGlyphFieldRowsFromIndices(
+        field,
+        static_cast<const uint8_t *>(glyphData.bytes),
+        variantIndices,
+        @[],
+        nullptr,
+        nullptr);
+    return field.rowsData;
+  }
+}
+
+NSInteger resolveVisibleEnd(NSString *text, NSRange range) {
   NSCharacterSet *whitespace = [NSCharacterSet whitespaceAndNewlineCharacterSet];
-  NSInteger end = text.length;
-  while (end > 0 && [whitespace characterIsMember:[text characterAtIndex:end - 1]]) {
+  NSInteger end = NSMaxRange(range);
+  while (end > range.location && [whitespace characterIsMember:[text characterAtIndex:end - 1]]) {
     end -= 1;
   }
-  return end == text.length ? text : [text substringToIndex:end];
+  return end;
 }
 
-Runtime *extractRuntimeFromToken(Runtime& runtime, const Value& value) {
-  if (!value.isObject()) {
-    throw JSError(runtime, "RNTextEngine: runtime token must be an ArrayBuffer.");
-  }
+CGFloat resolveAttributedLineHeight(NSAttributedString *attributedText, NSRange range, CGFloat fallbackLineHeight) {
+  if (range.length == 0) return fallbackLineHeight;
 
-  Object object = value.asObject(runtime);
-  if (!object.isArrayBuffer(runtime)) {
-    throw JSError(runtime, "RNTextEngine: runtime token must be an ArrayBuffer.");
-  }
+  __block CGFloat lineHeight = 0;
+  [attributedText enumerateAttributesInRange:range
+                                     options:0
+                                  usingBlock:^(NSDictionary<NSAttributedStringKey, id> *attributes, NSRange, BOOL *) {
+    CGFloat candidate = 0;
 
-  ArrayBuffer buffer = object.getArrayBuffer(runtime);
-  if (buffer.size(runtime) < sizeof(uintptr_t)) {
-    throw JSError(runtime, "RNTextEngine: runtime token had an invalid size.");
-  }
+    NSParagraphStyle *paragraphStyle = attributes[NSParagraphStyleAttributeName];
+    if ([paragraphStyle isKindOfClass:[NSParagraphStyle class]]) {
+      candidate = MAX(paragraphStyle.maximumLineHeight, paragraphStyle.minimumLineHeight);
+    }
 
-  uintptr_t pointer = 0;
-  std::memcpy(&pointer, buffer.data(runtime), sizeof(uintptr_t));
-  return reinterpret_cast<Runtime *>(pointer);
+    if (candidate <= 0) {
+      UIFont *font = attributes[NSFontAttributeName];
+      if ([font isKindOfClass:[UIFont class]]) {
+        candidate = font.lineHeight;
+      }
+    }
+
+    lineHeight = MAX(lineHeight, candidate);
+  }];
+
+  return lineHeight > 0 ? lineHeight : fallbackLineHeight;
 }
 
-Value buildNextLineValue(Runtime& runtime, RNTextEnginePreparedText *prepared, NSInteger start, double width) {
+CGFloat resolveVisibleLineWidth(
+    NSLayoutManager *layoutManager,
+    NSRange glyphRange,
+    NSRange charRange,
+    NSInteger visibleEnd,
+    CGRect usedRect) {
+  if (visibleEnd >= NSMaxRange(charRange)) {
+    return CGRectGetWidth(usedRect);
+  }
+  if (visibleEnd <= charRange.location) {
+    return 0;
+  }
+
+  NSRange visibleGlyphRange = [layoutManager glyphRangeForCharacterRange:NSMakeRange(charRange.location, visibleEnd - charRange.location)
+                                                   actualCharacterRange:nil];
+  NSUInteger trailingGlyphIndex = NSMaxRange(visibleGlyphRange);
+  if (trailingGlyphIndex <= glyphRange.location || trailingGlyphIndex > NSMaxRange(glyphRange)) {
+    return 0;
+  }
+  if (trailingGlyphIndex == NSMaxRange(glyphRange)) {
+    return CGRectGetWidth(usedRect);
+  }
+
+  CGFloat leadingOverhang = MIN(0, CGRectGetMinX(usedRect));
+  CGPoint trailingGlyphLocation = [layoutManager locationForGlyphAtIndex:trailingGlyphIndex];
+  return MAX(0, trailingGlyphLocation.x - leadingOverhang);
+}
+
+NSRange resolveNextLineCharacterRange(CTTypesetterRef typesetter, NSInteger start, CGFloat width, NSInteger textLength) {
+  CGFloat constrainedWidth = MAX(width, 0);
+  CFIndex count = CTTypesetterSuggestLineBreak(typesetter, start, constrainedWidth);
+  if (count == 0 && start < textLength) {
+    count = CTTypesetterSuggestClusterBreak(typesetter, start, constrainedWidth);
+  }
+  if (count == 0 && start < textLength) {
+    count = 1;
+  }
+
+  NSInteger clampedCount = MIN(static_cast<NSInteger>(count), textLength - start);
+  return NSMakeRange(start, MAX(0, clampedCount));
+}
+
+CTTypesetterRef resolvePreparedTypesetter(RNTextEnginePreparedText *prepared) {
+  CTTypesetterRef typesetter = [prepared loadTypesetter];
+  if (typesetter != nullptr) return typesetter;
+
+  @synchronized(prepared) {
+    typesetter = [prepared loadTypesetter];
+    if (typesetter == nullptr) {
+      typesetter = CTTypesetterCreateWithAttributedString((CFAttributedStringRef)prepared.attributedText);
+      [prepared storeTypesetter:typesetter];
+    }
+    return typesetter;
+  }
+}
+
+std::shared_ptr<PreparedQueryOwner> resolvePreparedQueryOwner(Handle handle) {
+  std::lock_guard<std::mutex> lock(preparedQueryMutex);
+  auto &queryOwner = preparedQueryOwners[handle];
+  if (queryOwner == nullptr) {
+    queryOwner = std::make_shared<PreparedQueryOwner>();
+    preparedQueryOwnersActive.store(true, std::memory_order_relaxed);
+  }
+  return queryOwner;
+}
+
+CGFloat resolveNextLineWidth(CTLineRef line) {
+  CGFloat width = static_cast<CGFloat>(CTLineGetTypographicBounds(line, nullptr, nullptr, nullptr));
+  CGFloat trailingWhitespaceWidth = CTLineGetTrailingWhitespaceWidth(line);
+  return MAX(0, width - trailingWhitespaceWidth);
+}
+
+CGFloat resolveCoreTextOpticalWidth(CTLineRef line) {
+  if (line == nullptr) return 0;
+  CGRect bounds = CTLineGetBoundsWithOptions(line, kCTLineBoundsUseOpticalBounds);
+  CGFloat leadingOverhang = MIN(0, CGRectGetMinX(bounds));
+  return MAX(0, CGRectGetMaxX(bounds) - leadingOverhang);
+}
+
+CGFloat resolveCTLineMaxCapHeight(CTLineRef line) {
+  if (line == nullptr) return 0;
+
+  CFArrayRef glyphRuns = CTLineGetGlyphRuns(line);
+  if (glyphRuns == nullptr) return 0;
+
+  CGFloat maxCapHeight = 0;
+  CFIndex runCount = CFArrayGetCount(glyphRuns);
+  for (CFIndex index = 0; index < runCount; index += 1) {
+    CTRunRef run = static_cast<CTRunRef>(CFArrayGetValueAtIndex(glyphRuns, index));
+    if (run == nullptr) continue;
+
+    NSDictionary *attributes = (__bridge NSDictionary *)CTRunGetAttributes(run);
+    CTFontRef font = (__bridge CTFontRef)attributes[(id)kCTFontAttributeName];
+    if (font == nullptr) continue;
+    maxCapHeight = MAX(maxCapHeight, CTFontGetCapHeight(font));
+  }
+
+  return maxCapHeight;
+}
+
+Object buildNextLineObject(
+    Runtime& runtime,
+    NSInteger start,
+    const PreparedNextLineMeasurement& measurement) {
+  Object result(runtime);
+  result.setProperty(runtime, "start", static_cast<double>(start));
+  result.setProperty(runtime, "end", static_cast<double>(measurement.end));
+  result.setProperty(runtime, "width", measurement.width);
+  result.setProperty(runtime, "bottom", measurement.bottom);
+  return result;
+}
+
+Value buildNextLineValue(
+    Runtime& runtime,
+    Handle handle,
+    RNTextEnginePreparedText *prepared,
+    NSInteger start,
+    double width,
+    bool anchorToCapHeight) {
+  if (start < 0) start = 0;
   NSInteger textLength = prepared.text.length;
   if (start >= textLength) return Value::null();
-  if (start < 0) start = 0;
 
-  NSRange range = NSMakeRange(start, textLength - start);
-  NSString *substring = [prepared.text substringWithRange:range];
-  NSAttributedString *attributedSubstring = [prepared.attributedText attributedSubstringFromRange:range];
+  PreparedNextLineCacheKey cacheKey = resolvePreparedNextLineCacheKey(start, width, anchorToCapHeight);
+  std::shared_ptr<PreparedQueryOwner> queryOwner = resolvePreparedQueryOwner(handle);
+  {
+    std::lock_guard<std::mutex> lock(queryOwner->mutex);
+    auto cached = queryOwner->nextLinesByKey.find(cacheKey);
+    if (cached != queryOwner->nextLinesByKey.end()) {
+      return buildNextLineObject(runtime, start, cached->second);
+    }
+  }
 
-  NSTextStorage *textStorage = [[NSTextStorage alloc] initWithAttributedString:attributedSubstring];
-  NSLayoutManager *layoutManager = [[NSLayoutManager alloc] init];
-  NSTextContainer *textContainer = [[NSTextContainer alloc] initWithSize:CGSizeMake(MAX(width, 0), CGFLOAT_MAX)];
-  textContainer.lineFragmentPadding = 0;
-  textContainer.lineBreakMode = NSLineBreakByWordWrapping;
-  textContainer.maximumNumberOfLines = 1;
+  CTTypesetterRef typesetter = resolvePreparedTypesetter(prepared);
+  NSRange charRange = resolveNextLineCharacterRange(typesetter, start, width, textLength);
+  if (charRange.length == 0) return Value::null();
 
-  [layoutManager addTextContainer:textContainer];
-  [textStorage addLayoutManager:layoutManager];
-  [layoutManager ensureLayoutForTextContainer:textContainer];
+  CTLineRef ctLine = CTTypesetterCreateLine(typesetter, CFRangeMake(charRange.location, charRange.length));
+  if (ctLine == nullptr) return Value::null();
 
-  if (layoutManager.numberOfGlyphs == 0) return Value::null();
+  NSInteger visibleEnd = resolveVisibleEnd(prepared.text, charRange);
+  CGFloat lineWidth = resolveNextLineWidth(ctLine);
+  CGFloat lineBottom =
+      anchorToCapHeight
+          ? (prepared.uniformCapHeight > 0 ? prepared.uniformCapHeight : resolveCTLineMaxCapHeight(ctLine))
+          : resolveAttributedLineHeight(prepared.attributedText, charRange, prepared.fallbackLineHeight);
 
-  NSRange glyphRange = NSMakeRange(0, 0);
-  CGRect usedRect = [layoutManager lineFragmentUsedRectForGlyphAtIndex:0 effectiveRange:&glyphRange];
-  NSRange charRange = [layoutManager characterRangeForGlyphRange:glyphRange actualGlyphRange:nil];
+  CFRelease(ctLine);
+  PreparedNextLineMeasurement measurement {
+    .end = visibleEnd,
+    .bottom = lineBottom,
+    .width = lineWidth,
+  };
+  {
+    std::lock_guard<std::mutex> lock(queryOwner->mutex);
+    queryOwner->nextLinesByKey.emplace(cacheKey, measurement);
+  }
 
-  NSString *lineString = trimTrailingWhitespace([substring substringWithRange:charRange]);
-  NSInteger visibleEnd = start + lineString.length;
-
-  Object line(runtime);
-  line.setProperty(runtime, "start", static_cast<double>(start));
-  line.setProperty(runtime, "end", static_cast<double>(visibleEnd));
-  line.setProperty(runtime, "width", CGRectGetWidth(usedRect));
-  line.setProperty(runtime, "bottom", CGRectGetMaxY(usedRect));
-  return line;
+  return buildNextLineObject(runtime, start, measurement);
 }
 
 NSLineBreakMode resolveLineBreakMode(const LayoutOptions& options) {
-  if (!options.maxLines.has_value()) return NSLineBreakByWordWrapping;
-  if (!options.ellipsizeMode.has_value()) return NSLineBreakByTruncatingTail;
+  NSString *ellipsizeMode = options.ellipsizeMode.has_value() ? toNSString(*options.ellipsizeMode) : nil;
+  return RNTextEngineResolveLineBreakMode(options.maxLines.value_or(0), ellipsizeMode);
+}
 
-  const std::string& mode = *options.ellipsizeMode;
-  if (mode == "clip") return NSLineBreakByClipping;
-  if (mode == "head") return NSLineBreakByTruncatingHead;
-  if (mode == "middle") return NSLineBreakByTruncatingMiddle;
-  return NSLineBreakByTruncatingTail;
+uint64_t resolveCGFloatBits(CGFloat value) {
+  double normalized = MAX(static_cast<double>(value), 0);
+  uint64_t bits = 0;
+  std::memcpy(&bits, &normalized, sizeof(bits));
+  return bits;
+}
+
+PreparedLayoutCacheKey resolvePreparedLayoutCacheKey(const LayoutOptions& options) {
+  PreparedLayoutCacheKey key;
+  key.widthBits = resolveCGFloatBits(options.width);
+  key.maxLines = options.maxLines.value_or(0);
+  key.lineBreakMode = resolveLineBreakMode(options);
+  key.anchorToCapHeight = options.anchorToCapHeight;
+  return key;
+}
+
+PreparedNextLineCacheKey resolvePreparedNextLineCacheKey(NSInteger start, CGFloat width, bool anchorToCapHeight) {
+  PreparedNextLineCacheKey key;
+  key.start = start;
+  key.widthBits = resolveCGFloatBits(width);
+  key.anchorToCapHeight = anchorToCapHeight;
+  return key;
 }
 
 Object buildLayoutObject(Runtime& runtime, CGFloat width, CGFloat height, NSInteger lineCount, CGFloat lastLineWidth) {
@@ -1024,11 +1793,341 @@ CGFloat measureAttributedWidth(NSAttributedString *attributedText) {
   return RCTCeilPixelValue(CGRectGetWidth(bounds) + 0.001);
 }
 
-Value layoutAttributedText(Runtime& runtime, NSString *text, NSAttributedString *attributedText, CGFloat fallbackLineHeight, const LayoutOptions& options, bool includeLines) {
+TextLayoutMeasurement measureAttributedTextLayout(
+    NSString *text,
+    NSAttributedString *attributedText,
+    CGFloat fallbackLineHeight,
+    CGFloat uniformCapHeight,
+    const LayoutOptions& options) {
+  TextLayoutMeasurement measurement;
+  if (text.length == 0) {
+    measurement.height = fallbackLineHeight;
+    return measurement;
+  }
+
+  NSTextStorage *textStorage = [[NSTextStorage alloc] initWithAttributedString:attributedText];
+  NSLayoutManager *layoutManager = [[NSLayoutManager alloc] init];
+  NSTextContainer *textContainer =
+      [[NSTextContainer alloc] initWithSize:CGSizeMake(MAX(options.width, 0), CGFLOAT_MAX)];
+  textContainer.lineFragmentPadding = 0;
+  textContainer.lineBreakMode = resolveLineBreakMode(options);
+  textContainer.maximumNumberOfLines = options.maxLines.value_or(0);
+
+  [layoutManager addTextContainer:textContainer];
+  [textStorage addLayoutManager:layoutManager];
+  [layoutManager ensureLayoutForTextContainer:textContainer];
+
+  CGFloat measuredHeight = 0;
+  CGFloat measuredWidth = 0;
+  CGFloat lastBaseline = 0;
+  CGFloat lastLineWidth = 0;
+  CGFloat topInset = 0;
+  NSInteger lineCount = 0;
+  BOOL resolvedCapAnchor = NO;
+
+  NSUInteger glyphIndex = 0;
+  while (glyphIndex < layoutManager.numberOfGlyphs) {
+    NSRange glyphRange = NSMakeRange(0, 0);
+    CGRect usedRect = [layoutManager lineFragmentUsedRectForGlyphAtIndex:glyphIndex effectiveRange:&glyphRange];
+    CGRect lineRect = [layoutManager lineFragmentRectForGlyphAtIndex:glyphIndex effectiveRange:nil];
+    NSRange charRange = [layoutManager characterRangeForGlyphRange:glyphRange actualGlyphRange:nil];
+    CGFloat lineWidth = CGRectGetWidth(usedRect);
+    CGFloat lineBaseline = RNTextEngineLineBaselineForGlyphIndex(layoutManager, glyphIndex, lineRect);
+
+    if (options.anchorToCapHeight && !resolvedCapAnchor && charRange.length > 0) {
+      topInset = MAX(
+          0,
+          lineBaseline -
+              (uniformCapHeight > 0 ? uniformCapHeight : RNTextEngineMaxCapHeightForRange(attributedText, charRange)));
+      resolvedCapAnchor = YES;
+    }
+
+    lineCount += 1;
+    measuredWidth = MAX(measuredWidth, lineWidth);
+    measuredHeight = MAX(measuredHeight, CGRectGetMaxY(usedRect));
+    lastLineWidth = lineWidth;
+    lastBaseline = lineBaseline;
+    glyphIndex = NSMaxRange(glyphRange);
+  }
+
+  if (options.anchorToCapHeight && resolvedCapAnchor) {
+    measuredHeight = MAX(0, lastBaseline - topInset);
+  }
+
+  measurement.width = measuredWidth;
+  measurement.height = measuredHeight;
+  measurement.lineCount = lineCount;
+  measurement.lastLineWidth = lastLineWidth;
+  return measurement;
+}
+
+Value layoutAttributedText(
+    Runtime& runtime,
+    NSString *text,
+    NSAttributedString *attributedText,
+    CGFloat fallbackLineHeight,
+    CGFloat uniformCapHeight,
+    const LayoutOptions& options,
+    bool includeLines);
+
+bool shouldTruncatePreparedLayout(const LayoutOptions& options) {
+  return options.maxLines.has_value() && options.maxLines.value_or(0) > 0;
+}
+
+bool canUsePreparedCoreTextLayout(const LayoutOptions& options, bool includeLines) {
+  return !includeLines && !shouldTruncatePreparedLayout(options) && !options.ellipsizeMode.has_value();
+}
+
+TextLayoutMeasurement measurePreparedTextLayoutWithCoreText(
+    RNTextEnginePreparedText *prepared,
+    const LayoutOptions& options) {
+  NSInteger textLength = prepared.text.length;
+  if (textLength == 0) {
+    return TextLayoutMeasurement {
+      .height = prepared.fallbackLineHeight,
+    };
+  }
+
+  CTTypesetterRef typesetter = resolvePreparedTypesetter(prepared);
+  NSInteger start = 0;
+  NSInteger lineCount = 0;
+  CGFloat constrainedWidth = MAX(options.width, 0);
+  TextLayoutMeasurement measurement;
+  CGFloat measuredWidth = 0;
+  CGFloat measuredHeight = 0;
+  CGFloat lastLineWidth = 0;
+  CGFloat cumulativeLineHeight = 0;
+  CGFloat firstLineBottom = 0;
+
+  while (start < textLength) {
+    NSRange charRange = resolveNextLineCharacterRange(typesetter, start, constrainedWidth, textLength);
+    if (charRange.length == 0) break;
+
+    CTLineRef naturalLine = CTTypesetterCreateLine(typesetter, CFRangeMake(charRange.location, charRange.length));
+    if (naturalLine == nullptr) break;
+
+    CGFloat naturalLineWidth = resolveNextLineWidth(naturalLine);
+    CGFloat lineHeight = resolveAttributedLineHeight(prepared.attributedText, charRange, prepared.fallbackLineHeight);
+    CGFloat lineWidth = naturalLineWidth;
+    CTLineRef line = naturalLine;
+    CGFloat lineBottom = 0;
+
+    if (options.anchorToCapHeight) {
+      if (lineCount == 0) {
+        firstLineBottom =
+            prepared.uniformCapHeight > 0 ? prepared.uniformCapHeight : resolveCTLineMaxCapHeight(line);
+        lineBottom = firstLineBottom;
+      } else {
+        lineBottom = firstLineBottom + cumulativeLineHeight;
+      }
+    } else {
+      lineBottom = cumulativeLineHeight + lineHeight;
+    }
+
+    measuredWidth = MAX(measuredWidth, lineWidth);
+    measuredHeight = lineBottom;
+    lastLineWidth = lineWidth;
+
+    cumulativeLineHeight += lineHeight;
+    lineCount += 1;
+    start = NSMaxRange(charRange);
+    CFRelease(naturalLine);
+  }
+
+  measurement.width = measuredWidth;
+  measurement.height = measuredHeight;
+  measurement.lineCount = lineCount;
+  measurement.lastLineWidth = lastLineWidth;
+  return measurement;
+}
+
+TextLayoutMeasurement resolvePreparedLayoutMeasurement(
+    Handle handle,
+    RNTextEnginePreparedText *prepared,
+    const LayoutOptions& options) {
+  PreparedLayoutCacheKey cacheKey = resolvePreparedLayoutCacheKey(options);
+  std::shared_ptr<PreparedQueryOwner> queryOwner = resolvePreparedQueryOwner(handle);
+  {
+    std::lock_guard<std::mutex> lock(queryOwner->mutex);
+    auto cached = queryOwner->layoutsByKey.find(cacheKey);
+    if (cached != queryOwner->layoutsByKey.end()) return cached->second;
+  }
+
+  TextLayoutMeasurement measurement =
+      canUsePreparedCoreTextLayout(options, false)
+          ? measurePreparedTextLayoutWithCoreText(prepared, options)
+          : measureAttributedTextLayout(
+                prepared.text,
+                prepared.attributedText,
+                prepared.fallbackLineHeight,
+                prepared.uniformCapHeight,
+                options);
+
+  {
+    std::lock_guard<std::mutex> lock(queryOwner->mutex);
+    queryOwner->layoutsByKey.emplace(cacheKey, measurement);
+  }
+
+  return measurement;
+}
+
+TextLayoutMeasurement measureUniformTextLayoutWithCoreText(
+    NSString *text,
+    NSAttributedString *attributedText,
+    CGFloat fallbackLineHeight,
+    CGFloat uniformCapHeight,
+    const LayoutOptions& options) {
+  NSInteger textLength = text.length;
+  if (textLength == 0) {
+    return TextLayoutMeasurement {
+      .height = fallbackLineHeight,
+    };
+  }
+
+  CTTypesetterRef typesetter = CTTypesetterCreateWithAttributedString((CFAttributedStringRef)attributedText);
+  if (typesetter == nullptr) {
+    return TextLayoutMeasurement {
+      .height = fallbackLineHeight,
+    };
+  }
+
+  NSInteger start = 0;
+  NSInteger lineCount = 0;
+  CGFloat constrainedWidth = MAX(options.width, 0);
+  TextLayoutMeasurement measurement;
+  CGFloat measuredWidth = 0;
+  CGFloat measuredHeight = 0;
+  CGFloat lastLineWidth = 0;
+  CGFloat cumulativeLineHeight = 0;
+  CGFloat firstLineBottom = 0;
+
+  while (start < textLength) {
+    NSRange charRange = resolveNextLineCharacterRange(typesetter, start, constrainedWidth, textLength);
+    if (charRange.length == 0) break;
+
+    CTLineRef line = CTTypesetterCreateLine(typesetter, CFRangeMake(charRange.location, charRange.length));
+    if (line == nullptr) break;
+
+    CGFloat lineWidth = resolveNextLineWidth(line);
+    CGFloat lineBottom = 0;
+
+    if (options.anchorToCapHeight) {
+      if (lineCount == 0) {
+        firstLineBottom = uniformCapHeight > 0 ? uniformCapHeight : resolveCTLineMaxCapHeight(line);
+        lineBottom = firstLineBottom;
+      } else {
+        lineBottom = firstLineBottom + cumulativeLineHeight;
+      }
+    } else {
+      lineBottom = cumulativeLineHeight + fallbackLineHeight;
+    }
+
+    measuredWidth = MAX(measuredWidth, lineWidth);
+    measuredHeight = lineBottom;
+    lastLineWidth = lineWidth;
+
+    cumulativeLineHeight += fallbackLineHeight;
+    lineCount += 1;
+    start = NSMaxRange(charRange);
+    CFRelease(line);
+  }
+
+  CFRelease(typesetter);
+  measurement.width = measuredWidth;
+  measurement.height = measuredHeight;
+  measurement.lineCount = lineCount;
+  measurement.lastLineWidth = lastLineWidth;
+  return measurement;
+}
+
+Value layoutUniformText(
+    Runtime& runtime,
+    NSString *text,
+    NSAttributedString *attributedText,
+    const ResolvedTextStyle& resolvedStyle,
+    const LayoutOptions& options) {
+  CGFloat uniformCapHeight = text.length > 0 ? resolvedStyle.capHeight : 0;
+  if (canUsePreparedCoreTextLayout(options, false)) {
+    TextLayoutMeasurement measurement =
+        measureUniformTextLayoutWithCoreText(text, attributedText, resolvedStyle.fallbackLineHeight, uniformCapHeight, options);
+    return buildLayoutObject(runtime, measurement.width, measurement.height, measurement.lineCount, measurement.lastLineWidth);
+  }
+
+  return layoutAttributedText(
+      runtime,
+      text,
+      attributedText,
+      resolvedStyle.fallbackLineHeight,
+      uniformCapHeight,
+      options,
+      false);
+}
+
+Value layoutPreparedTextWithCoreText(
+    Runtime& runtime,
+    RNTextEnginePreparedText *prepared,
+    const LayoutOptions& options,
+    bool includeLines) {
+  TextLayoutMeasurement measurement = measurePreparedTextLayoutWithCoreText(prepared, options);
+  Object result =
+      buildLayoutObject(runtime, measurement.width, measurement.height, measurement.lineCount, measurement.lastLineWidth);
+  if (includeLines) {
+    result.setProperty(runtime, "lines", Array(runtime, 0));
+  }
+  return result;
+}
+
+Value layoutPreparedText(
+    Runtime& runtime,
+    RNTextEnginePreparedText *prepared,
+    const LayoutOptions& options,
+    bool includeLines) {
+  if (canUsePreparedCoreTextLayout(options, includeLines)) {
+    return layoutPreparedTextWithCoreText(runtime, prepared, options, includeLines);
+  }
+
+  return layoutAttributedText(
+      runtime,
+      prepared.text,
+      prepared.attributedText,
+      prepared.fallbackLineHeight,
+      prepared.uniformCapHeight,
+      options,
+      includeLines);
+}
+
+Value layoutPreparedTextForHandle(
+    Runtime& runtime,
+    Handle handle,
+    RNTextEnginePreparedText *prepared,
+    const LayoutOptions& options,
+    bool includeLines) {
+  if (!includeLines) {
+    TextLayoutMeasurement measurement = resolvePreparedLayoutMeasurement(handle, prepared, options);
+    return buildLayoutObject(runtime, measurement.width, measurement.height, measurement.lineCount, measurement.lastLineWidth);
+  }
+
+  return layoutPreparedText(runtime, prepared, options, true);
+}
+
+Value layoutAttributedText(
+    Runtime& runtime,
+    NSString *text,
+    NSAttributedString *attributedText,
+    CGFloat fallbackLineHeight,
+    CGFloat uniformCapHeight,
+    const LayoutOptions& options,
+    bool includeLines) {
   if (text.length == 0) {
     Object empty = buildLayoutObject(runtime, 0, fallbackLineHeight, 0, 0);
     if (includeLines) empty.setProperty(runtime, "lines", Array(runtime, 0));
     return empty;
+  }
+
+  if (!includeLines) {
+    TextLayoutMeasurement layout =
+        measureAttributedTextLayout(text, attributedText, fallbackLineHeight, uniformCapHeight, options);
+    return buildLayoutObject(runtime, layout.width, layout.height, layout.lineCount, layout.lastLineWidth);
   }
 
   NSTextStorage *textStorage = [[NSTextStorage alloc] initWithAttributedString:attributedText];
@@ -1046,34 +2145,55 @@ Value layoutAttributedText(Runtime& runtime, NSString *text, NSAttributedString 
   CGFloat measuredWidth = 0;
   CGFloat measuredHeight = 0;
   CGFloat lastLineWidth = 0;
+  CGFloat topInset = 0;
+  CGFloat lastBaseline = 0;
   NSInteger lineCount = 0;
+  BOOL resolvedCapAnchor = NO;
   std::vector<Object> collectedLines;
 
   NSUInteger glyphIndex = 0;
   while (glyphIndex < layoutManager.numberOfGlyphs) {
     NSRange glyphRange = NSMakeRange(0, 0);
     CGRect usedRect = [layoutManager lineFragmentUsedRectForGlyphAtIndex:glyphIndex effectiveRange:&glyphRange];
+    CGRect lineRect = [layoutManager lineFragmentRectForGlyphAtIndex:glyphIndex effectiveRange:nil];
     NSRange charRange = [layoutManager characterRangeForGlyphRange:glyphRange actualGlyphRange:nil];
+    NSInteger visibleEnd = resolveVisibleEnd(text, charRange);
+    CGFloat lineWidth = CGRectGetWidth(usedRect);
+    CGFloat lineBaseline = RNTextEngineLineBaselineForGlyphIndex(layoutManager, glyphIndex, lineRect);
 
-    NSString *lineString = trimTrailingWhitespace([text substringWithRange:charRange]);
-    NSInteger visibleEnd = static_cast<NSInteger>(charRange.location + lineString.length);
+    if (options.anchorToCapHeight && !resolvedCapAnchor && charRange.length > 0) {
+      topInset = MAX(
+          0,
+          lineBaseline -
+              (uniformCapHeight > 0 ? uniformCapHeight : RNTextEngineMaxCapHeightForRange(attributedText, charRange)));
+      resolvedCapAnchor = YES;
+    }
+
+    if (includeLines) {
+      lineWidth = resolveVisibleLineWidth(layoutManager, glyphRange, charRange, visibleEnd, usedRect);
+    }
 
     lineCount += 1;
-    measuredWidth = MAX(measuredWidth, CGRectGetWidth(usedRect));
+    measuredWidth = MAX(measuredWidth, lineWidth);
     measuredHeight = MAX(measuredHeight, CGRectGetMaxY(usedRect));
-    lastLineWidth = CGRectGetWidth(usedRect);
+    lastLineWidth = lineWidth;
+    lastBaseline = lineBaseline;
 
     if (includeLines) {
       Object line(runtime);
       line.setProperty(runtime, "index", static_cast<double>(lineCount - 1));
       line.setProperty(runtime, "start", static_cast<double>(charRange.location));
       line.setProperty(runtime, "end", static_cast<double>(visibleEnd));
-      line.setProperty(runtime, "width", CGRectGetWidth(usedRect));
-      line.setProperty(runtime, "bottom", CGRectGetMaxY(usedRect));
+      line.setProperty(runtime, "width", lineWidth);
+      line.setProperty(runtime, "bottom", options.anchorToCapHeight ? lineBaseline - topInset : CGRectGetMaxY(usedRect));
       collectedLines.push_back(std::move(line));
     }
 
     glyphIndex = NSMaxRange(glyphRange);
+  }
+
+  if (options.anchorToCapHeight && resolvedCapAnchor) {
+    measuredHeight = MAX(0, lastBaseline - topInset);
   }
 
   Object result = buildLayoutObject(runtime, measuredWidth, measuredHeight, lineCount, lastLineWidth);
@@ -1098,6 +2218,7 @@ RNTextEnginePreparedText *buildPreparedText(
     prepared.text = text;
     prepared.attributedText = baseAttributedText;
     prepared.fallbackLineHeight = resolvedBaseStyle.fallbackLineHeight;
+    prepared.uniformCapHeight = text.length > 0 ? resolvedBaseStyle.capHeight : 0;
     return prepared;
   }
 
@@ -1115,6 +2236,7 @@ RNTextEnginePreparedText *buildPreparedText(
   prepared.text = text;
   prepared.attributedText = attributedText;
   prepared.fallbackLineHeight = resolvedBaseStyle.fallbackLineHeight;
+  prepared.uniformCapHeight = 0;
   return prepared;
 }
 
@@ -1136,19 +2258,50 @@ RNTextEnginePreparedText *getPreparedText(Runtime& runtime, Handle handle) {
 }
 
 NSAttributedString *preparedAttributedTextForHandleLocked(Handle handle) {
-  std::lock_guard<std::mutex> lock(preparedMutex);
-  return preparedTexts[toKey(handle)].attributedText;
+  RNTextEnginePreparedText *prepared = nil;
+  {
+    std::lock_guard<std::mutex> lock(preparedMutex);
+    prepared = preparedTexts[toKey(handle)];
+  }
+  return prepared.attributedText;
+}
+
+CGFloat preparedUniformCapHeightForHandleLocked(Handle handle) {
+  RNTextEnginePreparedText *prepared = nil;
+  {
+    std::lock_guard<std::mutex> lock(preparedMutex);
+    prepared = preparedTexts[toKey(handle)];
+  }
+  return prepared.uniformCapHeight;
 }
 
 void releaseHandle(Handle handle) {
-  std::lock_guard<std::mutex> lock(preparedMutex);
-  [preparedTexts removeObjectForKey:toKey(handle)];
+  {
+    std::lock_guard<std::mutex> lock(preparedMutex);
+    [preparedTexts removeObjectForKey:toKey(handle)];
+  }
+  if (!preparedQueryOwnersActive.load(std::memory_order_relaxed)) return;
+  std::lock_guard<std::mutex> queryLock(preparedQueryMutex);
+  preparedQueryOwners.erase(handle);
+  if (preparedQueryOwners.empty()) {
+    preparedQueryOwnersActive.store(false, std::memory_order_relaxed);
+  }
 }
 
 void releaseHandles(const std::vector<Handle>& handles) {
-  std::lock_guard<std::mutex> lock(preparedMutex);
+  {
+    std::lock_guard<std::mutex> lock(preparedMutex);
+    for (Handle handle : handles) {
+      [preparedTexts removeObjectForKey:toKey(handle)];
+    }
+  }
+  if (!preparedQueryOwnersActive.load(std::memory_order_relaxed)) return;
+  std::lock_guard<std::mutex> queryLock(preparedQueryMutex);
   for (Handle handle : handles) {
-    [preparedTexts removeObjectForKey:toKey(handle)];
+    preparedQueryOwners.erase(handle);
+  }
+  if (preparedQueryOwners.empty()) {
+    preparedQueryOwnersActive.store(false, std::memory_order_relaxed);
   }
 }
 
@@ -1170,20 +2323,19 @@ std::vector<Handle> parseHandleArray(Runtime& runtime, const Value& value) {
   return handles;
 }
 
-std::vector<std::string> parseStringArray(Runtime& runtime, const Value& value) {
+NSArray<NSString *> *parseNSStringArray(Runtime& runtime, const Value& value) {
   if (!value.isObject() || !value.asObject(runtime).isArray(runtime)) {
     throw JSError(runtime, "RNTextEngine: expected an array of strings.");
   }
 
   Array array = value.asObject(runtime).asArray(runtime);
-  std::vector<std::string> texts;
-  texts.reserve(array.size(runtime));
+  NSMutableArray<NSString *> *texts = [NSMutableArray arrayWithCapacity:array.size(runtime)];
   for (size_t i = 0; i < array.size(runtime); i++) {
     Value item = array.getValueAtIndex(runtime, i);
     if (!item.isString()) {
       throw JSError(runtime, "RNTextEngine: batch text input must contain strings only.");
     }
-    texts.push_back(item.asString(runtime).utf8(runtime));
+    [texts addObject:toNSString(item.asString(runtime).utf8(runtime))];
   }
   return texts;
 }
@@ -1196,10 +2348,171 @@ Array buildHandleArray(Runtime& runtime, const std::vector<Handle>& handles) {
   return array;
 }
 
+uint64_t createPreparedTextHandleForTextViewInternal(
+    NSString *text,
+    BOOL allowFontScaling,
+    NSString *fontFamily,
+    CGFloat fontSize,
+    NSString *fontWeight,
+    NSString *fontStyle,
+    CGFloat letterSpacing,
+    CGFloat lineHeight,
+    BOOL tabularNumbers,
+    NSString *textTransform,
+    NSArray<NSNumber *> *runStarts,
+    NSArray<NSNumber *> *runEnds,
+    NSArray<NSNumber *> *runStyleMasks,
+    NSArray<NSString *> *runFontFamilies,
+    NSArray<NSNumber *> *runFontSizes,
+    NSArray<NSString *> *runFontStyles,
+    NSArray<NSString *> *runFontWeights,
+    NSArray<NSNumber *> *runLetterSpacings,
+    NSArray<NSNumber *> *runLineHeights,
+    NSArray<NSNumber *> *runTabularNumbers) {
+  TextMeasureStyle style;
+  style.allowFontScaling = allowFontScaling;
+  style.hasFontFamily = fontFamily.length > 0;
+  style.hasFontSize = fontSize > 0;
+  style.hasFontStyle = fontStyle.length > 0;
+  style.hasFontWeight = fontWeight.length > 0;
+  style.hasLetterSpacing = letterSpacing != 0;
+  style.hasLineHeight = lineHeight > 0;
+  if (style.hasFontFamily) style.fontFamily = fromNSString(fontFamily);
+  if (style.hasFontSize) style.fontSize = fontSize;
+  if (style.hasFontStyle) style.fontStyle = fromNSString(fontStyle);
+  if (style.hasFontWeight) style.fontWeight = fromNSString(fontWeight);
+  if (style.hasLetterSpacing) style.letterSpacing = letterSpacing;
+  if (style.hasLineHeight) style.lineHeight = lineHeight;
+  style.tabularNumbers = tabularNumbers;
+
+  RNTextEngineTextTransformResult *transformedText = RNTextEngineTransformText(
+      text ?: @"",
+      textTransform,
+      runStarts ?: @[],
+      runEnds ?: @[]);
+
+  std::vector<TextMeasureRun> runs = buildTextViewRuns(
+      transformedText.text.length,
+      transformedText.runStarts ?: @[],
+      transformedText.runEnds ?: @[],
+      runStyleMasks ?: @[],
+      runFontFamilies ?: @[],
+      runFontSizes ?: @[],
+      runFontStyles ?: @[],
+      runFontWeights ?: @[],
+      runLetterSpacings ?: @[],
+      runLineHeights ?: @[],
+      runTabularNumbers ?: @[]);
+  ResolvedTextStyle resolvedStyle = resolveTextStyle(style);
+  return storePreparedText(buildPreparedText(transformedText.text ?: @"", style, resolvedStyle, runs));
+}
+
+CGFloat measurePreparedTextWidthForHandleInternal(uint64_t handle) {
+  RNTextEnginePreparedText *prepared = nil;
+  {
+    std::lock_guard<std::mutex> lock(preparedMutex);
+    prepared = preparedTexts[toKey(static_cast<Handle>(handle))];
+  }
+  if (prepared == nil) return 0;
+  return measureAttributedWidth(prepared.attributedText);
+}
+
+CGSize measurePreparedTextLayoutForHandleInternal(
+    uint64_t handle,
+    CGFloat width,
+    NSInteger maxLines,
+    NSString *ellipsizeMode,
+    BOOL anchorToCapHeight) {
+  RNTextEnginePreparedText *prepared = nil;
+  {
+    std::lock_guard<std::mutex> lock(preparedMutex);
+    prepared = preparedTexts[toKey(static_cast<Handle>(handle))];
+  }
+  if (prepared == nil) return CGSizeZero;
+
+  LayoutOptions options;
+  options.width = width;
+  options.anchorToCapHeight = anchorToCapHeight;
+  if (maxLines > 0) options.maxLines = static_cast<int>(maxLines);
+  if (ellipsizeMode.length > 0) options.ellipsizeMode = fromNSString(ellipsizeMode);
+
+  TextLayoutMeasurement measurement = resolvePreparedLayoutMeasurement(static_cast<Handle>(handle), prepared, options);
+  return CGSizeMake(measurement.width, measurement.height);
+}
+
+void releasePreparedTextHandleInternal(uint64_t handle) {
+  releaseHandle(static_cast<Handle>(handle));
+}
+
 } // namespace
+
+uint64_t createPreparedTextHandleForTextView(
+    NSString *text,
+    BOOL allowFontScaling,
+    NSString *fontFamily,
+    CGFloat fontSize,
+    NSString *fontWeight,
+    NSString *fontStyle,
+    CGFloat letterSpacing,
+    CGFloat lineHeight,
+    BOOL tabularNumbers,
+    NSString *textTransform,
+    NSArray<NSNumber *> *runStarts,
+    NSArray<NSNumber *> *runEnds,
+    NSArray<NSNumber *> *runStyleMasks,
+    NSArray<NSString *> *runFontFamilies,
+    NSArray<NSNumber *> *runFontSizes,
+    NSArray<NSString *> *runFontStyles,
+    NSArray<NSString *> *runFontWeights,
+    NSArray<NSNumber *> *runLetterSpacings,
+    NSArray<NSNumber *> *runLineHeights,
+    NSArray<NSNumber *> *runTabularNumbers) {
+  return createPreparedTextHandleForTextViewInternal(
+      text,
+      allowFontScaling,
+      fontFamily,
+      fontSize,
+      fontWeight,
+      fontStyle,
+      letterSpacing,
+      lineHeight,
+      tabularNumbers,
+      textTransform,
+      runStarts,
+      runEnds,
+      runStyleMasks,
+      runFontFamilies,
+      runFontSizes,
+      runFontStyles,
+      runFontWeights,
+      runLetterSpacings,
+      runLineHeights,
+      runTabularNumbers);
+}
+
+CGFloat measurePreparedTextWidthForHandle(uint64_t handle) {
+  return measurePreparedTextWidthForHandleInternal(handle);
+}
+
+CGSize measurePreparedTextLayoutForHandle(
+    uint64_t handle,
+    CGFloat width,
+    NSInteger maxLines,
+    NSString *ellipsizeMode,
+    BOOL anchorToCapHeight) {
+  return measurePreparedTextLayoutForHandleInternal(handle, width, maxLines, ellipsizeMode, anchorToCapHeight);
+}
+
+void releasePreparedTextHandle(uint64_t handle) {
+  releasePreparedTextHandleInternal(handle);
+}
 
 NSAttributedString *preparedAttributedTextForHandle(uint64_t handle) {
   return preparedAttributedTextForHandleLocked(static_cast<Handle>(handle));
+}
+
+CGFloat preparedUniformCapHeightForHandle(uint64_t handle) {
+  return preparedUniformCapHeightForHandleLocked(static_cast<Handle>(handle));
 }
 
 void registerGlyphFieldView(uint64_t handle, UIView *view) {
@@ -1222,7 +2535,10 @@ void drawGlyphFieldHandle(uint64_t handle, CGContextRef context, CGRect bounds, 
   if (handle == 0 || context == nullptr) return;
 
   RNTextEngineGlyphField *field = getGlyphFieldIfPresent(static_cast<Handle>(handle));
-  if (field == nil || field.rowsData.count == 0) return;
+  if (field == nil) return;
+
+  NSArray<RNTextEngineGlyphFieldRow *> *rows = resolveGlyphFieldRows(field);
+  if (rows.count == 0) return;
 
   CGFloat contentHeight = field.rows * field.lineHeight;
   CGFloat topInset = MAX(0, (CGRectGetHeight(bounds) - contentHeight) * 0.5);
@@ -1234,16 +2550,20 @@ void drawGlyphFieldHandle(uint64_t handle, CGContextRef context, CGRect bounds, 
     endRow = field.rows;
   }
 
-  for (NSInteger row = startRow; row < endRow; row += 1) {
-    RNTextEngineGlyphFieldRow *rowData = field.rowsData[row];
-    CGFloat x = glyphFieldRowOriginX(field, bounds, rowData.width);
+  CGContextSaveGState(context);
+  CGContextSetTextMatrix(context, CGAffineTransformIdentity);
+  CGContextTranslateCTM(context, 0, CGRectGetHeight(bounds));
+  CGContextScaleCTM(context, 1.0, -1.0);
 
-    for (RNTextEngineGlyphFieldRun *run in rowData.runs) {
-      CGFloat y = topInset + row * field.lineHeight + MAX(0, (field.lineHeight - run.variant.font.lineHeight) * 0.5);
-      [run.text drawAtPoint:CGPointMake(x, y) withAttributes:run.variant.attributes];
-      x += run.width;
-    }
+  for (NSInteger row = startRow; row < endRow; row += 1) {
+    RNTextEngineGlyphFieldRow *rowData = rows[row];
+    CGFloat x = glyphFieldRowOriginX(field, bounds, rowData.width);
+    CGFloat baseline = CGRectGetHeight(bounds) - (topInset + row * field.lineHeight + rowData.baselineOffset);
+    CGContextSetTextPosition(context, x, baseline);
+    CTLineDraw(rowData.line, context);
   }
+
+  CGContextRestoreGState(context);
 }
 
 void cleanup() {
@@ -1254,15 +2574,30 @@ void cleanup() {
     nextHandle = 1;
   }
   {
+    std::lock_guard<std::mutex> lock(preparedQueryMutex);
+    preparedQueryOwners.clear();
+    preparedQueryOwnersActive.store(false, std::memory_order_relaxed);
+  }
+  {
     std::lock_guard<std::mutex> lock(glyphFieldMutex);
     [glyphFields removeAllObjects];
     glyphFields = nil;
     nextGlyphFieldHandle = 1;
   }
+  {
+    std::lock_guard<std::mutex> lock(glyphFieldBufferMutex);
+    glyphFieldBuffers.clear();
+  }
 }
 
 void install(Runtime& runtime) {
   auto installFunction = [&](const char *name, unsigned int argCount, auto fn) {
+    auto wrappedFn = [fn = std::move(fn)](Runtime& runtime, const Value& thisValue, const Value* arguments, size_t count) -> Value {
+      @autoreleasepool {
+        return fn(runtime, thisValue, arguments, count);
+      }
+    };
+
     runtime.global().setProperty(
         runtime,
         name,
@@ -1270,23 +2605,8 @@ void install(Runtime& runtime) {
             runtime,
             PropNameID::forAscii(runtime, name),
             argCount,
-            fn));
+            wrappedFn));
   };
-
-  installFunction(
-      "__RNTextEngineInstallRuntime",
-      1,
-      [](Runtime& runtime, const Value&, const Value* arguments, size_t count) -> Value {
-        if (count == 0) {
-          throw JSError(runtime, "RNTextEngine: installRuntime() requires a runtime token.");
-        }
-
-        Runtime *targetRuntime = extractRuntimeFromToken(runtime, arguments[0]);
-        if (targetRuntime == nullptr) return Value(false);
-
-        install(*targetRuntime);
-        return Value(true);
-      });
 
 #if RNTEXTENGINE_HAS_WORKLETS
   installFunction(
@@ -1331,6 +2651,37 @@ void install(Runtime& runtime) {
       });
 
   installFunction(
+      "__RNTextEngineCreateGlyphFieldBuffers",
+      1,
+      [](Runtime& runtime, const Value&, const Value* arguments, size_t count) -> Value {
+        if (count == 0 || !arguments[0].isNumber()) {
+          throw JSError(runtime, "RNTextEngine: createGlyphFieldBuffers() requires a glyph field handle.");
+        }
+
+        Handle handle = static_cast<Handle>(arguments[0].asNumber());
+        RNTextEngineGlyphField *field = getGlyphField(runtime, handle);
+        size_t cellCount = static_cast<size_t>(field.columns * field.rows);
+        std::shared_ptr<GlyphFieldBufferSet> buffers = getOrCreateGlyphFieldBuffers(handle, cellCount);
+
+        Object result(runtime);
+        result.setProperty(runtime, "glyphIndices", ArrayBuffer(runtime, buffers->glyphIndices));
+        result.setProperty(runtime, "variantIndices", ArrayBuffer(runtime, buffers->variantIndices));
+        return result;
+      });
+
+  installFunction(
+      "__RNTextEngineCommitGlyphFieldBuffers",
+      1,
+      [](Runtime& runtime, const Value&, const Value* arguments, size_t count) -> Value {
+        if (count == 0 || !arguments[0].isNumber()) {
+          throw JSError(runtime, "RNTextEngine: commitGlyphFieldBuffers() requires a glyph field handle.");
+        }
+
+        commitGlyphFieldBuffers(runtime, static_cast<Handle>(arguments[0].asNumber()));
+        return Value::undefined();
+      });
+
+  installFunction(
       "__RNTextEngineUpdateGlyphField",
       3,
       [](Runtime& runtime, const Value&, const Value* arguments, size_t count) -> Value {
@@ -1342,8 +2693,25 @@ void install(Runtime& runtime) {
         std::string glyphs = arguments[1].asString(runtime).utf8(runtime);
         RNTextEngineGlyphField *field = getGlyphField(runtime, handle);
         size_t cellCount = static_cast<size_t>(field.columns * field.rows);
-        std::vector<uint8_t> variantIndices = parseUint8Array(runtime, arguments[2], cellCount);
+        Uint8ArrayView variantIndices = parseUint8Array(runtime, arguments[2], cellCount);
         updateGlyphField(runtime, handle, glyphs, variantIndices);
+        return Value::undefined();
+      });
+
+  installFunction(
+      "__RNTextEngineUpdateGlyphFieldIndices",
+      3,
+      [](Runtime& runtime, const Value&, const Value* arguments, size_t count) -> Value {
+        if (count < 3 || !arguments[0].isNumber()) {
+          throw JSError(runtime, "RNTextEngine: updateGlyphFieldIndices() requires a handle, glyphIndices Uint8Array, and Uint8Array.");
+        }
+
+        Handle handle = static_cast<Handle>(arguments[0].asNumber());
+        RNTextEngineGlyphField *field = getGlyphField(runtime, handle);
+        size_t cellCount = static_cast<size_t>(field.columns * field.rows);
+        Uint8ArrayView glyphIndices = parseUint8Array(runtime, arguments[1], cellCount);
+        Uint8ArrayView variantIndices = parseUint8Array(runtime, arguments[2], cellCount);
+        updateGlyphFieldIndices(runtime, handle, glyphIndices, variantIndices);
         return Value::undefined();
       });
 
@@ -1383,28 +2751,28 @@ void install(Runtime& runtime) {
         }
         TextMeasureStyle style = count > 1 ? parseStyle(runtime, arguments, 1, count) : TextMeasureStyle {};
         ResolvedTextStyle resolvedStyle = resolveTextStyle(style);
-        std::vector<std::string> texts = parseStringArray(runtime, arguments[0]);
-        std::vector<std::vector<TextMeasureRun>> runsByText(texts.size());
+        NSArray<NSString *> *texts = parseNSStringArray(runtime, arguments[0]);
+        NSUInteger textCount = texts.count;
+        std::vector<std::vector<TextMeasureRun>> runsByText(textCount);
         if (count > 2 && !arguments[2].isUndefined() && !arguments[2].isNull()) {
           if (!arguments[2].isObject() || !arguments[2].asObject(runtime).isArray(runtime)) {
             throw JSError(runtime, "RNTextEngine: batch text runs must be an array aligned with the batch text input.");
           }
 
           Array runsArray = arguments[2].asObject(runtime).asArray(runtime);
-          if (runsArray.size(runtime) != texts.size()) {
+          if (runsArray.size(runtime) != textCount) {
             throw JSError(runtime, "RNTextEngine: batch text runs must align with the batch text input length.");
           }
 
-          for (size_t index = 0; index < texts.size(); index++) {
-            runsByText[index] = parseRuns(runtime, runsArray.getValueAtIndex(runtime, index), toNSString(texts[index]).length);
+          for (NSUInteger index = 0; index < textCount; index++) {
+            runsByText[index] = parseRuns(runtime, runsArray.getValueAtIndex(runtime, index), texts[index].length);
           }
         }
 
         std::vector<Handle> handles;
-        handles.reserve(texts.size());
-        for (size_t index = 0; index < texts.size(); index++) {
-          NSString *text = toNSString(texts[index]);
-          handles.push_back(storePreparedText(buildPreparedText(text, style, resolvedStyle, runsByText[index])));
+        handles.reserve(textCount);
+        for (NSUInteger index = 0; index < textCount; index++) {
+          handles.push_back(storePreparedText(buildPreparedText(texts[index], style, resolvedStyle, runsByText[index])));
         }
         return buildHandleArray(runtime, handles);
       });
@@ -1457,7 +2825,7 @@ void install(Runtime& runtime) {
         }
         LayoutOptions options = parseLayoutOptions(runtime, arguments, 1, count);
         RNTextEnginePreparedText *prepared = getPreparedText(runtime, static_cast<Handle>(arguments[0].asNumber()));
-        return layoutAttributedText(runtime, prepared.text, prepared.attributedText, prepared.fallbackLineHeight, options, false);
+        return layoutPreparedTextForHandle(runtime, static_cast<Handle>(arguments[0].asNumber()), prepared, options, false);
       });
 
   installFunction(
@@ -1469,7 +2837,7 @@ void install(Runtime& runtime) {
         }
         LayoutOptions options = parseLayoutOptions(runtime, arguments, 1, count);
         RNTextEnginePreparedText *prepared = getPreparedText(runtime, static_cast<Handle>(arguments[0].asNumber()));
-        return layoutAttributedText(runtime, prepared.text, prepared.attributedText, prepared.fallbackLineHeight, options, true);
+        return layoutPreparedText(runtime, prepared, options, true);
       });
 
   installFunction(
@@ -1480,11 +2848,14 @@ void install(Runtime& runtime) {
           throw JSError(runtime, "RNTextEngine: layoutNextLine() requires a handle, start offset, and width.");
         }
         RNTextEnginePreparedText *prepared = getPreparedText(runtime, static_cast<Handle>(arguments[0].asNumber()));
+        bool anchorToCapHeight = count > 3 && arguments[3].isBool() ? arguments[3].getBool() : false;
         return buildNextLineValue(
             runtime,
+            static_cast<Handle>(arguments[0].asNumber()),
             prepared,
             static_cast<NSInteger>(arguments[1].asNumber()),
-            arguments[2].asNumber());
+            arguments[2].asNumber(),
+            anchorToCapHeight);
       });
 
   installFunction(
@@ -1500,8 +2871,11 @@ void install(Runtime& runtime) {
         std::vector<TextMeasureRun> runs =
             count > 3 ? parseRuns(runtime, arguments[3], text.length) : std::vector<TextMeasureRun> {};
         ResolvedTextStyle resolvedStyle = resolveTextStyle(style);
+        if (runs.empty()) {
+          return layoutUniformText(runtime, text, buildAttributedText(text, resolvedStyle), resolvedStyle, options);
+        }
         RNTextEnginePreparedText *prepared = buildPreparedText(text, style, resolvedStyle, runs);
-        return layoutAttributedText(runtime, prepared.text, prepared.attributedText, prepared.fallbackLineHeight, options, false);
+        return layoutPreparedText(runtime, prepared, options, false);
       });
 
   installFunction(
@@ -1514,31 +2888,36 @@ void install(Runtime& runtime) {
         TextMeasureStyle style = count > 1 ? parseStyle(runtime, arguments, 1, count) : TextMeasureStyle {};
         LayoutOptions options = parseLayoutOptions(runtime, arguments, 2, count);
         ResolvedTextStyle resolvedStyle = resolveTextStyle(style);
-        std::vector<std::string> texts = parseStringArray(runtime, arguments[0]);
-        std::vector<std::vector<TextMeasureRun>> runsByText(texts.size());
-        if (count > 3 && !arguments[3].isUndefined() && !arguments[3].isNull()) {
-          if (!arguments[3].isObject() || !arguments[3].asObject(runtime).isArray(runtime)) {
-            throw JSError(runtime, "RNTextEngine: batch text runs must be an array aligned with the batch text input.");
+        NSArray<NSString *> *texts = parseNSStringArray(runtime, arguments[0]);
+        if (count <= 3 || arguments[3].isUndefined() || arguments[3].isNull()) {
+          Array results(runtime, texts.count);
+          for (NSUInteger i = 0; i < texts.count; i++) {
+            NSString *text = texts[i];
+            results.setValueAtIndex(
+                runtime,
+                i,
+                layoutUniformText(runtime, text, buildAttributedText(text, resolvedStyle), resolvedStyle, options));
           }
-
-          Array runsArray = arguments[3].asObject(runtime).asArray(runtime);
-          if (runsArray.size(runtime) != texts.size()) {
-            throw JSError(runtime, "RNTextEngine: batch text runs must align with the batch text input length.");
-          }
-
-          for (size_t index = 0; index < texts.size(); index++) {
-            runsByText[index] = parseRuns(runtime, runsArray.getValueAtIndex(runtime, index), toNSString(texts[index]).length);
-          }
+          return results;
         }
 
-        Array results(runtime, texts.size());
-        for (size_t i = 0; i < texts.size(); i++) {
-          NSString *text = toNSString(texts[i]);
+        std::vector<std::vector<TextMeasureRun>> runsByText(texts.count);
+        if (!arguments[3].isObject() || !arguments[3].asObject(runtime).isArray(runtime)) {
+          throw JSError(runtime, "RNTextEngine: batch text runs must be an array aligned with the batch text input.");
+        }
+        Array runsArray = arguments[3].asObject(runtime).asArray(runtime);
+        if (runsArray.size(runtime) != texts.count) {
+          throw JSError(runtime, "RNTextEngine: batch text runs must align with the batch text input length.");
+        }
+        for (NSUInteger index = 0; index < texts.count; index++) {
+          runsByText[index] = parseRuns(runtime, runsArray.getValueAtIndex(runtime, index), texts[index].length);
+        }
+
+        Array results(runtime, texts.count);
+        for (NSUInteger i = 0; i < texts.count; i++) {
+          NSString *text = texts[i];
           RNTextEnginePreparedText *prepared = buildPreparedText(text, style, resolvedStyle, runsByText[i]);
-          results.setValueAtIndex(
-              runtime,
-              i,
-              layoutAttributedText(runtime, prepared.text, prepared.attributedText, prepared.fallbackLineHeight, options, false));
+          results.setValueAtIndex(runtime, i, layoutPreparedText(runtime, prepared, options, false));
         }
         return results;
       });
@@ -1555,10 +2934,7 @@ void install(Runtime& runtime) {
         Array results(runtime, handles.size());
         for (size_t i = 0; i < handles.size(); i++) {
           RNTextEnginePreparedText *prepared = getPreparedText(runtime, handles[i]);
-          results.setValueAtIndex(
-              runtime,
-              i,
-              layoutAttributedText(runtime, prepared.text, prepared.attributedText, prepared.fallbackLineHeight, options, false));
+          results.setValueAtIndex(runtime, i, layoutPreparedTextForHandle(runtime, handles[i], prepared, options, false));
         }
         return results;
       });

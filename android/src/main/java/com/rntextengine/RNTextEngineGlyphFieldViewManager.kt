@@ -1,5 +1,6 @@
 package com.rntextengine
 
+import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.view.View
@@ -31,7 +32,7 @@ internal class RNTextEngineGlyphFieldViewManager :
         view.updateHandle(handle.toLong())
     }
 
-    internal class RNTextEngineGlyphFieldView(context: ThemedReactContext) : View(context) {
+    internal class RNTextEngineGlyphFieldView(context: Context) : View(context) {
         private var handle: Long = 0
 
         init {

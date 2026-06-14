@@ -6,7 +6,15 @@ module.exports = {
       /**
        * @type {import('@react-native-community/cli-types').IOSDependencyParams}
        */
-      ios: {},
+      ios: {
+        scriptPhases: [
+          {
+            execution_position: 'before_compile',
+            name: 'RNTextEngine sync config',
+            path: './scripts/sync-text-engine-config.sh',
+          },
+        ],
+      },
       /**
        * @type {import('@react-native-community/cli-types').AndroidDependencyParams}
        */

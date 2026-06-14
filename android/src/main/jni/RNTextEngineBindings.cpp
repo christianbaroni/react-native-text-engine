@@ -2,9 +2,10 @@
 
 #include <android/log.h>
 #include <cmath>
-#include <cstring>
 #include <limits>
+#include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #ifndef RNTEXTENGINE_HAS_WORKLETS
@@ -24,7 +25,31 @@ using namespace facebook::jsi;
 namespace rntextengine {
 namespace {
 
-using Handle = long long;
+using Handle = jlong;
+
+struct GlyphFieldMutableBuffer : public MutableBuffer {
+  explicit GlyphFieldMutableBuffer(size_t size) : bytes(size) {}
+
+  size_t size() const override {
+    return bytes.size();
+  }
+
+  uint8_t *data() override {
+    return bytes.data();
+  }
+
+  std::vector<uint8_t> bytes;
+};
+
+struct GlyphFieldBufferSet {
+  std::shared_ptr<GlyphFieldMutableBuffer> glyphIndices;
+  std::shared_ptr<GlyphFieldMutableBuffer> variantIndices;
+};
+
+struct Uint8ArrayView {
+  const uint8_t* data = nullptr;
+  size_t length = 0;
+};
 
 struct StyleArgs {
   bool allowFontScaling = false;
@@ -81,6 +106,7 @@ struct FlattenedRuns {
 };
 
 struct LayoutArgs {
+  bool anchorToCapHeight = false;
   double width = 0;
   int maxLines = 0;
   std::string ellipsizeMode;
@@ -95,6 +121,7 @@ struct GlyphFieldVariantArgs {
 struct GlyphFieldArgs {
   int columns = 0;
   double fontSize = std::numeric_limits<double>::quiet_NaN();
+  std::string glyphPalette;
   double letterSpacing = std::numeric_limits<double>::quiet_NaN();
   double lineHeight = std::numeric_limits<double>::quiet_NaN();
   int rows = 0;
@@ -109,7 +136,9 @@ jclass stringClass_ = nullptr;
 
 jmethodID initializeMethod_ = nullptr;
 jmethodID cleanupMethod_ = nullptr;
+jmethodID currentFontScaleMultiplierMethod_ = nullptr;
 jmethodID createGlyphFieldMethod_ = nullptr;
+jmethodID getGlyphFieldCellCountMethod_ = nullptr;
 jmethodID prepareMethod_ = nullptr;
 jmethodID prepareWithRunsMethod_ = nullptr;
 jmethodID prepareBatchMethod_ = nullptr;
@@ -117,7 +146,11 @@ jmethodID prepareBatchWithRunsMethod_ = nullptr;
 jmethodID releaseMethod_ = nullptr;
 jmethodID releaseGlyphFieldMethod_ = nullptr;
 jmethodID releaseManyMethod_ = nullptr;
+jmethodID attachGlyphFieldBuffersMethod_ = nullptr;
+jmethodID commitGlyphFieldBuffersMethod_ = nullptr;
 jmethodID updateGlyphFieldMethod_ = nullptr;
+jmethodID updateGlyphFieldIndicesMethod_ = nullptr;
+jmethodID measurePreparedWidthMethod_ = nullptr;
 jmethodID measureWidthMethod_ = nullptr;
 jmethodID measureWidthWithRunsMethod_ = nullptr;
 jmethodID measureMethod_ = nullptr;
@@ -139,6 +172,8 @@ constexpr int RUN_STYLE_HAS_FONT_WEIGHT = 1 << 4;
 constexpr int RUN_STYLE_HAS_LETTER_SPACING = 1 << 5;
 constexpr int RUN_STYLE_HAS_LINE_HEIGHT = 1 << 6;
 constexpr int RUN_STYLE_HAS_TABULAR_NUMBERS = 1 << 7;
+std::mutex glyphFieldBufferMutex_;
+std::unordered_map<Handle, std::shared_ptr<GlyphFieldBufferSet>> glyphFieldBuffers_;
 
 void throwJSError(Runtime& runtime, const char* message) {
   throw JSError(runtime, message);
@@ -149,6 +184,14 @@ void clearPendingException(JNIEnv* env, Runtime& runtime, const char* fallback) 
   env->ExceptionDescribe();
   env->ExceptionClear();
   throwJSError(runtime, fallback);
+}
+
+bool clearPendingException(JNIEnv* env, const char* fallback) {
+  if (!env->ExceptionCheck()) return false;
+  env->ExceptionDescribe();
+  env->ExceptionClear();
+  LOGE("%s", fallback);
+  return true;
 }
 
 JNIEnv* getEnv(bool& needsDetach) {
@@ -179,10 +222,12 @@ void initializeIfNeeded(JNIEnv* env, jobject context) {
 
   initializeMethod_ = env->GetStaticMethodID(bindingsClass_, "initialize", "(Lcom/facebook/react/bridge/ReactApplicationContext;)V");
   cleanupMethod_ = env->GetStaticMethodID(bindingsClass_, "cleanup", "()V");
+  currentFontScaleMultiplierMethod_ = env->GetStaticMethodID(bindingsClass_, "currentFontScaleMultiplier", "()D");
   createGlyphFieldMethod_ = env->GetStaticMethodID(
       bindingsClass_,
       "createGlyphField",
-      "(IILjava/lang/String;DDDLjava/lang/String;[Ljava/lang/String;[Ljava/lang/String;[Ljava/lang/String;)J");
+      "(IILjava/lang/String;DLjava/lang/String;DDLjava/lang/String;[Ljava/lang/String;[Ljava/lang/String;[Ljava/lang/String;)J");
+  getGlyphFieldCellCountMethod_ = env->GetStaticMethodID(bindingsClass_, "getGlyphFieldCellCount", "(J)I");
   prepareMethod_ = env->GetStaticMethodID(
       bindingsClass_,
       "prepare",
@@ -202,7 +247,12 @@ void initializeIfNeeded(JNIEnv* env, jobject context) {
   releaseMethod_ = env->GetStaticMethodID(bindingsClass_, "release", "(J)V");
   releaseGlyphFieldMethod_ = env->GetStaticMethodID(bindingsClass_, "releaseGlyphField", "(J)V");
   releaseManyMethod_ = env->GetStaticMethodID(bindingsClass_, "releaseMany", "([J)V");
+  attachGlyphFieldBuffersMethod_ =
+      env->GetStaticMethodID(bindingsClass_, "attachGlyphFieldBuffers", "(JLjava/nio/ByteBuffer;Ljava/nio/ByteBuffer;)V");
+  commitGlyphFieldBuffersMethod_ = env->GetStaticMethodID(bindingsClass_, "commitGlyphFieldBuffers", "(J)V");
   updateGlyphFieldMethod_ = env->GetStaticMethodID(bindingsClass_, "updateGlyphField", "(JLjava/lang/String;[B)V");
+  updateGlyphFieldIndicesMethod_ = env->GetStaticMethodID(bindingsClass_, "updateGlyphFieldIndices", "(J[B[B)V");
+  measurePreparedWidthMethod_ = env->GetStaticMethodID(bindingsClass_, "measurePreparedWidth", "(J)D");
   measureWidthMethod_ = env->GetStaticMethodID(
       bindingsClass_,
       "measureWidth",
@@ -214,25 +264,50 @@ void initializeIfNeeded(JNIEnv* env, jobject context) {
   measureMethod_ = env->GetStaticMethodID(
       bindingsClass_,
       "measure",
-      "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;DLjava/lang/String;Ljava/lang/String;DDZZZLjava/lang/String;DILjava/lang/String;)[D");
+      "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;DLjava/lang/String;Ljava/lang/String;DDZZZLjava/lang/String;DILjava/lang/String;Z)[D");
   measureWithRunsMethod_ = env->GetStaticMethodID(
       bindingsClass_,
       "measureWithRuns",
-      "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;DLjava/lang/String;Ljava/lang/String;DDZZZLjava/lang/String;DILjava/lang/String;[I[I[I[Ljava/lang/String;[Ljava/lang/String;[D[Ljava/lang/String;[Ljava/lang/String;[D[D[Z)[D");
+      "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;DLjava/lang/String;Ljava/lang/String;DDZZZLjava/lang/String;DILjava/lang/String;Z[I[I[I[Ljava/lang/String;[Ljava/lang/String;[D[Ljava/lang/String;[Ljava/lang/String;[D[D[Z)[D");
   measureBatchMethod_ = env->GetStaticMethodID(
       bindingsClass_,
       "measureBatch",
-      "([Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;DLjava/lang/String;Ljava/lang/String;DDZZZLjava/lang/String;DILjava/lang/String;)[D");
+      "([Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;DLjava/lang/String;Ljava/lang/String;DDZZZLjava/lang/String;DILjava/lang/String;Z)[D");
   measureBatchWithRunsMethod_ = env->GetStaticMethodID(
       bindingsClass_,
       "measureBatchWithRuns",
-      "([Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;DLjava/lang/String;Ljava/lang/String;DDZZZLjava/lang/String;DILjava/lang/String;[I[I[I[I[Ljava/lang/String;[Ljava/lang/String;[D[Ljava/lang/String;[Ljava/lang/String;[D[D[Z)[D");
-  layoutMethod_ = env->GetStaticMethodID(bindingsClass_, "layout", "(JDILjava/lang/String;)[D");
-  layoutBatchMethod_ = env->GetStaticMethodID(bindingsClass_, "layoutBatch", "([JDILjava/lang/String;)[D");
-  layoutNextLineMethod_ = env->GetStaticMethodID(bindingsClass_, "layoutNextLine", "(JID)[D");
-  layoutLinesMethod_ = env->GetStaticMethodID(bindingsClass_, "layoutLines", "(JDILjava/lang/String;)[D");
+      "([Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;DLjava/lang/String;Ljava/lang/String;DDZZZLjava/lang/String;DILjava/lang/String;Z[I[I[I[I[Ljava/lang/String;[Ljava/lang/String;[D[Ljava/lang/String;[Ljava/lang/String;[D[D[Z)[D");
+  layoutMethod_ = env->GetStaticMethodID(bindingsClass_, "layout", "(JDILjava/lang/String;Z)[D");
+  layoutBatchMethod_ = env->GetStaticMethodID(bindingsClass_, "layoutBatch", "([JDILjava/lang/String;Z)[D");
+  layoutNextLineMethod_ = env->GetStaticMethodID(bindingsClass_, "layoutNextLine", "(JIDZ)[D");
+  layoutLinesMethod_ = env->GetStaticMethodID(bindingsClass_, "layoutLines", "(JDILjava/lang/String;Z)[D");
 
-  env->CallStaticVoidMethod(bindingsClass_, initializeMethod_, context);
+  if (context != nullptr) {
+    env->CallStaticVoidMethod(bindingsClass_, initializeMethod_, context);
+  }
+}
+
+std::shared_ptr<GlyphFieldBufferSet> getOrCreateGlyphFieldBuffers(Handle handle, size_t cellCount) {
+  std::lock_guard<std::mutex> lock(glyphFieldBufferMutex_);
+  auto iterator = glyphFieldBuffers_.find(handle);
+  if (iterator != glyphFieldBuffers_.end()) {
+    return iterator->second;
+  }
+
+  auto buffers = std::make_shared<GlyphFieldBufferSet>();
+  buffers->glyphIndices = std::make_shared<GlyphFieldMutableBuffer>(cellCount);
+  buffers->variantIndices = std::make_shared<GlyphFieldMutableBuffer>(cellCount);
+  glyphFieldBuffers_.emplace(handle, buffers);
+  return buffers;
+}
+
+std::shared_ptr<GlyphFieldBufferSet> getGlyphFieldBuffers(Runtime& runtime, Handle handle) {
+  std::lock_guard<std::mutex> lock(glyphFieldBufferMutex_);
+  auto iterator = glyphFieldBuffers_.find(handle);
+  if (iterator == glyphFieldBuffers_.end()) {
+    throwJSError(runtime, "RNTextEngine: attempted to use glyph field buffers before creating them.");
+  }
+  return iterator->second;
 }
 
 jstring toJString(JNIEnv* env, const std::string& value) {
@@ -247,19 +322,16 @@ StyleArgs parseStyle(Runtime& runtime, const Value* arguments, size_t index, siz
   Object object = arguments[index].asObject(runtime);
 
   auto readBool = [&](const char* name, bool& target) {
-    if (!object.hasProperty(runtime, name)) return;
     Value value = object.getProperty(runtime, name);
     if (value.isBool()) target = value.getBool();
   };
 
   auto readNumber = [&](const char* name, double& target) {
-    if (!object.hasProperty(runtime, name)) return;
     Value value = object.getProperty(runtime, name);
     if (value.isNumber()) target = value.asNumber();
   };
 
   auto readString = [&](const char* name, std::string& target) {
-    if (!object.hasProperty(runtime, name)) return;
     Value value = object.getProperty(runtime, name);
     if (value.isString()) target = value.asString(runtime).utf8(runtime);
   };
@@ -320,6 +392,14 @@ GlyphFieldArgs parseGlyphField(Runtime& runtime, const Value& value) {
       throwJSError(runtime, "RNTextEngine: glyph field fontFamily must be a string.");
     }
     field.fontFamily = fontFamily.asString(runtime).utf8(runtime);
+  }
+
+  if (object.hasProperty(runtime, "glyphPalette")) {
+    Value glyphPalette = object.getProperty(runtime, "glyphPalette");
+    if (!glyphPalette.isString()) {
+      throwJSError(runtime, "RNTextEngine: glyph field glyphPalette must be a string.");
+    }
+    field.glyphPalette = glyphPalette.asString(runtime).utf8(runtime);
   }
 
   if (object.hasProperty(runtime, "letterSpacing")) {
@@ -397,7 +477,6 @@ RunStyleArgs parseRunStyle(Runtime& runtime, const Object& object) {
   RunStyleArgs style;
 
   auto readBool = [&](const char* name, bool& hasValue, bool& target) {
-    if (!object.hasProperty(runtime, name)) return;
     Value value = object.getProperty(runtime, name);
     if (!value.isBool()) return;
     hasValue = true;
@@ -405,7 +484,6 @@ RunStyleArgs parseRunStyle(Runtime& runtime, const Object& object) {
   };
 
   auto readNumber = [&](const char* name, bool& hasValue, double& target) {
-    if (!object.hasProperty(runtime, name)) return;
     Value value = object.getProperty(runtime, name);
     if (!value.isNumber()) return;
     hasValue = true;
@@ -413,7 +491,6 @@ RunStyleArgs parseRunStyle(Runtime& runtime, const Object& object) {
   };
 
   auto readString = [&](const char* name, bool& hasValue, std::string& target) {
-    if (!object.hasProperty(runtime, name)) return;
     Value value = object.getProperty(runtime, name);
     if (!value.isString()) return;
     hasValue = true;
@@ -463,10 +540,6 @@ std::vector<TextRunArgs> parseRuns(Runtime& runtime, const Value& value) {
     }
 
     Object runObject = item.asObject(runtime);
-    if (!runObject.hasProperty(runtime, "start") || !runObject.hasProperty(runtime, "end")) {
-      throwJSError(runtime, "RNTextEngine: each text run must include start and end offsets.");
-    }
-
     Value startValue = runObject.getProperty(runtime, "start");
     Value endValue = runObject.getProperty(runtime, "end");
     if (!startValue.isNumber() || !endValue.isNumber()) {
@@ -480,10 +553,6 @@ std::vector<TextRunArgs> parseRuns(Runtime& runtime, const Value& value) {
     }
     if (start < previousEnd) {
       throwJSError(runtime, "RNTextEngine: text runs must be sorted and non-overlapping.");
-    }
-
-    if (!runObject.hasProperty(runtime, "style")) {
-      throwJSError(runtime, "RNTextEngine: each text run must include a style object.");
     }
 
     Value styleValue = runObject.getProperty(runtime, "style");
@@ -540,55 +609,62 @@ bool hasAnyRuns(const std::vector<std::vector<TextRunArgs>>& runsByText) {
   return false;
 }
 
+void reserveFlattenedRuns(FlattenedRuns& flattened, size_t runCount) {
+  flattened.starts.reserve(runCount);
+  flattened.ends.reserve(runCount);
+  flattened.masks.reserve(runCount);
+  flattened.colors.reserve(runCount);
+  flattened.fontFamilies.reserve(runCount);
+  flattened.fontSizes.reserve(runCount);
+  flattened.fontWeights.reserve(runCount);
+  flattened.fontStyles.reserve(runCount);
+  flattened.letterSpacings.reserve(runCount);
+  flattened.lineHeights.reserve(runCount);
+  flattened.tabularNumbers.reserve(runCount);
+}
+
+void appendFlattenedRun(FlattenedRuns& flattened, const TextRunArgs& run) {
+  flattened.starts.push_back(run.start);
+  flattened.ends.push_back(run.end);
+  flattened.masks.push_back(buildRunStyleMask(run.style));
+  flattened.colors.push_back(run.style.color);
+  flattened.fontFamilies.push_back(run.style.fontFamily);
+  flattened.fontSizes.push_back(run.style.fontSize);
+  flattened.fontWeights.push_back(run.style.fontWeight);
+  flattened.fontStyles.push_back(run.style.fontStyle);
+  flattened.letterSpacings.push_back(run.style.letterSpacing);
+  flattened.lineHeights.push_back(run.style.lineHeight);
+  flattened.tabularNumbers.push_back(run.style.tabularNumbers);
+}
+
 FlattenedRuns flattenRuns(const std::vector<TextRunArgs>& runs) {
   FlattenedRuns flattened;
-  flattened.starts.reserve(runs.size());
-  flattened.ends.reserve(runs.size());
-  flattened.masks.reserve(runs.size());
-  flattened.colors.reserve(runs.size());
-  flattened.fontFamilies.reserve(runs.size());
-  flattened.fontSizes.reserve(runs.size());
-  flattened.fontWeights.reserve(runs.size());
-  flattened.fontStyles.reserve(runs.size());
-  flattened.letterSpacings.reserve(runs.size());
-  flattened.lineHeights.reserve(runs.size());
-  flattened.tabularNumbers.reserve(runs.size());
+  reserveFlattenedRuns(flattened, runs.size());
 
   for (const TextRunArgs& run : runs) {
-    flattened.starts.push_back(run.start);
-    flattened.ends.push_back(run.end);
-    flattened.masks.push_back(buildRunStyleMask(run.style));
-    flattened.colors.push_back(run.style.color);
-    flattened.fontFamilies.push_back(run.style.fontFamily);
-    flattened.fontSizes.push_back(run.style.fontSize);
-    flattened.fontWeights.push_back(run.style.fontWeight);
-    flattened.fontStyles.push_back(run.style.fontStyle);
-    flattened.letterSpacings.push_back(run.style.letterSpacing);
-    flattened.lineHeights.push_back(run.style.lineHeight);
-    flattened.tabularNumbers.push_back(run.style.tabularNumbers);
+    appendFlattenedRun(flattened, run);
   }
 
   return flattened;
 }
 
 FlattenedRuns flattenRuns(const std::vector<std::vector<TextRunArgs>>& runsByText) {
+  size_t runCount = 0;
+  for (const auto& runs : runsByText) {
+    runCount += runs.size();
+  }
+
   FlattenedRuns flattened;
   flattened.counts.reserve(runsByText.size());
+  reserveFlattenedRuns(flattened, runCount);
+
   for (const auto& runs : runsByText) {
     flattened.counts.push_back(static_cast<int>(runs.size()));
-    FlattenedRuns next = flattenRuns(runs);
-    flattened.starts.insert(flattened.starts.end(), next.starts.begin(), next.starts.end());
-    flattened.ends.insert(flattened.ends.end(), next.ends.begin(), next.ends.end());
-    flattened.masks.insert(flattened.masks.end(), next.masks.begin(), next.masks.end());
-    flattened.colors.insert(flattened.colors.end(), next.colors.begin(), next.colors.end());
-    flattened.fontFamilies.insert(flattened.fontFamilies.end(), next.fontFamilies.begin(), next.fontFamilies.end());
-    flattened.fontSizes.insert(flattened.fontSizes.end(), next.fontSizes.begin(), next.fontSizes.end());
-    flattened.fontWeights.insert(flattened.fontWeights.end(), next.fontWeights.begin(), next.fontWeights.end());
-    flattened.fontStyles.insert(flattened.fontStyles.end(), next.fontStyles.begin(), next.fontStyles.end());
-    flattened.letterSpacings.insert(flattened.letterSpacings.end(), next.letterSpacings.begin(), next.letterSpacings.end());
-    flattened.lineHeights.insert(flattened.lineHeights.end(), next.lineHeights.begin(), next.lineHeights.end());
-    flattened.tabularNumbers.insert(flattened.tabularNumbers.end(), next.tabularNumbers.begin(), next.tabularNumbers.end());
+    for (const TextRunArgs& run : runs) {
+      appendFlattenedRun(flattened, run);
+    }
   }
+
   return flattened;
 }
 
@@ -599,25 +675,20 @@ LayoutArgs parseLayout(Runtime& runtime, const Value* arguments, size_t index, s
 
   LayoutArgs layout;
   Object object = arguments[index].asObject(runtime);
-  if (!object.hasProperty(runtime, "width")) {
-    throwJSError(runtime, "RNTextEngine: layout options must include a width.");
-  }
-
   Value width = object.getProperty(runtime, "width");
   if (!width.isNumber()) {
     throwJSError(runtime, "RNTextEngine: layout width must be a number.");
   }
   layout.width = width.asNumber();
 
-  if (object.hasProperty(runtime, "maxLines")) {
-    Value maxLines = object.getProperty(runtime, "maxLines");
-    if (maxLines.isNumber()) layout.maxLines = static_cast<int>(maxLines.asNumber());
-  }
+  Value maxLines = object.getProperty(runtime, "maxLines");
+  if (maxLines.isNumber()) layout.maxLines = static_cast<int>(maxLines.asNumber());
 
-  if (object.hasProperty(runtime, "ellipsizeMode")) {
-    Value mode = object.getProperty(runtime, "ellipsizeMode");
-    if (mode.isString()) layout.ellipsizeMode = mode.asString(runtime).utf8(runtime);
-  }
+  Value mode = object.getProperty(runtime, "ellipsizeMode");
+  if (mode.isString()) layout.ellipsizeMode = mode.asString(runtime).utf8(runtime);
+
+  Value anchorToCapHeight = object.getProperty(runtime, "anchorToCapHeight");
+  if (anchorToCapHeight.isBool()) layout.anchorToCapHeight = anchorToCapHeight.getBool();
 
   return layout;
 }
@@ -662,7 +733,7 @@ std::vector<Handle> parseHandleArray(Runtime& runtime, const Value& value) {
   return handles;
 }
 
-std::vector<uint8_t> parseUint8Array(Runtime& runtime, const Value& value, size_t expectedLength) {
+Uint8ArrayView parseUint8Array(Runtime& runtime, const Value& value) {
   if (!value.isObject()) {
     throwJSError(runtime, "RNTextEngine: glyph field variantIndices must be a Uint8Array.");
   }
@@ -691,15 +762,19 @@ std::vector<uint8_t> parseUint8Array(Runtime& runtime, const Value& value, size_
   ArrayBuffer buffer = bufferObject.getArrayBuffer(runtime);
   size_t byteOffset = static_cast<size_t>(byteOffsetValue.asNumber());
   size_t length = static_cast<size_t>(lengthValue.asNumber());
-  if (length != expectedLength || byteOffset + length > buffer.size(runtime)) {
-    throwJSError(runtime, "RNTextEngine: glyph field variantIndices length must match columns * rows.");
+  if (byteOffset + length > buffer.size(runtime)) {
+    throwJSError(runtime, "RNTextEngine: glyph field variantIndices Uint8Array exceeded its ArrayBuffer bounds.");
   }
 
-  std::vector<uint8_t> values(length);
-  if (!values.empty()) {
-    std::memcpy(values.data(), buffer.data(runtime) + byteOffset, length);
+  return {.data = buffer.data(runtime) + byteOffset, .length = length};
+}
+
+Uint8ArrayView parseUint8Array(Runtime& runtime, const Value& value, size_t expectedLength) {
+  Uint8ArrayView view = parseUint8Array(runtime, value);
+  if (view.length != expectedLength) {
+    throwJSError(runtime, "RNTextEngine: glyph field variantIndices length must match columns * rows.");
   }
-  return values;
+  return view;
 }
 
 jobjectArray makeJavaStringArray(JNIEnv* env, const std::vector<std::string>& values) {
@@ -714,8 +789,7 @@ jobjectArray makeJavaStringArray(JNIEnv* env, const std::vector<std::string>& va
 
 jlongArray makeJavaLongArray(JNIEnv* env, const std::vector<Handle>& values) {
   jlongArray array = env->NewLongArray(static_cast<jsize>(values.size()));
-  std::vector<jlong> data(values.begin(), values.end());
-  env->SetLongArrayRegion(array, 0, static_cast<jsize>(data.size()), data.data());
+  if (!values.empty()) env->SetLongArrayRegion(array, 0, static_cast<jsize>(values.size()), values.data());
   return array;
 }
 
@@ -743,15 +817,15 @@ jbooleanArray makeJavaBooleanArray(JNIEnv* env, const std::vector<bool>& values)
   return array;
 }
 
-jbyteArray makeJavaByteArray(JNIEnv* env, const std::vector<uint8_t>& values) {
-  jbyteArray array = env->NewByteArray(static_cast<jsize>(values.size()));
-  if (values.empty()) return array;
+jbyteArray makeJavaByteArray(JNIEnv* env, const Uint8ArrayView& values) {
+  jbyteArray array = env->NewByteArray(static_cast<jsize>(values.length));
+  if (values.length == 0) return array;
 
-  std::vector<jbyte> data(values.size());
-  for (size_t index = 0; index < values.size(); index++) {
-    data[index] = static_cast<jbyte>(values[index]);
-  }
-  env->SetByteArrayRegion(array, 0, static_cast<jsize>(data.size()), data.data());
+  env->SetByteArrayRegion(
+      array,
+      0,
+      static_cast<jsize>(values.length),
+      reinterpret_cast<const jbyte*>(values.data));
   return array;
 }
 
@@ -774,21 +848,31 @@ std::vector<double> toDoubleVector(JNIEnv* env, jdoubleArray array) {
   return values;
 }
 
+bool readDoubleArray(JNIEnv* env, jdoubleArray array, double* values, jsize expectedLength) {
+  if (array == nullptr || env->GetArrayLength(array) != expectedLength) return false;
+  env->GetDoubleArrayRegion(array, 0, expectedLength, values);
+  return true;
+}
+
 std::vector<Handle> toHandleVector(JNIEnv* env, jlongArray array) {
   if (array == nullptr) return {};
   jsize length = env->GetArrayLength(array);
-  std::vector<jlong> values(length);
+  std::vector<Handle> values(length);
   env->GetLongArrayRegion(array, 0, length, values.data());
-  return std::vector<Handle>(values.begin(), values.end());
+  return values;
 }
 
-Object buildLayoutObject(Runtime& runtime, const std::vector<double>& packed, size_t offset) {
+Object buildLayoutObject(Runtime& runtime, const double* packed, size_t offset) {
   Object result(runtime);
   result.setProperty(runtime, "width", packed[offset + 0]);
   result.setProperty(runtime, "height", packed[offset + 1]);
   result.setProperty(runtime, "lineCount", packed[offset + 2]);
   result.setProperty(runtime, "lastLineWidth", packed[offset + 3]);
   return result;
+}
+
+Object buildLayoutObject(Runtime& runtime, const std::vector<double>& packed, size_t offset) {
+  return buildLayoutObject(runtime, packed.data(), offset);
 }
 
 Value buildLayoutLinesObject(Runtime& runtime, const std::vector<double>& packed) {
@@ -814,12 +898,7 @@ Value buildLayoutLinesObject(Runtime& runtime, const std::vector<double>& packed
   return result;
 }
 
-Value buildNextLineObject(Runtime& runtime, const std::vector<double>& packed) {
-  if (packed.empty()) return Value::null();
-  if (packed.size() != PACKED_LINE_SIZE) {
-    throwJSError(runtime, "RNTextEngine: native next-line layout returned an invalid payload.");
-  }
-
+Value buildNextLineObject(Runtime& runtime, const double* packed) {
   Object line(runtime);
   line.setProperty(runtime, "start", packed[0]);
   line.setProperty(runtime, "end", packed[1]);
@@ -848,26 +927,6 @@ Array buildHandleArray(Runtime& runtime, const std::vector<Handle>& handles) {
   return array;
 }
 
-Runtime* extractRuntimeFromToken(Runtime& runtime, const Value& value) {
-  if (!value.isObject()) {
-    throwJSError(runtime, "RNTextEngine: runtime token must be an ArrayBuffer.");
-  }
-
-  Object object = value.asObject(runtime);
-  if (!object.isArrayBuffer(runtime)) {
-    throwJSError(runtime, "RNTextEngine: runtime token must be an ArrayBuffer.");
-  }
-
-  ArrayBuffer buffer = object.getArrayBuffer(runtime);
-  if (buffer.size(runtime) < sizeof(uintptr_t)) {
-    throwJSError(runtime, "RNTextEngine: runtime token had an invalid size.");
-  }
-
-  uintptr_t pointer = 0;
-  std::memcpy(&pointer, buffer.data(runtime), sizeof(uintptr_t));
-  return reinterpret_cast<Runtime*>(pointer);
-}
-
 template <typename Fn>
 void withStyle(JNIEnv* env, const StyleArgs& style, Fn&& fn) {
   jstring color = toJString(env, style.color);
@@ -891,6 +950,10 @@ void cleanup(JNIEnv* env) {
   if (!bindingsClass_) return;
   env->CallStaticVoidMethod(bindingsClass_, cleanupMethod_);
   if (env->ExceptionCheck()) env->ExceptionClear();
+  {
+    std::lock_guard<std::mutex> lock(glyphFieldBufferMutex_);
+    glyphFieldBuffers_.clear();
+  }
   if (stringClass_ != nullptr) {
     env->DeleteGlobalRef(stringClass_);
     stringClass_ = nullptr;
@@ -899,8 +962,184 @@ void cleanup(JNIEnv* env) {
   bindingsClass_ = nullptr;
 }
 
-void install(Runtime& runtime, JNIEnv* env, jobject context) {
-  initializeIfNeeded(env, context);
+double currentFontScaleMultiplier() {
+  bool needsDetach = false;
+  JNIEnv* env = getEnv(needsDetach);
+  if (env == nullptr) return 1.0;
+
+  initializeIfNeeded(env, nullptr);
+  const jdouble multiplier =
+      env->CallStaticDoubleMethod(bindingsClass_, currentFontScaleMultiplierMethod_);
+  clearPendingException(
+      env,
+      "RNTextEngine: native font-scale multiplier lookup failed.");
+  if (needsDetach) jvm_->DetachCurrentThread();
+  return static_cast<double>(multiplier);
+}
+
+uint64_t prepareTextViewMeasurementHandle(
+    const std::string& text,
+    bool allowFontScaling,
+    const std::string& fontFamily,
+    double fontSize,
+    const std::string& fontWeight,
+    const std::string& fontStyle,
+    double letterSpacing,
+    double lineHeight,
+    bool tabularNumbers,
+    const TextViewMeasurementRuns& runs) {
+  bool needsDetach = false;
+  JNIEnv* env = getEnv(needsDetach);
+  if (env == nullptr) return 0;
+
+  initializeIfNeeded(env, nullptr);
+
+  jstring textValue = env->NewStringUTF(text.c_str());
+  jstring fontFamilyValue = toJString(env, fontFamily);
+  jstring fontWeightValue = toJString(env, fontWeight);
+  jstring fontStyleValue = toJString(env, fontStyle);
+
+  jlong handle = 0;
+  if (runs.starts.empty() || runs.ends.empty() || runs.styleMasks.empty()) {
+    handle = env->CallStaticLongMethod(
+        bindingsClass_,
+        prepareMethod_,
+        textValue,
+        nullptr,
+        fontFamilyValue,
+        fontSize,
+        fontWeightValue,
+        fontStyleValue,
+        letterSpacing,
+        lineHeight,
+        allowFontScaling,
+        false,
+        tabularNumbers,
+        nullptr);
+  } else {
+    jintArray runStarts = makeJavaIntArray(env, runs.starts);
+    jintArray runEnds = makeJavaIntArray(env, runs.ends);
+    jintArray runMasks = makeJavaIntArray(env, runs.styleMasks);
+    jobjectArray runColors = makeJavaOptionalStringArray(env, std::vector<std::string>(runs.starts.size()));
+    jobjectArray runFontFamilies = makeJavaOptionalStringArray(env, runs.fontFamilies);
+    jdoubleArray runFontSizes = makeJavaDoubleArray(env, runs.fontSizes);
+    jobjectArray runFontWeights = makeJavaOptionalStringArray(env, runs.fontWeights);
+    jobjectArray runFontStyles = makeJavaOptionalStringArray(env, runs.fontStyles);
+    jdoubleArray runLetterSpacings = makeJavaDoubleArray(env, runs.letterSpacings);
+    jdoubleArray runLineHeights = makeJavaDoubleArray(env, runs.lineHeights);
+    jbooleanArray runTabularNumbers = makeJavaBooleanArray(env, runs.tabularNumbers);
+
+    handle = env->CallStaticLongMethod(
+        bindingsClass_,
+        prepareWithRunsMethod_,
+        textValue,
+        nullptr,
+        fontFamilyValue,
+        fontSize,
+        fontWeightValue,
+        fontStyleValue,
+        letterSpacing,
+        lineHeight,
+        allowFontScaling,
+        false,
+        tabularNumbers,
+        nullptr,
+        runStarts,
+        runEnds,
+        runMasks,
+        runColors,
+        runFontFamilies,
+        runFontSizes,
+        runFontWeights,
+        runFontStyles,
+        runLetterSpacings,
+        runLineHeights,
+        runTabularNumbers);
+
+    env->DeleteLocalRef(runStarts);
+    env->DeleteLocalRef(runEnds);
+    env->DeleteLocalRef(runMasks);
+    env->DeleteLocalRef(runColors);
+    env->DeleteLocalRef(runFontFamilies);
+    env->DeleteLocalRef(runFontSizes);
+    env->DeleteLocalRef(runFontWeights);
+    env->DeleteLocalRef(runFontStyles);
+    env->DeleteLocalRef(runLetterSpacings);
+    env->DeleteLocalRef(runLineHeights);
+    env->DeleteLocalRef(runTabularNumbers);
+  }
+
+  clearPendingException(env, "RNTextEngine: native TextView measurement prepare() failed.");
+
+  env->DeleteLocalRef(textValue);
+  if (fontFamilyValue) env->DeleteLocalRef(fontFamilyValue);
+  if (fontWeightValue) env->DeleteLocalRef(fontWeightValue);
+  if (fontStyleValue) env->DeleteLocalRef(fontStyleValue);
+  if (needsDetach) jvm_->DetachCurrentThread();
+  return static_cast<uint64_t>(handle);
+}
+
+double measurePreparedTextMeasurementWidth(uint64_t handle) {
+  bool needsDetach = false;
+  JNIEnv* env = getEnv(needsDetach);
+  if (env == nullptr) return 0;
+
+  initializeIfNeeded(env, nullptr);
+  jdouble width = env->CallStaticDoubleMethod(bindingsClass_, measurePreparedWidthMethod_, static_cast<jlong>(handle));
+  clearPendingException(env, "RNTextEngine: native measurePreparedWidth() failed.");
+  if (needsDetach) jvm_->DetachCurrentThread();
+  return width;
+}
+
+PreparedTextLayoutMeasurement measurePreparedTextMeasurementLayout(
+    uint64_t handle,
+    double width,
+    int maxLines,
+    const std::string& ellipsizeMode,
+    bool anchorToCapHeight) {
+  bool needsDetach = false;
+  JNIEnv* env = getEnv(needsDetach);
+  if (env == nullptr) return {};
+
+  initializeIfNeeded(env, nullptr);
+  jstring ellipsizeModeValue = toJString(env, ellipsizeMode);
+  jdoubleArray packed = reinterpret_cast<jdoubleArray>(env->CallStaticObjectMethod(
+      bindingsClass_,
+      layoutMethod_,
+      static_cast<jlong>(handle),
+      width,
+      static_cast<jint>(maxLines),
+      ellipsizeModeValue,
+      anchorToCapHeight));
+
+  clearPendingException(env, "RNTextEngine: native TextView measurement layout() failed.");
+  std::vector<double> values = toDoubleVector(env, packed);
+
+  if (ellipsizeModeValue) env->DeleteLocalRef(ellipsizeModeValue);
+  if (packed) env->DeleteLocalRef(packed);
+  if (needsDetach) jvm_->DetachCurrentThread();
+
+  if (values.size() < PACKED_LAYOUT_SIZE) return {};
+  return {.height = values[1], .width = values[0]};
+}
+
+void releasePreparedTextMeasurementHandle(uint64_t handle) {
+  if (handle == 0) return;
+
+  bool needsDetach = false;
+  JNIEnv* env = getEnv(needsDetach);
+  if (env == nullptr) return;
+
+  initializeIfNeeded(env, nullptr);
+  env->CallStaticVoidMethod(bindingsClass_, releaseMethod_, static_cast<jlong>(handle));
+  clearPendingException(env, "RNTextEngine: native TextView measurement release() failed.");
+  if (needsDetach) jvm_->DetachCurrentThread();
+}
+
+void install(Runtime& runtime) {
+  if (bindingsClass_ == nullptr) {
+    throwJSError(runtime, "RNTextEngine: native bindings must be initialized before installing additional runtimes.");
+  }
 
   auto installFunction = [&](const char* name, unsigned int argCount, auto fn) {
     runtime.global().setProperty(
@@ -909,26 +1148,11 @@ void install(Runtime& runtime, JNIEnv* env, jobject context) {
         Function::createFromHostFunction(runtime, PropNameID::forAscii(runtime, name), argCount, fn));
   };
 
-  installFunction(
-      "__RNTextEngineInstallRuntime",
-      1,
-      [&](Runtime& runtime, const Value&, const Value* arguments, size_t count) -> Value {
-        if (count == 0) {
-          throwJSError(runtime, "RNTextEngine: installRuntime() requires a runtime token.");
-        }
-
-        Runtime* targetRuntime = extractRuntimeFromToken(runtime, arguments[0]);
-        if (targetRuntime == nullptr) return Value(false);
-
-        rntextengine::install(*targetRuntime, env, context);
-        return Value(true);
-      });
-
 #if RNTEXTENGINE_HAS_WORKLETS
   installFunction(
       "__RNTextEngineInstallWorkletRuntime",
       1,
-      [&](Runtime& runtime, const Value&, const Value* arguments, size_t count) -> Value {
+      [](Runtime& runtime, const Value&, const Value* arguments, size_t count) -> Value {
         if (count == 0 || !arguments[0].isObject()) {
           throwJSError(
               runtime,
@@ -951,7 +1175,7 @@ void install(Runtime& runtime, JNIEnv* env, jobject context) {
 
         if (!workletRuntime) return Value(false);
 
-        rntextengine::install(workletRuntime->getJSIRuntime(), env, context);
+        rntextengine::install(workletRuntime->getJSIRuntime());
         return Value(true);
       });
 #endif
@@ -970,6 +1194,7 @@ void install(Runtime& runtime, JNIEnv* env, jobject context) {
         if (env == nullptr) throwJSError(runtime, "RNTextEngine: failed to access JNI environment.");
 
         jstring fontFamily = toJString(env, field.fontFamily);
+        jstring glyphPalette = toJString(env, field.glyphPalette);
         jstring textAlign = toJString(env, field.textAlign);
         std::vector<std::string> colors;
         std::vector<std::string> fontWeights;
@@ -994,6 +1219,7 @@ void install(Runtime& runtime, JNIEnv* env, jobject context) {
             field.rows,
             fontFamily,
             field.fontSize,
+            glyphPalette,
             std::isnan(field.letterSpacing) ? 0.0 : field.letterSpacing,
             field.lineHeight,
             textAlign,
@@ -1002,6 +1228,7 @@ void install(Runtime& runtime, JNIEnv* env, jobject context) {
             variantFontStyles);
 
         if (fontFamily) env->DeleteLocalRef(fontFamily);
+        if (glyphPalette) env->DeleteLocalRef(glyphPalette);
         if (textAlign) env->DeleteLocalRef(textAlign);
         env->DeleteLocalRef(variantColors);
         env->DeleteLocalRef(variantFontWeights);
@@ -1010,6 +1237,63 @@ void install(Runtime& runtime, JNIEnv* env, jobject context) {
         clearPendingException(env, runtime, "RNTextEngine: native createGlyphField() failed.");
         if (needsDetach) jvm_->DetachCurrentThread();
         return static_cast<double>(handle);
+      });
+
+  installFunction(
+      "__RNTextEngineCreateGlyphFieldBuffers",
+      1,
+      [](Runtime& runtime, const Value&, const Value* arguments, size_t count) -> Value {
+        if (count == 0 || !arguments[0].isNumber()) {
+          throwJSError(runtime, "RNTextEngine: createGlyphFieldBuffers() requires a glyph field handle.");
+        }
+
+        bool needsDetach = false;
+        JNIEnv* env = getEnv(needsDetach);
+        if (env == nullptr) throwJSError(runtime, "RNTextEngine: failed to access JNI environment.");
+
+        Handle handle = static_cast<Handle>(arguments[0].asNumber());
+        jint cellCount = env->CallStaticIntMethod(bindingsClass_, getGlyphFieldCellCountMethod_, static_cast<jlong>(handle));
+        clearPendingException(env, runtime, "RNTextEngine: native getGlyphFieldCellCount() failed.");
+
+        std::shared_ptr<GlyphFieldBufferSet> buffers = getOrCreateGlyphFieldBuffers(handle, static_cast<size_t>(cellCount));
+        jobject glyphIndicesBuffer = env->NewDirectByteBuffer(buffers->glyphIndices->data(), cellCount);
+        jobject variantIndicesBuffer = env->NewDirectByteBuffer(buffers->variantIndices->data(), cellCount);
+        env->CallStaticVoidMethod(
+            bindingsClass_,
+            attachGlyphFieldBuffersMethod_,
+            static_cast<jlong>(handle),
+            glyphIndicesBuffer,
+            variantIndicesBuffer);
+        clearPendingException(env, runtime, "RNTextEngine: native attachGlyphFieldBuffers() failed.");
+
+        Object result(runtime);
+        result.setProperty(runtime, "glyphIndices", ArrayBuffer(runtime, buffers->glyphIndices));
+        result.setProperty(runtime, "variantIndices", ArrayBuffer(runtime, buffers->variantIndices));
+
+        env->DeleteLocalRef(glyphIndicesBuffer);
+        env->DeleteLocalRef(variantIndicesBuffer);
+        if (needsDetach) jvm_->DetachCurrentThread();
+        return result;
+      });
+
+  installFunction(
+      "__RNTextEngineCommitGlyphFieldBuffers",
+      1,
+      [](Runtime& runtime, const Value&, const Value* arguments, size_t count) -> Value {
+        if (count == 0 || !arguments[0].isNumber()) {
+          throwJSError(runtime, "RNTextEngine: commitGlyphFieldBuffers() requires a glyph field handle.");
+        }
+
+        bool needsDetach = false;
+        JNIEnv* env = getEnv(needsDetach);
+        if (env == nullptr) throwJSError(runtime, "RNTextEngine: failed to access JNI environment.");
+
+        jlong handle = static_cast<jlong>(arguments[0].asNumber());
+        getGlyphFieldBuffers(runtime, static_cast<Handle>(handle));
+        env->CallStaticVoidMethod(bindingsClass_, commitGlyphFieldBuffersMethod_, handle);
+        clearPendingException(env, runtime, "RNTextEngine: native commitGlyphFieldBuffers() failed.");
+        if (needsDetach) jvm_->DetachCurrentThread();
+        return Value::undefined();
       });
 
   installFunction(
@@ -1026,7 +1310,7 @@ void install(Runtime& runtime, JNIEnv* env, jobject context) {
 
         jlong handle = static_cast<jlong>(arguments[0].asNumber());
         std::string glyphsValue = arguments[1].asString(runtime).utf8(runtime);
-        std::vector<uint8_t> variantIndices = parseUint8Array(runtime, arguments[2], glyphsValue.size());
+        Uint8ArrayView variantIndices = parseUint8Array(runtime, arguments[2], glyphsValue.size());
         jstring glyphs = env->NewStringUTF(glyphsValue.c_str());
         jbyteArray variantIndicesArray = makeJavaByteArray(env, variantIndices);
 
@@ -1035,6 +1319,33 @@ void install(Runtime& runtime, JNIEnv* env, jobject context) {
         env->DeleteLocalRef(glyphs);
         env->DeleteLocalRef(variantIndicesArray);
         clearPendingException(env, runtime, "RNTextEngine: native updateGlyphField() failed.");
+        if (needsDetach) jvm_->DetachCurrentThread();
+        return Value::undefined();
+      });
+
+  installFunction(
+      "__RNTextEngineUpdateGlyphFieldIndices",
+      3,
+      [](Runtime& runtime, const Value&, const Value* arguments, size_t count) -> Value {
+        if (count < 3 || !arguments[0].isNumber()) {
+          throwJSError(runtime, "RNTextEngine: updateGlyphFieldIndices() requires a handle, glyphIndices Uint8Array, and Uint8Array.");
+        }
+
+        bool needsDetach = false;
+        JNIEnv* env = getEnv(needsDetach);
+        if (env == nullptr) throwJSError(runtime, "RNTextEngine: failed to access JNI environment.");
+
+        jlong handle = static_cast<jlong>(arguments[0].asNumber());
+        Uint8ArrayView glyphIndices = parseUint8Array(runtime, arguments[1]);
+        Uint8ArrayView variantIndices = parseUint8Array(runtime, arguments[2], glyphIndices.length);
+        jbyteArray glyphIndicesArray = makeJavaByteArray(env, glyphIndices);
+        jbyteArray variantIndicesArray = makeJavaByteArray(env, variantIndices);
+
+        env->CallStaticVoidMethod(bindingsClass_, updateGlyphFieldIndicesMethod_, handle, glyphIndicesArray, variantIndicesArray);
+
+        env->DeleteLocalRef(glyphIndicesArray);
+        env->DeleteLocalRef(variantIndicesArray);
+        clearPendingException(env, runtime, "RNTextEngine: native updateGlyphFieldIndices() failed.");
         if (needsDetach) jvm_->DetachCurrentThread();
         return Value::undefined();
       });
@@ -1051,7 +1362,12 @@ void install(Runtime& runtime, JNIEnv* env, jobject context) {
         JNIEnv* env = getEnv(needsDetach);
         if (env == nullptr) throwJSError(runtime, "RNTextEngine: failed to access JNI environment.");
 
-        env->CallStaticVoidMethod(bindingsClass_, releaseGlyphFieldMethod_, static_cast<jlong>(arguments[0].asNumber()));
+        Handle handle = static_cast<Handle>(arguments[0].asNumber());
+        env->CallStaticVoidMethod(bindingsClass_, releaseGlyphFieldMethod_, static_cast<jlong>(handle));
+        {
+          std::lock_guard<std::mutex> lock(glyphFieldBufferMutex_);
+          glyphFieldBuffers_.erase(handle);
+        }
         clearPendingException(env, runtime, "RNTextEngine: native releaseGlyphField() failed.");
         if (needsDetach) jvm_->DetachCurrentThread();
         return Value::undefined();
@@ -1412,14 +1728,39 @@ void install(Runtime& runtime, JNIEnv* env, jobject context) {
         jstring ellipsize = toJString(env, layout.ellipsizeMode);
 
         if (texts != nullptr) {
-          jobjectArray textArray = makeJavaStringArray(env, *texts);
+          bool isSingleTextCall = texts->size() == 1 && method != measureBatchMethod_ && method != measureBatchWithRunsMethod_;
+          jobjectArray textArray = isSingleTextCall ? nullptr : makeJavaStringArray(env, *texts);
+          auto makeSingleText = [&]() -> jstring {
+            return env->NewStringUTF(texts->front().c_str());
+          };
           if (style == nullptr) {
-            packed = reinterpret_cast<jdoubleArray>(
-                env->CallStaticObjectMethod(bindingsClass_, method, textArray, layout.width, layout.maxLines, ellipsize));
+            if (isSingleTextCall) {
+              jstring text = makeSingleText();
+              packed = reinterpret_cast<jdoubleArray>(
+                  env->CallStaticObjectMethod(
+                      bindingsClass_,
+                      method,
+                      text,
+                      layout.width,
+                      layout.maxLines,
+                      ellipsize,
+                      layout.anchorToCapHeight));
+              env->DeleteLocalRef(text);
+            } else {
+              packed = reinterpret_cast<jdoubleArray>(
+                  env->CallStaticObjectMethod(
+                      bindingsClass_,
+                      method,
+                      textArray,
+                      layout.width,
+                      layout.maxLines,
+                      ellipsize,
+                      layout.anchorToCapHeight));
+            }
           } else if (runs != nullptr && !runs->empty()) {
             withStyle(env, *style, [&](jstring color, jstring fontFamily, jstring fontWeight, jstring fontStyle, jstring textBreakStrategy) {
               FlattenedRuns flattened = flattenRuns(*runs);
-              jobject text = env->GetObjectArrayElement(textArray, 0);
+              jstring text = makeSingleText();
               jintArray runStarts = makeJavaIntArray(env, flattened.starts);
               jintArray runEnds = makeJavaIntArray(env, flattened.ends);
               jintArray runMasks = makeJavaIntArray(env, flattened.masks);
@@ -1450,6 +1791,7 @@ void install(Runtime& runtime, JNIEnv* env, jobject context) {
                   layout.width,
                   layout.maxLines,
                   ellipsize,
+                  layout.anchorToCapHeight,
                   runStarts,
                   runEnds,
                   runMasks,
@@ -1509,6 +1851,7 @@ void install(Runtime& runtime, JNIEnv* env, jobject context) {
                   layout.width,
                   layout.maxLines,
                   ellipsize,
+                  layout.anchorToCapHeight,
                   runCounts,
                   runStarts,
                   runEnds,
@@ -1537,51 +1880,100 @@ void install(Runtime& runtime, JNIEnv* env, jobject context) {
             });
           } else {
             withStyle(env, *style, [&](jstring color, jstring fontFamily, jstring fontWeight, jstring fontStyle, jstring textBreakStrategy) {
-              packed = reinterpret_cast<jdoubleArray>(env->CallStaticObjectMethod(
-                  bindingsClass_,
-                  method,
-                  textArray,
-                  color,
-                  fontFamily,
-                  style->fontSize,
-                  fontWeight,
-                  fontStyle,
-                  style->letterSpacing,
-                  style->lineHeight,
-                  style->allowFontScaling,
-                  style->includeFontPadding,
-                  style->tabularNumbers,
-                  textBreakStrategy,
-                  layout.width,
-                  layout.maxLines,
-                  ellipsize));
+              if (isSingleTextCall) {
+                jstring text = makeSingleText();
+                packed = reinterpret_cast<jdoubleArray>(env->CallStaticObjectMethod(
+                    bindingsClass_,
+                    method,
+                    text,
+                    color,
+                    fontFamily,
+                    style->fontSize,
+                    fontWeight,
+                    fontStyle,
+                    style->letterSpacing,
+                    style->lineHeight,
+                    style->allowFontScaling,
+                    style->includeFontPadding,
+                    style->tabularNumbers,
+                    textBreakStrategy,
+                    layout.width,
+                    layout.maxLines,
+                    ellipsize,
+                    layout.anchorToCapHeight));
+                env->DeleteLocalRef(text);
+              } else {
+                packed = reinterpret_cast<jdoubleArray>(env->CallStaticObjectMethod(
+                    bindingsClass_,
+                    method,
+                    textArray,
+                    color,
+                    fontFamily,
+                    style->fontSize,
+                    fontWeight,
+                    fontStyle,
+                    style->letterSpacing,
+                    style->lineHeight,
+                    style->allowFontScaling,
+                    style->includeFontPadding,
+                    style->tabularNumbers,
+                    textBreakStrategy,
+                    layout.width,
+                    layout.maxLines,
+                    ellipsize,
+                    layout.anchorToCapHeight));
+              }
             });
           }
-          env->DeleteLocalRef(textArray);
+          if (textArray) env->DeleteLocalRef(textArray);
         } else if (handles != nullptr) {
           if (handles->size() == 1 && method != layoutBatchMethod_) {
             packed = reinterpret_cast<jdoubleArray>(
-                env->CallStaticObjectMethod(bindingsClass_, method, static_cast<jlong>((*handles)[0]), layout.width, layout.maxLines, ellipsize));
+                env->CallStaticObjectMethod(
+                    bindingsClass_,
+                    method,
+                    static_cast<jlong>((*handles)[0]),
+                    layout.width,
+                    layout.maxLines,
+                    ellipsize,
+                    layout.anchorToCapHeight));
           } else {
             jlongArray handleArray = makeJavaLongArray(env, *handles);
             packed = reinterpret_cast<jdoubleArray>(
-                env->CallStaticObjectMethod(bindingsClass_, method, handleArray, layout.width, layout.maxLines, ellipsize));
+                env->CallStaticObjectMethod(
+                    bindingsClass_,
+                    method,
+                    handleArray,
+                    layout.width,
+                    layout.maxLines,
+                    ellipsize,
+                    layout.anchorToCapHeight));
             env->DeleteLocalRef(handleArray);
           }
         }
 
         if (ellipsize) env->DeleteLocalRef(ellipsize);
         clearPendingException(env, runtime, errorMessage);
-        std::vector<double> values = toDoubleVector(env, packed);
+
+        if (includeLines || method == measureBatchMethod_ || method == layoutBatchMethod_) {
+          std::vector<double> values = toDoubleVector(env, packed);
+          if (packed) env->DeleteLocalRef(packed);
+          if (needsDetach) jvm_->DetachCurrentThread();
+
+          if (values.size() < PACKED_LAYOUT_SIZE) {
+            throwJSError(runtime, errorMessage);
+          }
+
+          if (includeLines) return buildLayoutLinesObject(runtime, values);
+          return buildLayoutBatchArray(runtime, values);
+        }
+
+        double values[PACKED_LAYOUT_SIZE];
+        bool didReadValues = readDoubleArray(env, packed, values, PACKED_LAYOUT_SIZE);
         if (packed) env->DeleteLocalRef(packed);
         if (needsDetach) jvm_->DetachCurrentThread();
 
-        if (values.size() < PACKED_LAYOUT_SIZE) {
-          throwJSError(runtime, errorMessage);
-        }
-
-        if (includeLines) return buildLayoutLinesObject(runtime, values);
-        if (method == measureBatchMethod_ || method == layoutBatchMethod_) return buildLayoutBatchArray(runtime, values);
+        if (!didReadValues) throwJSError(runtime, errorMessage);
         return buildLayoutObject(runtime, values, 0);
       };
 
@@ -1656,12 +2048,22 @@ void install(Runtime& runtime, JNIEnv* env, jobject context) {
             layoutNextLineMethod_,
             static_cast<jlong>(arguments[0].asNumber()),
             static_cast<jint>(arguments[1].asNumber()),
-            arguments[2].asNumber()));
+            arguments[2].asNumber(),
+            count > 3 && arguments[3].isBool() ? arguments[3].getBool() : false));
 
         clearPendingException(env, runtime, "RNTextEngine: native layoutNextLine() failed.");
-        std::vector<double> values = toDoubleVector(env, packed);
+        if (packed == nullptr) {
+          if (needsDetach) jvm_->DetachCurrentThread();
+          return Value::null();
+        }
+
+        double values[PACKED_LINE_SIZE];
+        bool didReadValues = readDoubleArray(env, packed, values, PACKED_LINE_SIZE);
         if (packed) env->DeleteLocalRef(packed);
         if (needsDetach) jvm_->DetachCurrentThread();
+        if (!didReadValues) {
+          throwJSError(runtime, "RNTextEngine: native next-line layout returned an invalid payload.");
+        }
         return buildNextLineObject(runtime, values);
       });
 
@@ -1676,6 +2078,11 @@ void install(Runtime& runtime, JNIEnv* env, jobject context) {
         std::vector<Handle> handles = {static_cast<Handle>(arguments[0].asNumber())};
         return callPackedLayout(runtime, "RNTextEngine: native layoutLines() failed.", layoutLinesMethod_, nullptr, nullptr, nullptr, nullptr, &handles, layout, true);
       });
+}
+
+void install(Runtime& runtime, JNIEnv* env, jobject context) {
+  initializeIfNeeded(env, context);
+  install(runtime);
 }
 
 } // namespace rntextengine

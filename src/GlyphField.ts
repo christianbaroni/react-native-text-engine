@@ -1,4 +1,5 @@
 import { getRNTextEngineRuntime } from './initModule';
+import { resolveGlyphFieldConfig } from './textEngineDefaults';
 import type { GlyphFieldConfig, GlyphFieldHandle } from './types';
 
 export class GlyphField implements GlyphFieldHandle {
@@ -12,8 +13,15 @@ export class GlyphField implements GlyphFieldHandle {
     return new GlyphField(handle);
   }
 
-  update(glyphs: string, variantIndices: Uint8Array): void {
-    getRNTextEngineRuntime().updateGlyphField(this.handle, glyphs, variantIndices);
+  update(glyphs: string, variantIndices: Uint8Array): void;
+  update(glyphIndices: Uint8Array, variantIndices: Uint8Array): void;
+  update(glyphsOrIndices: string | Uint8Array, variantIndices: Uint8Array): void {
+    if (typeof glyphsOrIndices === 'string') {
+      getRNTextEngineRuntime().updateGlyphField(this.handle, glyphsOrIndices, variantIndices);
+      return;
+    }
+
+    getRNTextEngineRuntime().updateGlyphFieldIndices(this.handle, glyphsOrIndices, variantIndices);
   }
 
   release(): void {
@@ -21,7 +29,7 @@ export class GlyphField implements GlyphFieldHandle {
   }
 
   static create(config: GlyphFieldConfig): GlyphField {
-    return GlyphField.fromHandle(getRNTextEngineRuntime().createGlyphField(config));
+    return GlyphField.fromHandle(getRNTextEngineRuntime().createGlyphField(resolveGlyphFieldConfig(config)));
   }
 }
 

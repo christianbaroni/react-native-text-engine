@@ -1,4 +1,5 @@
 import { getRNTextEngineRuntime } from './initModule';
+import { resolveAnchorToCapHeight, resolveLayoutOptions, resolveTextMeasureStyle } from './textEngineDefaults';
 import type {
   LayoutOptions,
   NextTextLine,
@@ -28,24 +29,22 @@ function isTextRun(value: unknown): value is TextMeasureRun {
   return 'start' in value && 'end' in value && 'style' in value;
 }
 
-function firstDefined(values: readonly unknown[]): unknown {
-  for (let index = 0; index < values.length; index += 1) {
-    const value = values[index];
-    if (value !== undefined) return value;
-  }
-  return undefined;
-}
-
 function isRuns(value: unknown): value is readonly TextMeasureRun[] {
   if (!Array.isArray(value)) return false;
-  const first = firstDefined(value);
-  return first === undefined || isTextRun(first);
+  for (let index = 0; index < value.length; index += 1) {
+    const run = value[index];
+    if (run !== undefined && !isTextRun(run)) return false;
+  }
+  return true;
 }
 
 function isRunsByText(value: unknown): value is RunsByText {
   if (!Array.isArray(value)) return false;
-  const first = firstDefined(value);
-  return first === undefined || Array.isArray(first);
+  for (let index = 0; index < value.length; index += 1) {
+    const runs = value[index];
+    if (runs !== undefined && !isRuns(runs)) return false;
+  }
+  return true;
 }
 
 function isPreparedTextHandleArray(value: PreparedTextHandle | readonly PreparedTextHandle[]): value is readonly PreparedTextHandle[] {
@@ -64,15 +63,15 @@ export class PreparedText implements PreparedTextHandle {
   }
 
   layout(options: LayoutOptions): TextLayout {
-    return getRNTextEngineRuntime().layout(this.handle, options);
+    return getRNTextEngineRuntime().layout(this.handle, resolveLayoutOptions(options));
   }
 
   lines(options: LayoutOptions): TextLayoutLines {
-    return getRNTextEngineRuntime().layoutLines(this.handle, options);
+    return getRNTextEngineRuntime().layoutLines(this.handle, resolveLayoutOptions(options));
   }
 
-  nextLine(start: number, width: number): NextTextLine | null {
-    return getRNTextEngineRuntime().layoutNextLine(this.handle, start, width);
+  nextLine(start: number, width: number, anchorToCapHeight?: boolean): NextTextLine | null {
+    return getRNTextEngineRuntime().layoutNextLine(this.handle, start, width, resolveAnchorToCapHeight(anchorToCapHeight));
   }
 
   release(): void {
@@ -88,22 +87,23 @@ export function createPreparedText(
   runs?: readonly TextMeasureRun[] | RunsByText
 ): PreparedText | PreparedText[] {
   const runtime = getRNTextEngineRuntime();
+  const resolvedStyle = resolveTextMeasureStyle(style);
 
   if (typeof textOrTexts === 'string') {
     if (runs !== undefined && !isRuns(runs)) {
       throw new Error('RNTextEngine: createPreparedText() expected text runs for a single text input.');
     }
-    return buildPreparedText(runtime.prepare(textOrTexts, style, runs));
+    return buildPreparedText(runtime.prepare(textOrTexts, resolvedStyle, runs));
   }
 
   if (runs !== undefined && !isRunsByText(runs)) {
     throw new Error('RNTextEngine: createPreparedText() expected runs aligned with the batch text input.');
   }
-  return runtime.prepareBatch(textOrTexts, style, runs).map(buildPreparedText);
+  return runtime.prepareBatch(textOrTexts, resolvedStyle, runs).map(buildPreparedText);
 }
 
 export function measureTextWidth(text: string, style?: TextMeasureStyle, runs?: readonly TextMeasureRun[]): number {
-  return getRNTextEngineRuntime().measureWidth(text, style, runs);
+  return getRNTextEngineRuntime().measureWidth(text, resolveTextMeasureStyle(style), runs);
 }
 
 export function measureText(
@@ -125,18 +125,20 @@ export function measureText(
   runs?: readonly TextMeasureRun[] | RunsByText
 ): TextLayout | TextLayout[] {
   const runtime = getRNTextEngineRuntime();
+  const resolvedStyle = resolveTextMeasureStyle(style);
+  const resolvedOptions = resolveLayoutOptions(options);
 
   if (typeof textOrTexts === 'string') {
     if (runs !== undefined && !isRuns(runs)) {
       throw new Error('RNTextEngine: measureText() expected text runs for a single text input.');
     }
-    return runtime.measure(textOrTexts, style, options, runs);
+    return runtime.measure(textOrTexts, resolvedStyle, resolvedOptions, runs);
   }
 
   if (runs !== undefined && !isRunsByText(runs)) {
     throw new Error('RNTextEngine: measureText() expected runs aligned with the batch text input.');
   }
-  return runtime.measureBatch(textOrTexts, style, options, runs);
+  return runtime.measureBatch(textOrTexts, resolvedStyle, resolvedOptions, runs);
 }
 
 export function layoutPreparedText(handle: PreparedTextHandle, options: LayoutOptions): TextLayout;
@@ -146,11 +148,12 @@ export function layoutPreparedText(
   options: LayoutOptions
 ): TextLayout | TextLayout[] {
   const runtime = getRNTextEngineRuntime();
+  const resolvedOptions = resolveLayoutOptions(options);
   if (!isPreparedTextHandleArray(handleOrHandles)) {
-    return runtime.layout(handleOrHandles.handle, options);
+    return runtime.layout(handleOrHandles.handle, resolvedOptions);
   }
   if (handleOrHandles.length === 0) return [];
-  return runtime.layoutBatch(toNativeHandles(handleOrHandles), options);
+  return runtime.layoutBatch(toNativeHandles(handleOrHandles), resolvedOptions);
 }
 
 export function releasePreparedText(handle: PreparedTextHandle): void;

@@ -1,0 +1,29 @@
+{
+  "migIndex": 1,
+  "data": [
+    {
+      "path": "assets/fonts/EpiceneDisplay-Regular.otf",
+      "sha1": "a7e6101391ae423d5e6d89194d1e3cbb4642e63d"
+    },
+    {
+      "path": "assets/fonts/EpiceneText-RegularItalic.otf",
+      "sha1": "6a623cd737d205ad8c289510e54bbc128f077e65"
+    },
+    {
+      "path": "assets/fonts/FoundersGroteskMono-Regular.otf",
+      "sha1": "00dc0df5a531ded888bb0a5959d688cbf16be478"
+    },
+    {
+      "path": "assets/fonts/FoundersGroteskText-Medium.otf",
+      "sha1": "670a9f5aedceb4270d42cc96246d75acf869d0dc"
+    },
+    {
+      "path": "assets/fonts/FoundersGroteskText-Regular.otf",
+      "sha1": "deff612663b97263193023f72e0c77f634d4196c"
+    },
+    {
+      "path": "assets/fonts/TiemposText-Regular.otf",
+      "sha1": "0ea6eef790001eed3c4f9cda771a7d39abb45dc3"
+    }
+  ]
+}

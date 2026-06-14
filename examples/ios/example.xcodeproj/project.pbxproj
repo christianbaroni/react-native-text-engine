@@ -7,12 +7,22 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		00E356F31AD99517003FC87E /* exampleTests.m in Sources */ = {isa = PBXBuildFile; fileRef = 00E356F21AD99517003FC87E /* exampleTests.m */; };
+		00E356F31AD99517003FC87E /* exampleTests.mm in Sources */ = {isa = PBXBuildFile; fileRef = 00E356F21AD99517003FC87E /* exampleTests.mm */; };
 		0C80B921A6F3F58F76C31292 /* libPods-example.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 5DCACB8F33CDC322A6C60F78 /* libPods-example.a */; };
 		13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB51A68108700A75B9A /* Images.xcassets */; };
+		1EAA11BB2EFF001122334455 /* RNTextEnginePerformanceTests.mm in Sources */ = {isa = PBXBuildFile; fileRef = 1EAA11BA2EFF001122334455 /* RNTextEnginePerformanceTests.mm */; };
+		1EAA11BC2EFF001122334455 /* UIKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1EAA11BD2EFF001122334455 /* UIKit.framework */; };
+		2A9C71D24A8F4D0AA11B22C3 /* RNTextEngineExampleReactNativeFactory.mm in Sources */ = {isa = PBXBuildFile; fileRef = 2A9C71D14A8F4D0AA11B22C3 /* RNTextEngineExampleReactNativeFactory.mm */; };
 		733ECB0A7FF9565CF171AA78 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */; };
+		7BF5F3C8585C4BFAAB8BEA39 /* FoundersGroteskText-Medium.otf in Resources */ = {isa = PBXBuildFile; fileRef = 994E76B6643D47008EA122C1 /* FoundersGroteskText-Medium.otf */; };
 		81AB9BB82411601600AC10FF /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */; };
+		97A1179265BC4D6038B6AB26 /* libPods-example.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 5DCACB8F33CDC322A6C60F78 /* libPods-example.a */; };
+		A5B49AB069B24991872B358A /* FoundersGroteskMono-Regular.otf in Resources */ = {isa = PBXBuildFile; fileRef = A8773E2DCCD449EF83BDD2AF /* FoundersGroteskMono-Regular.otf */; };
 		AA9CB3562DF7B9550072902D /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA9CB3552DF7B9550072902D /* AppDelegate.swift */; };
+		C81E9EE79BA840799016CE19 /* EpiceneText-RegularItalic.otf in Resources */ = {isa = PBXBuildFile; fileRef = 476559A6526B4E9CB00431FF /* EpiceneText-RegularItalic.otf */; };
+		CBCC340D91F04396A48846D7 /* FoundersGroteskText-Regular.otf in Resources */ = {isa = PBXBuildFile; fileRef = 3191E472D61D492DBE165B7A /* FoundersGroteskText-Regular.otf */; };
+		CDD95D5D71914E1CAFA02C8C /* TiemposText-Regular.otf in Resources */ = {isa = PBXBuildFile; fileRef = 6591CA9446A14E29BEF29F70 /* TiemposText-Regular.otf */; };
+		D2D2E852CDF5485D8E1C3C94 /* EpiceneDisplay-Regular.otf in Resources */ = {isa = PBXBuildFile; fileRef = 7DF1342987C44559936A4E1A /* EpiceneDisplay-Regular.otf */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -28,15 +38,25 @@
 /* Begin PBXFileReference section */
 		00E356EE1AD99517003FC87E /* exampleTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = exampleTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		00E356F11AD99517003FC87E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		00E356F21AD99517003FC87E /* exampleTests.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = exampleTests.m; sourceTree = "<group>"; };
+		00E356F21AD99517003FC87E /* exampleTests.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = exampleTests.mm; sourceTree = "<group>"; };
 		13B07F961A680F5B00A75B9A /* example.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = example.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		13B07FB51A68108700A75B9A /* Images.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Images.xcassets; path = example/Images.xcassets; sourceTree = "<group>"; };
 		13B07FB61A68108700A75B9A /* Info.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = Info.plist; path = example/Info.plist; sourceTree = "<group>"; };
 		13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = PrivacyInfo.xcprivacy; path = example/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		1EAA11BA2EFF001122334455 /* RNTextEnginePerformanceTests.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = RNTextEnginePerformanceTests.mm; sourceTree = "<group>"; };
+		1EAA11BD2EFF001122334455 /* UIKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = UIKit.framework; path = System/Library/Frameworks/UIKit.framework; sourceTree = SDKROOT; };
+		2A9C71D04A8F4D0AA11B22C3 /* RNTextEngineExampleReactNativeFactory.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = example/RNTextEngineExampleReactNativeFactory.h; sourceTree = "<group>"; };
+		2A9C71D14A8F4D0AA11B22C3 /* RNTextEngineExampleReactNativeFactory.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = example/RNTextEngineExampleReactNativeFactory.mm; sourceTree = "<group>"; };
+		3191E472D61D492DBE165B7A /* FoundersGroteskText-Regular.otf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = "FoundersGroteskText-Regular.otf"; path = "../assets/fonts/FoundersGroteskText-Regular.otf"; sourceTree = "<group>"; };
 		3B4392A12AC88292D35C810B /* Pods-example.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-example.debug.xcconfig"; path = "Target Support Files/Pods-example/Pods-example.debug.xcconfig"; sourceTree = "<group>"; };
+		476559A6526B4E9CB00431FF /* EpiceneText-RegularItalic.otf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = "EpiceneText-RegularItalic.otf"; path = "../assets/fonts/EpiceneText-RegularItalic.otf"; sourceTree = "<group>"; };
 		5709B34CF0A7D63546082F79 /* Pods-example.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-example.release.xcconfig"; path = "Target Support Files/Pods-example/Pods-example.release.xcconfig"; sourceTree = "<group>"; };
 		5DCACB8F33CDC322A6C60F78 /* libPods-example.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-example.a"; sourceTree = BUILT_PRODUCTS_DIR; };
+		6591CA9446A14E29BEF29F70 /* TiemposText-Regular.otf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = "TiemposText-Regular.otf"; path = "../assets/fonts/TiemposText-Regular.otf"; sourceTree = "<group>"; };
+		7DF1342987C44559936A4E1A /* EpiceneDisplay-Regular.otf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = "EpiceneDisplay-Regular.otf"; path = "../assets/fonts/EpiceneDisplay-Regular.otf"; sourceTree = "<group>"; };
 		81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; name = LaunchScreen.storyboard; path = example/LaunchScreen.storyboard; sourceTree = "<group>"; };
+		994E76B6643D47008EA122C1 /* FoundersGroteskText-Medium.otf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = "FoundersGroteskText-Medium.otf"; path = "../assets/fonts/FoundersGroteskText-Medium.otf"; sourceTree = "<group>"; };
+		A8773E2DCCD449EF83BDD2AF /* FoundersGroteskMono-Regular.otf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = "FoundersGroteskMono-Regular.otf"; path = "../assets/fonts/FoundersGroteskMono-Regular.otf"; sourceTree = "<group>"; };
 		AA9CB3552DF7B9550072902D /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppDelegate.swift; path = example/AppDelegate.swift; sourceTree = "<group>"; };
 		AA9CB3582DF7B9910072902D /* example-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "example-Bridging-Header.h"; sourceTree = "<group>"; };
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
@@ -47,6 +67,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				1EAA11BC2EFF001122334455 /* UIKit.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -55,6 +76,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				0C80B921A6F3F58F76C31292 /* libPods-example.a in Frameworks */,
+				97A1179265BC4D6038B6AB26 /* libPods-example.a in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -64,7 +86,8 @@
 		00E356EF1AD99517003FC87E /* exampleTests */ = {
 			isa = PBXGroup;
 			children = (
-				00E356F21AD99517003FC87E /* exampleTests.m */,
+				00E356F21AD99517003FC87E /* exampleTests.mm */,
+				1EAA11BA2EFF001122334455 /* RNTextEnginePerformanceTests.mm */,
 				00E356F01AD99517003FC87E /* Supporting Files */,
 			);
 			path = exampleTests;
@@ -78,10 +101,25 @@
 			name = "Supporting Files";
 			sourceTree = "<group>";
 		};
+		0DBC1CF318DC4C51B4CB46EA /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				3191E472D61D492DBE165B7A /* FoundersGroteskText-Regular.otf */,
+				994E76B6643D47008EA122C1 /* FoundersGroteskText-Medium.otf */,
+				476559A6526B4E9CB00431FF /* EpiceneText-RegularItalic.otf */,
+				7DF1342987C44559936A4E1A /* EpiceneDisplay-Regular.otf */,
+				A8773E2DCCD449EF83BDD2AF /* FoundersGroteskMono-Regular.otf */,
+				6591CA9446A14E29BEF29F70 /* TiemposText-Regular.otf */,
+			);
+			name = Resources;
+			sourceTree = "<group>";
+		};
 		13B07FAE1A68108700A75B9A /* example */ = {
 			isa = PBXGroup;
 			children = (
 				AA9CB3552DF7B9550072902D /* AppDelegate.swift */,
+				2A9C71D04A8F4D0AA11B22C3 /* RNTextEngineExampleReactNativeFactory.h */,
+				2A9C71D14A8F4D0AA11B22C3 /* RNTextEngineExampleReactNativeFactory.mm */,
 				13B07FB51A68108700A75B9A /* Images.xcassets */,
 				13B07FB61A68108700A75B9A /* Info.plist */,
 				81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */,
@@ -95,6 +133,7 @@
 			isa = PBXGroup;
 			children = (
 				ED297162215061F000B7C4FE /* JavaScriptCore.framework */,
+				1EAA11BD2EFF001122334455 /* UIKit.framework */,
 				5DCACB8F33CDC322A6C60F78 /* libPods-example.a */,
 			);
 			name = Frameworks;
@@ -116,6 +155,7 @@
 				83CBBA001A601CBA00E9B192 /* Products */,
 				2D16E6871FA4F8E400B85C8A /* Frameworks */,
 				BBD78D7AC51CEA395F1C20DB /* Pods */,
+				0DBC1CF318DC4C51B4CB46EA /* Resources */,
 			);
 			indentWidth = 2;
 			sourceTree = "<group>";
@@ -166,6 +206,7 @@
 			buildConfigurationList = 13B07F931A680F5B00A75B9A /* Build configuration list for PBXNativeTarget "example" */;
 			buildPhases = (
 				C38B50BA6285516D6DCD4F65 /* [CP] Check Pods Manifest.lock */,
+				37D73E5A4E402D3C0839A940 /* [CP-User] RNTextEngine sync config */,
 				13B07F871A680F5B00A75B9A /* Sources */,
 				13B07F8C1A680F5B00A75B9A /* Frameworks */,
 				13B07F8E1A680F5B00A75B9A /* Resources */,
@@ -233,6 +274,12 @@
 				81AB9BB82411601600AC10FF /* LaunchScreen.storyboard in Resources */,
 				13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */,
 				733ECB0A7FF9565CF171AA78 /* PrivacyInfo.xcprivacy in Resources */,
+				CBCC340D91F04396A48846D7 /* FoundersGroteskText-Regular.otf in Resources */,
+				7BF5F3C8585C4BFAAB8BEA39 /* FoundersGroteskText-Medium.otf in Resources */,
+				C81E9EE79BA840799016CE19 /* EpiceneText-RegularItalic.otf in Resources */,
+				D2D2E852CDF5485D8E1C3C94 /* EpiceneDisplay-Regular.otf in Resources */,
+				A5B49AB069B24991872B358A /* FoundersGroteskMono-Regular.otf in Resources */,
+				CDD95D5D71914E1CAFA02C8C /* TiemposText-Regular.otf in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -271,6 +318,16 @@
 			shellPath = /bin/sh;
 			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-example/Pods-example-frameworks.sh\"\n";
 			showEnvVarsInLog = 0;
+		};
+		37D73E5A4E402D3C0839A940 /* [CP-User] RNTextEngine sync config */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			name = "[CP-User] RNTextEngine sync config";
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "#!/bin/sh\nset -e\n\nNODE_BINARY=\"${NODE_BINARY:-node}\"\n\nif [ -n \"${PROJECT_DIR:-}\" ]; then\n  IOS_ROOT=\"${PROJECT_DIR}\"\nelif [ -n \"${PODS_ROOT:-}\" ]; then\n  IOS_ROOT=\"$(cd \"${PODS_ROOT}/..\" && pwd)\"\nelse\n  IOS_ROOT=\"$(pwd)\"\nfi\n\nAPP_ROOT=\"$(cd \"${IOS_ROOT}/..\" && pwd)\"\n\nif [ -d \"${APP_ROOT}/node_modules/react-native-text-engine\" ]; then\n  PACKAGE_ROOT=\"$(cd \"${APP_ROOT}/node_modules/react-native-text-engine\" && pwd)\"\nelif [ -n \"${PODS_TARGET_SRCROOT:-}\" ]; then\n  PACKAGE_ROOT=\"${PODS_TARGET_SRCROOT}\"\nelse\n  echo \"RNTextEngine: unable to resolve the installed package root for config sync.\" >&2\n  exit 1\nfi\n\n\"${NODE_BINARY}\" \"${PACKAGE_ROOT}/scripts/sync-text-engine-config.mjs\" \\\n  --app-root \"${APP_ROOT}\" \\\n  --package-root \"${PACKAGE_ROOT}\"\n";
 		};
 		C38B50BA6285516D6DCD4F65 /* [CP] Check Pods Manifest.lock */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -318,7 +375,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				00E356F31AD99517003FC87E /* exampleTests.m in Sources */,
+				00E356F31AD99517003FC87E /* exampleTests.mm in Sources */,
+				1EAA11BB2EFF001122334455 /* RNTextEnginePerformanceTests.mm in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -327,6 +385,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				AA9CB3562DF7B9550072902D /* AppDelegate.swift in Sources */,
+				2A9C71D24A8F4D0AA11B22C3 /* RNTextEngineExampleReactNativeFactory.mm in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -345,9 +404,19 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
+				DEVELOPMENT_TEAM = S6B4G26KL2;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(BUILD_DIR)/$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)/XCFrameworkIntermediates/React-Core-prebuilt",
+					"$(BUILD_DIR)/$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)/XCFrameworkIntermediates/hermes-engine/Pre-built",
+				);
 				GCC_PREPROCESSOR_DEFINITIONS = (
 					"DEBUG=1",
 					"$(inherited)",
+				);
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/Pods/hermes-engine/destroot/include",
 				);
 				INFOPLIST_FILE = exampleTests/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
@@ -359,9 +428,13 @@
 				OTHER_LDFLAGS = (
 					"-ObjC",
 					"-lc++",
+					"-framework",
+					React,
+					"-framework",
+					hermesvm,
 					"$(inherited)",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = "org.reactjs.native.example.$(PRODUCT_NAME:rfc1034identifier)";
+				PRODUCT_BUNDLE_IDENTIFIER = com.rntextengine.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/example.app/example";
 			};
@@ -372,6 +445,16 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				COPY_PHASE_STRIP = NO;
+				DEVELOPMENT_TEAM = S6B4G26KL2;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(BUILD_DIR)/$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)/XCFrameworkIntermediates/React-Core-prebuilt",
+					"$(BUILD_DIR)/$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)/XCFrameworkIntermediates/hermes-engine/Pre-built",
+				);
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/Pods/hermes-engine/destroot/include",
+				);
 				INFOPLIST_FILE = exampleTests/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -382,9 +465,13 @@
 				OTHER_LDFLAGS = (
 					"-ObjC",
 					"-lc++",
+					"-framework",
+					React,
+					"-framework",
+					hermesvm,
 					"$(inherited)",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = "org.reactjs.native.example.$(PRODUCT_NAME:rfc1034identifier)";
+				PRODUCT_BUNDLE_IDENTIFIER = com.rntextengine.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/example.app/example";
 			};
@@ -411,8 +498,7 @@
 					"-ObjC",
 					"-lc++",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = "org.reactjs.native.example.$(PRODUCT_NAME:rfc1034identifier)";
-				"PRODUCT_BUNDLE_IDENTIFIER[sdk=iphoneos*]" = com.rntextengine.example;
+				PRODUCT_BUNDLE_IDENTIFIER = com.rntextengine.examples;
 				PRODUCT_NAME = example;
 				SWIFT_OBJC_BRIDGING_HEADER = "example-Bridging-Header.h";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
@@ -441,8 +527,7 @@
 					"-ObjC",
 					"-lc++",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = "org.reactjs.native.example.$(PRODUCT_NAME:rfc1034identifier)";
-				"PRODUCT_BUNDLE_IDENTIFIER[sdk=iphoneos*]" = com.rntextengine.example;
+				PRODUCT_BUNDLE_IDENTIFIER = com.rntextengine.examples;
 				PRODUCT_NAME = example;
 				SWIFT_OBJC_BRIDGING_HEADER = "example-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;

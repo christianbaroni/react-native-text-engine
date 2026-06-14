@@ -16,6 +16,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { runOnUISync } from 'react-native-worklets';
 import { useRunOnce } from '../hooks/useRunOnce';
+import { FenwickTree } from './FenwickTree';
 
 // ============ Types ========================================================== //
 
@@ -131,19 +132,43 @@ type MaintainConfig = {
   stickToEdge: MaintainScrollAtEdgeConfig | null;
 };
 
-type InitialTreeState = {
-  initialOffsets: Float32Array;
-  initialSizes: Float32Array | undefined;
-  rowDataCount: number;
-  rowGlobalIndices: Uint32Array;
-  totalSize: number;
-};
-
 type RowMetrics = {
   offsets: Float32Array;
   rowDataCount: number;
   sizes: Float32Array | undefined;
   totalSize: number;
+};
+
+export type ExactRowLayout = RowMetrics;
+
+type ListFrame<T> = {
+  data: T[];
+  rowGlobalIndices: Uint32Array;
+  rowLayout: RowMetrics;
+};
+
+type InitialListState<T> = {
+  frame: ListFrame<T>;
+  scrollOffset: number;
+};
+
+type PendingListFrame<T> = {
+  frame: ListFrame<T>;
+  scrollOffset: number;
+  syncData: boolean;
+};
+
+type AnimatedListRuntimeConfig = {
+  bufferAbove: number;
+  bufferBelow: number;
+  estimatedRowSize: number;
+  gap: number;
+  isInverted: boolean;
+  listSize: number;
+  numColumns: number;
+  rowCount: number;
+  scrollPaddingEnd: number;
+  scrollPaddingStart: number;
 };
 
 type ScrollPadding = {
@@ -153,16 +178,36 @@ type ScrollPadding = {
 
 export type RenderItemProps<T> = {
   columnIndex: number;
-  data: SharedValue<T[]>;
+  data: DerivedValue<T[]>;
   isActive: DerivedValue<boolean>;
+  item: DerivedValue<T | undefined>;
   itemIndex: DerivedValue<number>;
   rowIndex: DerivedValue<number>;
   scrollViewRef: AnimatedRef<Animated.ScrollView>;
 };
 
+/**
+ * UI-runtime bridge for publishing exact row geometry and matching data as one list transaction.
+ */
+export type ExactLayoutController<T> = {
+  applyLayout: (snapshot: ExactLayoutSnapshot<T>) => void;
+};
+
+export type ExactLayoutSnapshot<T> = {
+  data?: T[];
+  rowLayout: ExactRowLayout;
+};
+
 type WorkletContextValue<T> = {
   __workletContextObject: true;
   current: T;
+};
+
+/**
+ * Stable cross-runtime holder populated by `AnimatedList` after its UI-thread tree is ready.
+ */
+export type ExactLayoutControllerContext<T = unknown> = WorkletContextValue<ExactLayoutController<T> | undefined> & {
+  pendingSnapshot?: ExactLayoutSnapshot<T>;
 };
 
 type AnimatedScrollViewProps = ComponentProps<typeof Animated.ScrollView>;
@@ -177,7 +222,13 @@ export type AnimatedListProps<T> = {
   columnGap?: number;
   contentContainerStyle?: AnimatedScrollViewProps['contentContainerStyle'];
   data: SharedValue<T[]>;
+  exactLayoutController?: ExactLayoutControllerContext<T>;
   gap: number;
+  /**
+   * Starts at the data end.
+   * Use with `maintainScrollAtEdge` when the list should also stay pinned.
+   */
+  initialScrollToEnd?: boolean;
   itemWidth: number;
   keyExtractor: (item: T, index: number) => string;
   horizontal?: boolean;
@@ -216,12 +267,43 @@ export type AnimatedListProps<T> = {
 
 const DEFAULT_COLUMN_GAP = 0;
 const DEFAULT_NUM_COLUMNS = 1;
-const RECYCLE_THRESHOLD_PX = 10;
 const ROW_BUFFER: RowBufferConfig = 8;
 
 function clamp(value: number, lower: number, upper: number): number {
   'worklet';
   return Math.min(Math.max(value, lower), upper);
+}
+
+function didRuntimeConfigChange(current: AnimatedListRuntimeConfig, previous: AnimatedListRuntimeConfig | null): boolean {
+  'worklet';
+  if (!previous) return false;
+
+  return (
+    current.bufferAbove !== previous.bufferAbove ||
+    current.bufferBelow !== previous.bufferBelow ||
+    current.estimatedRowSize !== previous.estimatedRowSize ||
+    current.gap !== previous.gap ||
+    current.isInverted !== previous.isInverted ||
+    current.listSize !== previous.listSize ||
+    current.numColumns !== previous.numColumns ||
+    current.rowCount !== previous.rowCount ||
+    current.scrollPaddingEnd !== previous.scrollPaddingEnd ||
+    current.scrollPaddingStart !== previous.scrollPaddingStart
+  );
+}
+
+function updateTreeConfig(tree: FenwickTree, config: AnimatedListRuntimeConfig): void {
+  'worklet';
+  tree.updateConfig({
+    bufferAbove: config.bufferAbove,
+    bufferBelow: config.bufferBelow,
+    gap: config.gap,
+    isInverted: config.isInverted,
+    listSize: config.listSize,
+    rowCount: config.rowCount,
+    scrollPaddingEnd: config.scrollPaddingEnd,
+    scrollPaddingStart: config.scrollPaddingStart,
+  });
 }
 
 function getRowWindowConfig({
@@ -248,17 +330,6 @@ function getRowWindowConfig({
 
 function createIndexArray(length: number): number[] {
   const indices: number[] = new Array(length);
-
-  for (let i = 0; i < length; i += 1) {
-    indices[i] = i;
-  }
-
-  return indices;
-}
-
-function createIndexTypedArray(length: number): Uint32Array {
-  'worklet';
-  const indices: Uint32Array = new Uint32Array(length);
 
   for (let i = 0; i < length; i += 1) {
     indices[i] = i;
@@ -328,6 +399,88 @@ function getItemIndexForRow({
   return index;
 }
 
+function getRowEndOffset({
+  offsets,
+  rowDataCount,
+  rowIndex,
+  totalSize,
+}: {
+  offsets: Float32Array;
+  rowDataCount: number;
+  rowIndex: number;
+  totalSize: number;
+}): number {
+  'worklet';
+  if (rowIndex + 1 < rowDataCount) {
+    return offsets[rowIndex + 1] ?? totalSize;
+  }
+
+  return totalSize;
+}
+
+function getRowMainSize({
+  gap,
+  isInverted,
+  offsets,
+  rowDataCount,
+  rowIndex,
+  totalSize,
+}: {
+  gap: number;
+  isInverted: boolean;
+  offsets: Float32Array;
+  rowDataCount: number;
+  rowIndex: number;
+  totalSize: number;
+}): number {
+  'worklet';
+  if (rowIndex < 0 || rowIndex >= rowDataCount) {
+    return 0;
+  }
+
+  const rowStart: number = offsets[rowIndex] ?? 0;
+  const rowEnd: number = getRowEndOffset({
+    offsets,
+    rowDataCount,
+    rowIndex,
+    totalSize,
+  });
+  const gapSize: number = getRowGap({
+    gap,
+    isInverted,
+    rowCount: rowDataCount,
+    rowIndex,
+  });
+
+  return Math.max(0, rowEnd - rowStart - gapSize);
+}
+
+function buildRowSizesFromOffsets({
+  offsets,
+  rowDataCount,
+  totalSize,
+}: {
+  offsets: Float32Array;
+  rowDataCount: number;
+  totalSize: number;
+}): Float32Array {
+  'worklet';
+  const sizes = new Float32Array(rowDataCount);
+
+  for (let rowIndex = 0; rowIndex < rowDataCount; rowIndex += 1) {
+    const rowStart = offsets[rowIndex] ?? 0;
+    const rowEnd = getRowEndOffset({
+      offsets,
+      rowDataCount,
+      rowIndex,
+      totalSize,
+    });
+    sizes[rowIndex] = Math.max(0, rowEnd - rowStart);
+  }
+
+  return sizes;
+}
+
 function buildRowMetrics<T>({
   data,
   estimatedRowSize,
@@ -363,12 +516,7 @@ function buildRowMetrics<T>({
 
     for (let rowIndex = 0; rowIndex < rowDataCount; rowIndex += 1) {
       offsets[rowIndex] = sum;
-      const gapSize: number = getRowGap({
-        gap,
-        isInverted,
-        rowCount: rowDataCount,
-        rowIndex,
-      });
+      const gapSize: number = getRowGap({ gap, isInverted, rowCount: rowDataCount, rowIndex });
       sum += estimatedRowSize + gapSize;
     }
 
@@ -395,12 +543,7 @@ function buildRowMetrics<T>({
       }
     }
 
-    const gapSize: number = getRowGap({
-      gap,
-      isInverted,
-      rowCount: rowDataCount,
-      rowIndex,
-    });
+    const gapSize: number = getRowGap({ gap, isInverted, rowCount: rowDataCount, rowIndex });
     const rowSize: number = maxSize + gapSize;
     sizes[rowIndex] = rowSize;
     sum += rowSize;
@@ -409,27 +552,54 @@ function buildRowMetrics<T>({
   return { offsets, rowDataCount, sizes, totalSize: sum };
 }
 
-function buildInitialTreeState<T>({
+function getMaxScrollOffset({
+  listSize,
+  scrollPaddingEnd,
+  scrollPaddingStart,
+  totalSize,
+}: {
+  listSize: number;
+  scrollPaddingEnd: number;
+  scrollPaddingStart: number;
+  totalSize: number;
+}): number {
+  'worklet';
+  const maxOffset: number = totalSize + scrollPaddingStart + scrollPaddingEnd - listSize;
+  return maxOffset > 0 ? maxOffset : 0;
+}
+
+function buildInitialListState<T>({
+  bufferAbove,
+  bufferBelow,
   data,
   estimatedRowSize,
   gap,
   getItemSize,
+  initialScrollToEnd,
   itemSizes,
   isInverted,
+  listSize,
   numColumns,
   rowCount,
+  scrollPaddingEnd,
+  scrollPaddingStart,
 }: {
+  bufferAbove: number;
+  bufferBelow: number;
   data: T[];
   estimatedRowSize: number;
   gap: number;
   getItemSize: ((index: number, item: T) => number) | undefined;
+  initialScrollToEnd: boolean;
   itemSizes: Float32Array | undefined;
   isInverted: boolean;
+  listSize: number;
   numColumns: number;
   rowCount: number;
-}): InitialTreeState {
+  scrollPaddingEnd: number;
+  scrollPaddingStart: number;
+}): InitialListState<T> {
   'worklet';
-
   const metrics: RowMetrics = buildRowMetrics({
     data,
     estimatedRowSize,
@@ -439,14 +609,48 @@ function buildInitialTreeState<T>({
     isInverted,
     numColumns,
   });
-  const rowGlobalIndices: Uint32Array = createIndexTypedArray(rowCount);
+  const scrollOffset: number = initialScrollToEnd
+    ? getMaxScrollOffset({
+        listSize,
+        scrollPaddingEnd,
+        scrollPaddingStart,
+        totalSize: metrics.totalSize,
+      })
+    : 0;
+  const tree = new FenwickTree({
+    bufferAbove,
+    bufferBelow,
+    gap,
+    isInverted,
+    itemCount: metrics.rowDataCount,
+    listSize,
+    rowCount,
+    scrollPaddingEnd,
+    scrollPaddingStart,
+  });
+  const rowGlobalIndices: Uint32Array = tree.rebuild(metrics.rowDataCount, estimatedRowSize, scrollOffset, metrics.sizes);
 
   return {
-    initialOffsets: metrics.offsets,
-    initialSizes: metrics.sizes,
-    rowDataCount: metrics.rowDataCount,
+    frame: {
+      data,
+      rowGlobalIndices,
+      rowLayout: {
+        offsets: metrics.offsets,
+        rowDataCount: metrics.rowDataCount,
+        sizes: metrics.sizes,
+        totalSize: tree.getTotalSize(),
+      },
+    },
+    scrollOffset,
+  };
+}
+
+function replaceFrameIndices<T>(frame: ListFrame<T>, rowGlobalIndices: Uint32Array): ListFrame<T> {
+  'worklet';
+  return {
+    data: frame.data,
     rowGlobalIndices,
-    totalSize: metrics.totalSize,
+    rowLayout: frame.rowLayout,
   };
 }
 
@@ -554,22 +758,6 @@ function resolveMaintainConfig({
   };
 }
 
-function getMaxScrollOffset({
-  listSize,
-  scrollPaddingEnd,
-  scrollPaddingStart,
-  totalSize,
-}: {
-  listSize: number;
-  scrollPaddingEnd: number;
-  scrollPaddingStart: number;
-  totalSize: number;
-}): number {
-  'worklet';
-  const maxOffset: number = totalSize + scrollPaddingStart + scrollPaddingEnd - listSize;
-  return maxOffset > 0 ? maxOffset : 0;
-}
-
 function getRowIndexFromItemIndex({ index, numColumns }: { index: number; numColumns: number }): number {
   'worklet';
   return Math.floor(index / numColumns);
@@ -586,17 +774,13 @@ function resolveScrollEdgeToScrollEdge({ edge, isInverted }: { edge: ScrollEdge;
 
 function getRowEdgeOffset({ anchorEdge, rowIndex, tree }: { anchorEdge: AnchorAlignment; rowIndex: number; tree: FenwickTree }): number {
   'worklet';
+  if (anchorEdge === 'end') return tree.getRowLayoutEndOffset(rowIndex);
+  if (anchorEdge === 'start') return tree.getRowLayoutStartOffset(rowIndex);
+
   const rowStart: number = tree.getRowLayoutStartOffset(rowIndex);
   const rowEnd: number = tree.getRowLayoutEndOffset(rowIndex);
-  if (anchorEdge === 'center') {
-    return rowStart + (rowEnd - rowStart) / 2;
-  }
 
-  if (anchorEdge === 'end') {
-    return rowEnd;
-  }
-
-  return rowStart;
+  return rowStart + (rowEnd - rowStart) / 2;
 }
 
 function getLastVisibleRowIndex({ listSize, scrollOffset, tree }: { listSize: number; scrollOffset: number; tree: FenwickTree }): number {
@@ -604,10 +788,10 @@ function getLastVisibleRowIndex({ listSize, scrollOffset, tree }: { listSize: nu
   const viewportEnd: number = scrollOffset + listSize;
   const candidate: number = tree.findIndexForOffset(viewportEnd);
   const candidateStart: number = tree.getRowLayoutStartOffset(candidate);
+
   if (candidateStart >= viewportEnd && candidate > 0) {
     return candidate - 1;
   }
-
   return candidate;
 }
 
@@ -627,8 +811,10 @@ function getVisibleRowRange({
     scrollOffset,
     tree,
   });
+
   const startRow: number = Math.min(firstVisibleRow, lastVisibleRow);
   const endRow: number = Math.max(firstVisibleRow, lastVisibleRow);
+
   return { endRow, startRow };
 }
 
@@ -648,7 +834,6 @@ function findItemIndexByKey<T>({
       return i;
     }
   }
-
   return -1;
 }
 
@@ -694,7 +879,7 @@ function capturePositionAnchor<T>({
   }
 
   const item: T | undefined = data[anchorItemIndex];
-  if (!item) {
+  if (item === undefined) {
     return null;
   }
 
@@ -782,11 +967,9 @@ function captureIndicesAnchor({
     return null;
   }
 
-  const anchorRowIndex: number = getRowIndexFromItemIndex({
-    index: anchorIndex,
-    numColumns,
-  });
+  const anchorRowIndex: number = getRowIndexFromItemIndex({ index: anchorIndex, numColumns });
   const anchorOffset: number = getRowEdgeOffset({ anchorEdge: align, rowIndex: anchorRowIndex, tree }) - scrollOffset;
+
   return {
     anchorEdge: align,
     anchorOffset,
@@ -836,6 +1019,7 @@ function getStickToEdgeTarget({
     edge,
     isInverted,
   });
+
   if (mode === 'always') {
     return getScrollEdgeOffset({ maxOffset, scrollEdge });
   }
@@ -845,6 +1029,7 @@ function getStickToEdgeTarget({
     scrollEdge,
     scrollOffset: prevScrollOffset,
   });
+
   if (prevDistance <= maxDistanceFromEdge) {
     return getScrollEdgeOffset({ maxOffset, scrollEdge });
   }
@@ -860,11 +1045,14 @@ function scrollToOffset({
   isHorizontal: boolean;
   offset: number;
   scrollViewRef: AnimatedRef<Animated.ScrollView>;
-}): void {
+}): boolean {
   'worklet';
+  if (!scrollViewRef()) return false;
+
   const xOffset: number = isHorizontal ? offset : 0;
   const yOffset: number = isHorizontal ? 0 : offset;
   scrollTo(scrollViewRef, xOffset, yOffset, false);
+  return true;
 }
 
 function getMaintainAnchorOffset<T>({
@@ -895,512 +1083,11 @@ function getMaintainAnchorOffset<T>({
     return null;
   }
 
-  const rowIndex: number = getRowIndexFromItemIndex({
-    index: targetIndex,
-    numColumns,
-  });
-  const rowEdgeOffset: number = getRowEdgeOffset({
-    anchorEdge: anchor.anchorEdge,
-    rowIndex,
-    tree,
-  });
+  const rowIndex: number = getRowIndexFromItemIndex({ index: targetIndex, numColumns });
+  const rowEdgeOffset: number = getRowEdgeOffset({ anchorEdge: anchor.anchorEdge, rowIndex, tree });
   const nextOffset: number = clamp(rowEdgeOffset - anchor.anchorOffset, 0, maxOffset);
 
   return nextOffset;
-}
-
-// ============ Fenwick Tree Helpers =========================================== //
-
-class FenwickTree {
-  private __workletClass = true;
-
-  private bufferAbove: number;
-  private bufferBelow: number;
-  private dirtyFromIndex: number;
-  private fenwicks: Float32Array;
-  private gap: number;
-  private itemCount: number;
-  private isInverted: boolean;
-  private length: number;
-  private listSize: number;
-  private offsetCache: Float32Array;
-  private prevViewportStartIndex: number;
-  private prevWindowStartIndex: number;
-  private rowCount: number;
-  private rowGlobalIndicesBufferA: Uint32Array;
-  private rowGlobalIndicesBufferB: Uint32Array;
-  private rowSizes: Float32Array;
-  private scrollPaddingEnd: number;
-  private scrollPaddingStart: number;
-  private scrollOffset: number;
-  private totalSize: number;
-  private useRowGlobalIndicesBufferA: boolean;
-
-  constructor({
-    bufferAbove,
-    bufferBelow,
-    gap,
-    isInverted,
-    itemCount,
-    listSize,
-    rowCount,
-    scrollPaddingEnd,
-    scrollPaddingStart,
-  }: {
-    bufferAbove: number;
-    bufferBelow: number;
-    gap: number;
-    isInverted: boolean;
-    itemCount: number;
-    listSize: number;
-    rowCount: number;
-    scrollPaddingEnd: number;
-    scrollPaddingStart: number;
-  }) {
-    this.bufferAbove = bufferAbove;
-    this.bufferBelow = bufferBelow;
-    this.dirtyFromIndex = 0;
-    this.fenwicks = new Float32Array(itemCount + 1);
-    this.gap = gap;
-    this.itemCount = itemCount;
-    this.isInverted = isInverted;
-    this.length = itemCount;
-    this.listSize = listSize;
-    this.offsetCache = new Float32Array(itemCount);
-    this.prevViewportStartIndex = 0;
-    this.prevWindowStartIndex = 0;
-    this.rowCount = rowCount;
-    this.rowGlobalIndicesBufferA = createIndexTypedArray(rowCount);
-    this.rowGlobalIndicesBufferB = createIndexTypedArray(rowCount);
-    this.rowSizes = new Float32Array(itemCount);
-    this.scrollPaddingEnd = scrollPaddingEnd;
-    this.scrollPaddingStart = scrollPaddingStart;
-    this.scrollOffset = 0;
-    this.totalSize = 0;
-    this.useRowGlobalIndicesBufferA = true;
-  }
-
-  buildFromEstimate(rowDataCount: number, estimatedRowSize: number): void {
-    const sizes: Float32Array = new Float32Array(rowDataCount);
-
-    for (let i = 0; i < rowDataCount; i += 1) {
-      sizes[i] = estimatedRowSize + this.getRowGapSize(i, rowDataCount);
-    }
-
-    this.buildFromSizes(sizes, rowDataCount);
-  }
-
-  buildFromSizes(sizes: Float32Array | number[], newSize?: number): void {
-    const nextSize: number = newSize ?? sizes.length;
-    this.itemCount = nextSize;
-    this.length = nextSize;
-    this.fenwicks = new Float32Array(nextSize + 1);
-    this.offsetCache = new Float32Array(nextSize);
-    this.rowSizes = new Float32Array(nextSize);
-
-    let sum = 0;
-    for (let i = 0; i < nextSize; i += 1) {
-      const size: number = sizes[i] ?? 0;
-      this.rowSizes[i] = size;
-      this.fenwicks[i + 1] = size;
-      sum += size;
-      this.offsetCache[i] = sum;
-    }
-
-    for (let i = 1; i <= nextSize; i += 1) {
-      const j: number = i + (i & -i);
-      if (j <= nextSize) {
-        this.fenwicks[j] += this.fenwicks[i];
-      }
-    }
-
-    this.dirtyFromIndex = nextSize;
-    this.totalSize = sum;
-  }
-
-  private grow(capacity: number): void {
-    const fenwicks = new Float32Array(capacity);
-    fenwicks.set(this.fenwicks);
-    this.fenwicks = fenwicks;
-
-    const dataCapacity = capacity - 1;
-    const rowSizes = new Float32Array(dataCapacity);
-    rowSizes.set(this.rowSizes);
-    this.rowSizes = rowSizes;
-
-    const offsetCache = new Float32Array(dataCapacity);
-    offsetCache.set(this.offsetCache);
-    this.offsetCache = offsetCache;
-  }
-
-  rebuild(rowDataCount: number, estimatedRowSize: number, scrollOffset: number, initialSizes?: Float32Array | number[]): Uint32Array {
-    this.scrollOffset = scrollOffset;
-
-    if (rowDataCount <= 0) {
-      this.itemCount = 0;
-      this.length = 0;
-      this.fenwicks = new Float32Array(1);
-      this.offsetCache = new Float32Array(0);
-      this.rowSizes = new Float32Array(0);
-      this.totalSize = 0;
-      this.prevViewportStartIndex = 0;
-      this.prevWindowStartIndex = 0;
-      return this.writeWindowIndices(0);
-    }
-
-    if (initialSizes && initialSizes.length === rowDataCount) {
-      this.buildFromSizes(initialSizes, rowDataCount);
-    } else {
-      this.buildFromEstimate(rowDataCount, estimatedRowSize);
-    }
-
-    const maxOffset: number = this.getMaxOffset();
-    const clampedOffset: number = clamp(scrollOffset, 0, maxOffset);
-    const viewportStartIndex: number = this.findIndexForOffset(clampedOffset);
-    const targetWindowStartIndex: number = this.getTargetWindowStartIndex(viewportStartIndex);
-    const nextIndices = this.writeWindowIndices(targetWindowStartIndex);
-    this.prevViewportStartIndex = viewportStartIndex;
-    this.prevWindowStartIndex = targetWindowStartIndex;
-    return nextIndices;
-  }
-
-  updateConfig({
-    bufferAbove,
-    bufferBelow,
-    gap,
-    isInverted,
-    listSize,
-    rowCount,
-    scrollPaddingEnd,
-    scrollPaddingStart,
-  }: {
-    bufferAbove: number;
-    bufferBelow: number;
-    gap: number;
-    isInverted: boolean;
-    listSize: number;
-    rowCount: number;
-    scrollPaddingEnd: number;
-    scrollPaddingStart: number;
-  }): void {
-    this.bufferAbove = bufferAbove;
-    this.bufferBelow = bufferBelow;
-    this.gap = gap;
-    this.isInverted = isInverted;
-    this.listSize = listSize;
-    if (rowCount !== this.rowCount) {
-      this.rowGlobalIndicesBufferA = new Uint32Array(rowCount);
-      this.rowGlobalIndicesBufferB = new Uint32Array(rowCount);
-      this.useRowGlobalIndicesBufferA = true;
-    }
-    this.rowCount = rowCount;
-    this.scrollPaddingEnd = scrollPaddingEnd;
-    this.scrollPaddingStart = scrollPaddingStart;
-  }
-
-  findIndexForOffset(targetOffset: number): number {
-    if (this.length === 0) {
-      return 0;
-    }
-
-    if (this.isInverted) {
-      const target: number = this.totalSize - targetOffset;
-      return this.findIndexForPrefixAtLeast(target);
-    }
-
-    let index = 0;
-    let bit = 1;
-    while (bit <= this.length) {
-      bit <<= 1;
-    }
-    bit >>= 1;
-
-    let remaining: number = targetOffset;
-    while (bit !== 0) {
-      const next: number = index + bit;
-      if (next <= this.length && this.fenwicks[next] <= remaining) {
-        remaining -= this.fenwicks[next];
-        index = next;
-      }
-      bit >>= 1;
-    }
-
-    const candidate: number = index;
-    if (candidate >= this.length) {
-      return this.length - 1;
-    }
-
-    return candidate;
-  }
-
-  getOffsetForIndex(i: number): number {
-    if (i < 0) return 0;
-    if (this.length === 0) return 0;
-    if (i >= this.length) return this.totalSize;
-
-    if (i < this.dirtyFromIndex) {
-      return this.offsetCache[i] ?? 0;
-    }
-
-    let sum = 0;
-    let index: number = i + 1;
-    while (index > 0) {
-      sum += this.fenwicks[index];
-      index -= index & -index;
-    }
-
-    this.offsetCache[i] = sum;
-    return sum;
-  }
-
-  getRowStartOffset(rowIndex: number): number {
-    if (rowIndex <= 0) {
-      return 0;
-    }
-    if (rowIndex >= this.length) {
-      return this.totalSize;
-    }
-
-    return this.getOffsetForIndex(rowIndex - 1);
-  }
-
-  getRowLayoutStartOffset(rowIndex: number): number {
-    if (!this.isInverted) {
-      return this.getRowStartOffset(rowIndex);
-    }
-
-    const rowEnd: number = this.getRowStartOffset(rowIndex + 1);
-    return this.totalSize - rowEnd;
-  }
-
-  getRowLayoutEndOffset(rowIndex: number): number {
-    if (!this.isInverted) {
-      return this.getRowStartOffset(rowIndex + 1);
-    }
-
-    const rowStart: number = this.getRowStartOffset(rowIndex);
-    return this.totalSize - rowStart;
-  }
-
-  getRowMainSize(rowIndex: number): number {
-    'worklet';
-    if (rowIndex < 0 || rowIndex >= this.length) return 0;
-
-    const storedSize: number = this.rowSizes[rowIndex] ?? 0;
-    return storedSize - this.getRowGapSize(rowIndex);
-  }
-
-  recycleRows(offset: number): Uint32Array | null {
-    this.scrollOffset = offset;
-    const maxOffset: number = this.getMaxOffset();
-    const clampedOffset: number = clamp(offset, 0, maxOffset);
-
-    if (this.itemCount === 0 || this.rowCount === 0) {
-      return null;
-    }
-
-    const prevViewportOffset: number = this.getRowLayoutStartOffset(this.prevViewportStartIndex);
-    if (Math.abs(clampedOffset - prevViewportOffset) < RECYCLE_THRESHOLD_PX) {
-      return null;
-    }
-
-    const viewportStartIndex: number = this.findIndexForOffset(clampedOffset);
-    const targetWindowStartIndex: number = this.getTargetWindowStartIndex(viewportStartIndex);
-
-    if (targetWindowStartIndex === this.prevWindowStartIndex) {
-      this.prevViewportStartIndex = viewportStartIndex;
-      return null;
-    }
-
-    const shift: number = targetWindowStartIndex - this.prevWindowStartIndex;
-    const maxIndex: number = this.itemCount - 1;
-    const invalidIndex: number = this.itemCount;
-    const nextIndices = this.publishRowGlobalIndices(indices => {
-      const currentIndices = this.getCurrentRowGlobalIndices();
-      let didRecycle = false;
-
-      indices.set(currentIndices);
-
-      if (Math.abs(shift) >= this.rowCount) {
-        for (let i = 0; i < this.rowCount; i += 1) {
-          const candidateIndex: number = targetWindowStartIndex + i;
-          const nextIndex: number = candidateIndex <= maxIndex ? candidateIndex : invalidIndex;
-          if (indices[i] === nextIndex) continue;
-          indices[i] = nextIndex;
-          didRecycle = true;
-        }
-
-        return didRecycle ? indices : indices;
-      }
-
-      if (shift > 0) {
-        for (let i = 0; i < shift; i += 1) {
-          let minRow = 0;
-          let minVal: number = indices[0] ?? invalidIndex;
-
-          for (let j = 1; j < this.rowCount; j += 1) {
-            const value: number = indices[j];
-            if (value < minVal) {
-              minRow = j;
-              minVal = value;
-            }
-          }
-
-          const candidateIndex: number = targetWindowStartIndex + this.rowCount - shift + i;
-          const nextIndex: number = candidateIndex <= maxIndex ? candidateIndex : invalidIndex;
-          if (indices[minRow] === nextIndex) continue;
-          indices[minRow] = nextIndex;
-          didRecycle = true;
-        }
-
-        return didRecycle ? indices : indices;
-      }
-
-      if (shift < 0) {
-        const recycleCount: number = -shift;
-
-        for (let i = 0; i < recycleCount; i += 1) {
-          let maxRow = 0;
-          let maxVal: number = indices[0] ?? invalidIndex;
-
-          for (let j = 1; j < this.rowCount; j += 1) {
-            const value: number = indices[j];
-            if (value > maxVal) {
-              maxVal = value;
-              maxRow = j;
-            }
-          }
-
-          const candidateIndex: number = targetWindowStartIndex + i;
-          const nextIndex: number = candidateIndex <= maxIndex ? candidateIndex : invalidIndex;
-          if (indices[maxRow] === nextIndex) continue;
-          indices[maxRow] = nextIndex;
-          didRecycle = true;
-        }
-      }
-
-      return indices;
-    });
-
-    this.prevViewportStartIndex = viewportStartIndex;
-    this.prevWindowStartIndex = targetWindowStartIndex;
-    return nextIndices;
-  }
-
-  setScrollOffset(offset: number): Uint32Array | null {
-    return this.recycleRows(offset);
-  }
-
-  private findIndexForPrefixAtLeast(target: number): number {
-    if (this.length === 0) {
-      return 0;
-    }
-
-    if (target <= 0) {
-      return 0;
-    }
-
-    const total: number = this.totalSize;
-    if (target >= total) {
-      return this.length - 1;
-    }
-
-    let index = 0;
-    let bit = 1;
-    while (bit <= this.length) {
-      bit <<= 1;
-    }
-    bit >>= 1;
-
-    let remaining: number = target;
-    while (bit !== 0) {
-      const next: number = index + bit;
-      if (next <= this.length && this.fenwicks[next] < remaining) {
-        remaining -= this.fenwicks[next];
-        index = next;
-      }
-      bit >>= 1;
-    }
-
-    return index;
-  }
-
-  getTotalSize(): number {
-    return this.totalSize;
-  }
-
-  private getMaxOffset(): number {
-    const maxOffset: number = this.totalSize + this.scrollPaddingStart + this.scrollPaddingEnd - this.listSize;
-    return maxOffset > 0 ? maxOffset : 0;
-  }
-
-  private getRowGapSize(rowIndex: number, rowCountOverride?: number): number {
-    const rowCount: number = rowCountOverride ?? this.length;
-    if (rowCount <= 1) {
-      return 0;
-    }
-
-    if (this.isInverted) {
-      return rowIndex > 0 ? this.gap : 0;
-    }
-
-    return rowIndex < rowCount - 1 ? this.gap : 0;
-  }
-
-  private getTargetWindowStartIndex(viewportStartIndex: number): number {
-    const maxWindowStartIndex: number = Math.max(0, this.itemCount - this.rowCount);
-    if (!this.isInverted) {
-      return clamp(viewportStartIndex - this.bufferAbove, 0, maxWindowStartIndex);
-    }
-
-    const visibleRowCount: number = Math.max(0, this.rowCount - this.bufferAbove - this.bufferBelow);
-    const visibleSpan: number = visibleRowCount > 0 ? visibleRowCount - 1 : 0;
-    const targetStartIndex: number = viewportStartIndex - visibleSpan - this.bufferBelow;
-    return clamp(targetStartIndex, 0, maxWindowStartIndex);
-  }
-
-  private invalidateCache(fromIndex: number): void {
-    if (fromIndex < this.dirtyFromIndex) {
-      this.dirtyFromIndex = fromIndex;
-    }
-  }
-
-  private update(i: number, delta: number): void {
-    let index: number = i + 1;
-    while (index <= this.length) {
-      this.fenwicks[index] += delta;
-      index += index & -index;
-    }
-    this.invalidateCache(i);
-  }
-
-  private writeWindowIndices(targetWindowStartIndex: number): Uint32Array {
-    const maxIndex: number = this.itemCount - 1;
-    const invalidIndex: number = this.itemCount;
-    return this.publishRowGlobalIndices(indices => {
-      for (let i = 0; i < this.rowCount; i += 1) {
-        const candidateIndex: number = targetWindowStartIndex + i;
-        indices[i] = candidateIndex <= maxIndex ? candidateIndex : invalidIndex;
-      }
-
-      return indices;
-    });
-  }
-
-  private getCurrentRowGlobalIndices(): Uint32Array {
-    return this.useRowGlobalIndicesBufferA ? this.rowGlobalIndicesBufferA : this.rowGlobalIndicesBufferB;
-  }
-
-  private getNextRowGlobalIndices(): Uint32Array {
-    return this.useRowGlobalIndicesBufferA ? this.rowGlobalIndicesBufferB : this.rowGlobalIndicesBufferA;
-  }
-
-  private publishRowGlobalIndices(fill: (indices: Uint32Array) => Uint32Array): Uint32Array {
-    const nextIndices = this.getNextRowGlobalIndices();
-    fill(nextIndices);
-    this.useRowGlobalIndicesBufferA = !this.useRowGlobalIndicesBufferA;
-    return nextIndices;
-  }
 }
 
 // ============ AnimatedList Components ======================================== //
@@ -1412,9 +1099,11 @@ export const AnimatedList = typedMemo(function AnimatedList<T>({
   contentContainerStyle,
   data,
   estimatedItemSize,
+  exactLayoutController,
   gap,
   getItemSize,
   horizontal,
+  initialScrollToEnd,
   inverted,
   itemMetricsVersion,
   itemSizes,
@@ -1465,26 +1154,43 @@ export const AnimatedList = typedMemo(function AnimatedList<T>({
   const rowCount: number = rowWindowConfig.rowCount;
   const requiredRows: number[] = useMemo((): number[] => createIndexArray(rowCount), [rowCount]);
   const columnIndices: number[] = useMemo((): number[] => createIndexArray(resolvedNumColumns), [resolvedNumColumns]);
-  const initialState: InitialTreeState = useStableValue(
-    (): InitialTreeState =>
-      buildInitialTreeState({
+  const initialListState: InitialListState<T> = useStableValue(
+    (): InitialListState<T> =>
+      buildInitialListState({
+        bufferAbove: rowWindowConfig.bufferAbove,
+        bufferBelow: rowWindowConfig.bufferBelow,
         data: data.value,
         estimatedRowSize,
         gap,
         getItemSize,
+        initialScrollToEnd: initialScrollToEnd === true,
         itemSizes: itemSizes?.value,
         isInverted,
+        listSize: mainAxisSize,
         numColumns: resolvedNumColumns,
         rowCount,
+        scrollPaddingEnd,
+        scrollPaddingStart,
       })
   );
 
-  const rowGlobalIndices = useSharedValue<Uint32Array>(initialState.rowGlobalIndices);
-  const rowDataCount = useSharedValue<number>(initialState.rowDataCount);
-  const rowOffsets = useSharedValue<Float32Array>(initialState.initialOffsets);
-  const scrollViewOffset = useSharedValue<number>(0);
-  const totalSize = useSharedValue<number>(initialState.totalSize);
-  const lastHandledTotalSize = useSharedValue<number>(initialState.totalSize);
+  const initialFrame: ListFrame<T> = initialListState.frame;
+  const initialScrollOffset: number = initialListState.scrollOffset;
+  const initialContentOffset = useStableValue(() => ({
+    x: isHorizontal ? initialScrollOffset : 0,
+    y: isHorizontal ? 0 : initialScrollOffset,
+  }));
+
+  const listFrame = useSharedValue<ListFrame<T>>(initialFrame);
+  const pendingListFrame = useSharedValue<PendingListFrame<T> | null>(null);
+  const scrollViewOffset = useSharedValue<number>(initialScrollOffset);
+  const contentSize = useSharedValue<number>(initialFrame.rowLayout.totalSize);
+  const lastHandledTotalSize = useSharedValue<number>(initialFrame.rowLayout.totalSize);
+  const initialScrollPending = useSharedValue<boolean>(initialScrollToEnd === true && initialFrame.rowLayout.rowDataCount === 0);
+
+  const rowGlobalIndices = useDerivedValue(() => listFrame.value.rowGlobalIndices, [listFrame]);
+  const rowLayout = useDerivedValue(() => listFrame.value.rowLayout, [listFrame]);
+  const renderData = useDerivedValue(() => listFrame.value.data, [listFrame]);
 
   const scrollViewRef = useAnimatedRef<Animated.ScrollView>();
   const fenwickTree = useStableValue<WorkletContextValue<FenwickTree | undefined>>(() => ({
@@ -1501,122 +1207,190 @@ export const AnimatedList = typedMemo(function AnimatedList<T>({
       }),
     [maintainScrollAtEdge, maintainVisibleContentIndices, maintainVisibleContentPosition]
   );
-
-  useRunOnce(() => {
-    runOnUISync(
-      (treeContext, config) => {
-        'worklet';
-        const tree = new FenwickTree(config);
-        tree.rebuild(config.initialRowDataCount, config.estimatedRowSize, 0, config.initialSizes);
-        treeContext.current = tree;
-      },
-      fenwickTree,
-      {
-        bufferAbove: rowWindowConfig.bufferAbove,
-        bufferBelow: rowWindowConfig.bufferBelow,
-        estimatedRowSize,
-        gap,
-        initialRowDataCount: initialState.rowDataCount,
-        initialSizes: initialState.initialSizes,
-        isInverted,
-        itemCount: initialState.rowDataCount,
-        listSize: mainAxisSize,
-        rowCount,
-        scrollPaddingEnd,
-        scrollPaddingStart,
-      }
-    );
-  });
+  const maintainConfigValue = useDerivedValue(() => maintainConfig, [maintainConfig]);
+  const runtimeConfig = useDerivedValue<AnimatedListRuntimeConfig>(
+    () => ({
+      bufferAbove: rowWindowConfig.bufferAbove,
+      bufferBelow: rowWindowConfig.bufferBelow,
+      estimatedRowSize,
+      gap,
+      isInverted,
+      listSize: mainAxisSize,
+      numColumns: resolvedNumColumns,
+      rowCount,
+      scrollPaddingEnd,
+      scrollPaddingStart,
+    }),
+    [
+      estimatedRowSize,
+      gap,
+      isInverted,
+      mainAxisSize,
+      resolvedNumColumns,
+      rowCount,
+      rowWindowConfig.bufferAbove,
+      rowWindowConfig.bufferBelow,
+      scrollPaddingEnd,
+      scrollPaddingStart,
+    ]
+  );
 
   const handleScroll = useAnimatedScrollHandler(event => {
     const offset = isHorizontal ? event.contentOffset.x : event.contentOffset.y;
     const nextIndices = fenwickTree.current?.setScrollOffset?.(offset);
 
     scrollViewOffset.value = offset;
-    if (nextIndices) rowGlobalIndices.value = nextIndices;
+    if (nextIndices) {
+      const frame: ListFrame<T> = listFrame.value;
+      listFrame.value = replaceFrameIndices(frame, nextIndices);
+    }
     if (scrollOffsetProp) scrollOffsetProp.value = offset;
     if (onScroll) onScroll(event);
   });
 
-  const rebuildTreeState = useCallback(() => {
-    'worklet';
-    const nextData: T[] = data.value;
-    const metrics: RowMetrics = buildRowMetrics({
-      data: nextData,
-      estimatedRowSize,
-      gap,
-      getItemSize,
-      itemSizes: itemSizes?.value,
-      isInverted,
-      numColumns: resolvedNumColumns,
-    });
-    rowDataCount.value = metrics.rowDataCount;
+  const requestProgrammaticScroll = useCallback(
+    (offset: number): void => {
+      'worklet';
+      scrollViewOffset.value = offset;
+      if (scrollOffsetProp) scrollOffsetProp.value = offset;
+      const didScroll: boolean = scrollToOffset({ isHorizontal, offset, scrollViewRef });
+      if (didScroll && initialScrollPending.value && listFrame.value.rowLayout.rowDataCount > 0) initialScrollPending.value = false;
+    },
+    [initialScrollPending, isHorizontal, listFrame, scrollOffsetProp, scrollViewOffset, scrollViewRef]
+  );
 
-    const tree: FenwickTree | undefined = fenwickTree.current;
-    if (!tree) return;
+  const applyCurrentScrollOffset = useCallback(
+    (nativeContentSize?: number): void => {
+      'worklet';
+      const pending: PendingListFrame<T> | null = pendingListFrame.value;
+      if (pending) {
+        const frame: ListFrame<T> = pending.frame;
+        if (nativeContentSize !== undefined && nativeContentSize + 0.5 < frame.rowLayout.totalSize) return;
 
-    tree.updateConfig({
-      bufferAbove: rowWindowConfig.bufferAbove,
-      bufferBelow: rowWindowConfig.bufferBelow,
-      gap,
-      isInverted,
-      listSize: mainAxisSize,
-      rowCount,
-      scrollPaddingEnd,
-      scrollPaddingStart,
-    });
-    const nextIndices = tree.rebuild(metrics.rowDataCount, estimatedRowSize, scrollViewOffset.value, metrics.sizes);
-    rowOffsets.value = metrics.offsets;
-    rowGlobalIndices.value = nextIndices;
-    totalSize.value = tree.getTotalSize();
-  }, [
-    data,
-    estimatedRowSize,
-    fenwickTree,
-    gap,
-    getItemSize,
-    isInverted,
-    itemSizes,
-    mainAxisSize,
-    resolvedNumColumns,
-    rowCount,
-    rowDataCount,
-    rowGlobalIndices,
-    rowOffsets,
-    rowWindowConfig.bufferAbove,
-    rowWindowConfig.bufferBelow,
-    scrollPaddingEnd,
-    scrollPaddingStart,
-    scrollViewOffset,
-    totalSize,
-  ]);
+        const config: AnimatedListRuntimeConfig = runtimeConfig.value;
+        const tree: FenwickTree =
+          fenwickTree.current ??
+          new FenwickTree({
+            bufferAbove: config.bufferAbove,
+            bufferBelow: config.bufferBelow,
+            gap: config.gap,
+            isInverted: config.isInverted,
+            itemCount: frame.rowLayout.rowDataCount,
+            listSize: config.listSize,
+            rowCount: config.rowCount,
+            scrollPaddingEnd: config.scrollPaddingEnd,
+            scrollPaddingStart: config.scrollPaddingStart,
+          });
+        updateTreeConfig(tree, config);
+
+        const nextSizes: Float32Array = frame.rowLayout.sizes ?? buildRowSizesFromOffsets(frame.rowLayout);
+        const nextIndices: Uint32Array = tree.rebuild(
+          frame.rowLayout.rowDataCount,
+          config.estimatedRowSize,
+          pending.scrollOffset,
+          nextSizes
+        );
+        const frameToPublish: ListFrame<T> = replaceFrameIndices(frame, nextIndices);
+
+        fenwickTree.current = tree;
+        pendingListFrame.value = null;
+        listFrame.value = frameToPublish;
+        if (pending.syncData) data.value = frame.data;
+        contentSize.value = frameToPublish.rowLayout.totalSize;
+        lastHandledTotalSize.value = frameToPublish.rowLayout.totalSize;
+        requestProgrammaticScroll(pending.scrollOffset);
+        return;
+      }
+
+      const offset: number = scrollViewOffset.value;
+      const nextIndices = fenwickTree.current?.setScrollOffset?.(offset);
+      if (nextIndices) {
+        const frame: ListFrame<T> = listFrame.value;
+        listFrame.value = replaceFrameIndices(frame, nextIndices);
+      }
+
+      requestProgrammaticScroll(offset);
+    },
+    [
+      contentSize,
+      data,
+      fenwickTree,
+      lastHandledTotalSize,
+      listFrame,
+      pendingListFrame,
+      requestProgrammaticScroll,
+      runtimeConfig,
+      scrollViewOffset,
+    ]
+  );
+
+  const rebuildTreeState = useCallback(
+    (currentData: T[], offset: number): ListFrame<T> | null => {
+      'worklet';
+      const config: AnimatedListRuntimeConfig = runtimeConfig.value;
+      const frame: ListFrame<T> = listFrame.value;
+      const metrics: RowMetrics = exactLayoutController
+        ? frame.rowLayout
+        : buildRowMetrics({
+            data: currentData,
+            estimatedRowSize: config.estimatedRowSize,
+            gap: config.gap,
+            getItemSize,
+            itemSizes: itemSizes?.value,
+            isInverted: config.isInverted,
+            numColumns: config.numColumns,
+          });
+
+      const tree: FenwickTree | undefined = fenwickTree.current;
+      if (!tree) return null;
+
+      updateTreeConfig(tree, config);
+
+      const nextSizes = exactLayoutController ? buildRowSizesFromOffsets(metrics) : metrics.sizes;
+      const nextIndices = tree.rebuild(metrics.rowDataCount, config.estimatedRowSize, offset, nextSizes);
+
+      return {
+        data: currentData,
+        rowGlobalIndices: nextIndices,
+        rowLayout: {
+          offsets: metrics.offsets,
+          rowDataCount: metrics.rowDataCount,
+          sizes: nextSizes,
+          totalSize: tree.getTotalSize(),
+        },
+      };
+    },
+    [fenwickTree, getItemSize, itemSizes, exactLayoutController, listFrame, runtimeConfig]
+  );
 
   const captureMaintainAnchor = useCallback(
     (previousData: T[], prevScrollOffset: number, tree: FenwickTree): MaintainAnchor | null => {
       'worklet';
-      const indicesConfig: MaintainIndicesConfig | null = maintainConfig.indices;
+      const config: AnimatedListRuntimeConfig = runtimeConfig.value;
+      const currentMaintainConfig: MaintainConfig = maintainConfigValue.value;
+      const indicesConfig = currentMaintainConfig.indices;
       if (indicesConfig) {
         return captureIndicesAnchor({
           align: indicesConfig.align,
           dataLength: previousData.length,
           indices: indicesConfig.indices,
-          listSize: mainAxisSize,
-          numColumns: resolvedNumColumns,
+          listSize: config.listSize,
+          numColumns: config.numColumns,
           scrollOffset: prevScrollOffset,
           strategy: indicesConfig.strategy,
           tree,
         });
       }
 
-      const positionConfig: MaintainPositionConfig | null = maintainConfig.position;
+      const positionConfig = currentMaintainConfig.position;
       if (positionConfig) {
         return capturePositionAnchor<T>({
           anchorEdge: positionConfig.anchorEdge,
           data: previousData,
           keyExtractor,
-          listSize: mainAxisSize,
+          listSize: config.listSize,
           minIndexForVisible: positionConfig.minIndexForVisible,
-          numColumns: resolvedNumColumns,
+          numColumns: config.numColumns,
           scrollOffset: prevScrollOffset,
           tree,
         });
@@ -1624,7 +1398,7 @@ export const AnimatedList = typedMemo(function AnimatedList<T>({
 
       return null;
     },
-    [keyExtractor, mainAxisSize, maintainConfig, resolvedNumColumns]
+    [keyExtractor, maintainConfigValue, runtimeConfig]
   );
 
   const getStickToEdgeOffset = useCallback(
@@ -1638,14 +1412,12 @@ export const AnimatedList = typedMemo(function AnimatedList<T>({
       prevScrollOffset: number;
     }): number | null => {
       'worklet';
-      const stickToEdgeConfig: MaintainScrollAtEdgeConfig | null = maintainConfig.stickToEdge;
-      if (!stickToEdgeConfig) {
-        return null;
-      }
+      const stickToEdgeConfig: MaintainScrollAtEdgeConfig | null = maintainConfigValue.value.stickToEdge;
+      if (!stickToEdgeConfig) return null;
 
       return getStickToEdgeTarget({
         edge: stickToEdgeConfig.edge,
-        isInverted,
+        isInverted: runtimeConfig.value.isInverted,
         maxDistanceFromEdge: stickToEdgeConfig.maxDistanceFromEdge,
         maxOffset,
         mode: stickToEdgeConfig.mode,
@@ -1653,31 +1425,45 @@ export const AnimatedList = typedMemo(function AnimatedList<T>({
         prevScrollOffset,
       });
     },
-    [isInverted, maintainConfig]
+    [maintainConfigValue, runtimeConfig]
   );
 
-  const applyMaintainAfterRebuild = useCallback(
-    (currentData: T[], prevScrollOffset: number, prevMaxOffset: number, tree: FenwickTree, anchor: MaintainAnchor | null): void => {
+  const getScrollTargetAfterRebuild = useCallback(
+    ({
+      anchor,
+      currentData,
+      maxOffset,
+      prevMaxOffset,
+      prevScrollOffset,
+      rowDataCount,
+      tree,
+    }: {
+      anchor: MaintainAnchor | null;
+      currentData: T[];
+      maxOffset: number;
+      prevMaxOffset: number;
+      prevScrollOffset: number;
+      rowDataCount: number;
+      tree: FenwickTree;
+    }): number | null => {
       'worklet';
-      const maxOffset: number = getMaxScrollOffset({
-        listSize: mainAxisSize,
-        scrollPaddingEnd,
-        scrollPaddingStart,
-        totalSize: totalSize.value,
-      });
+      const config: AnimatedListRuntimeConfig = runtimeConfig.value;
+
+      const shouldApplyInitialScroll: boolean = initialScrollPending.value && rowDataCount > 0;
+      if (shouldApplyInitialScroll) {
+        return getScrollEdgeOffset({
+          maxOffset,
+          scrollEdge: resolveScrollEdgeToScrollEdge({ edge: 'end', isInverted: config.isInverted }),
+        });
+      }
+
       const stickToEdgeOffset: number | null = getStickToEdgeOffset({
         maxOffset,
         prevMaxOffset,
         prevScrollOffset,
       });
-      if (stickToEdgeOffset !== null) {
-        scrollToOffset({
-          isHorizontal,
-          offset: stickToEdgeOffset,
-          scrollViewRef,
-        });
-        return;
-      }
+
+      if (stickToEdgeOffset !== null) return stickToEdgeOffset;
 
       if (anchor) {
         const anchorOffset: number | null = getMaintainAnchorOffset({
@@ -1685,25 +1471,18 @@ export const AnimatedList = typedMemo(function AnimatedList<T>({
           data: currentData,
           keyExtractor,
           maxOffset,
-          numColumns: resolvedNumColumns,
+          numColumns: config.numColumns,
           tree,
         });
+
         if (anchorOffset !== null) {
-          scrollToOffset({ isHorizontal, offset: anchorOffset, scrollViewRef });
+          return anchorOffset;
         }
       }
+
+      return null;
     },
-    [
-      getStickToEdgeOffset,
-      isHorizontal,
-      keyExtractor,
-      mainAxisSize,
-      resolvedNumColumns,
-      scrollPaddingEnd,
-      scrollPaddingStart,
-      totalSize,
-      scrollViewRef,
-    ]
+    [getStickToEdgeOffset, initialScrollPending, keyExtractor, runtimeConfig]
   );
 
   const handleMetricsChange = useCallback((): void => {
@@ -1711,31 +1490,59 @@ export const AnimatedList = typedMemo(function AnimatedList<T>({
     const tree: FenwickTree | undefined = fenwickTree.current;
     if (!tree) return;
 
-    const currentData: T[] = data.value;
+    const config: AnimatedListRuntimeConfig = runtimeConfig.value;
+    const currentData: T[] = exactLayoutController ? listFrame.value.data : data.value;
     const prevScrollOffset: number = scrollViewOffset.value;
+    const anchor: MaintainAnchor | null = captureMaintainAnchor(currentData, prevScrollOffset, tree);
     const prevMaxOffset: number = getMaxScrollOffset({
-      listSize: mainAxisSize,
-      scrollPaddingEnd,
-      scrollPaddingStart,
+      listSize: config.listSize,
+      scrollPaddingEnd: config.scrollPaddingEnd,
+      scrollPaddingStart: config.scrollPaddingStart,
       totalSize: lastHandledTotalSize.value,
     });
-    const anchor: MaintainAnchor | null = captureMaintainAnchor(currentData, prevScrollOffset, tree);
 
-    rebuildTreeState();
-    applyMaintainAfterRebuild(currentData, prevScrollOffset, prevMaxOffset, tree, anchor);
-    lastHandledTotalSize.value = totalSize.value;
+    const nextFrame: ListFrame<T> | null = rebuildTreeState(currentData, prevScrollOffset);
+    if (!nextFrame) return;
+
+    const maxOffset: number = getMaxScrollOffset({
+      listSize: config.listSize,
+      scrollPaddingEnd: config.scrollPaddingEnd,
+      scrollPaddingStart: config.scrollPaddingStart,
+      totalSize: nextFrame.rowLayout.totalSize,
+    });
+    const scrollTarget: number | null = getScrollTargetAfterRebuild({
+      anchor,
+      currentData,
+      maxOffset,
+      prevMaxOffset,
+      prevScrollOffset,
+      rowDataCount: nextFrame.rowLayout.rowDataCount,
+      tree,
+    });
+    let frameToPublish: ListFrame<T> = nextFrame;
+
+    if (scrollTarget !== null) {
+      const targetIndices = tree.setScrollOffset(scrollTarget);
+      if (targetIndices) frameToPublish = replaceFrameIndices(nextFrame, targetIndices);
+    }
+
+    listFrame.value = frameToPublish;
+    contentSize.value = frameToPublish.rowLayout.totalSize;
+    if (scrollTarget !== null) requestProgrammaticScroll(scrollTarget);
+    lastHandledTotalSize.value = frameToPublish.rowLayout.totalSize;
   }, [
-    applyMaintainAfterRebuild,
     captureMaintainAnchor,
+    contentSize,
     data,
+    exactLayoutController,
     fenwickTree,
+    getScrollTargetAfterRebuild,
     lastHandledTotalSize,
-    mainAxisSize,
+    listFrame,
+    requestProgrammaticScroll,
     rebuildTreeState,
-    scrollPaddingEnd,
-    scrollPaddingStart,
+    runtimeConfig,
     scrollViewOffset,
-    totalSize,
   ]);
 
   const handleDataChange = useCallback(
@@ -1755,41 +1562,223 @@ export const AnimatedList = typedMemo(function AnimatedList<T>({
       'worklet';
       const anchor: MaintainAnchor | null = captureMaintainAnchor(previousData, prevScrollOffset, tree);
 
-      rebuildTreeState();
-      applyMaintainAfterRebuild(currentData, prevScrollOffset, prevMaxOffset, tree, anchor);
-      lastHandledTotalSize.value = totalSize.value;
+      const config: AnimatedListRuntimeConfig = runtimeConfig.value;
+      const nextFrame: ListFrame<T> | null = rebuildTreeState(currentData, prevScrollOffset);
+      if (!nextFrame) return;
+
+      const maxOffset: number = getMaxScrollOffset({
+        listSize: config.listSize,
+        scrollPaddingEnd: config.scrollPaddingEnd,
+        scrollPaddingStart: config.scrollPaddingStart,
+        totalSize: nextFrame.rowLayout.totalSize,
+      });
+      const scrollTarget: number | null = getScrollTargetAfterRebuild({
+        anchor,
+        currentData,
+        maxOffset,
+        prevMaxOffset,
+        prevScrollOffset,
+        rowDataCount: nextFrame.rowLayout.rowDataCount,
+        tree,
+      });
+      let frameToPublish: ListFrame<T> = nextFrame;
+
+      if (scrollTarget !== null) {
+        const targetIndices = tree.setScrollOffset(scrollTarget);
+        if (targetIndices) frameToPublish = replaceFrameIndices(nextFrame, targetIndices);
+      }
+
+      listFrame.value = frameToPublish;
+      contentSize.value = frameToPublish.rowLayout.totalSize;
+      if (scrollTarget !== null) requestProgrammaticScroll(scrollTarget);
+      lastHandledTotalSize.value = frameToPublish.rowLayout.totalSize;
     },
-    [applyMaintainAfterRebuild, captureMaintainAnchor, lastHandledTotalSize, rebuildTreeState, totalSize]
+    [
+      captureMaintainAnchor,
+      contentSize,
+      getScrollTargetAfterRebuild,
+      lastHandledTotalSize,
+      listFrame,
+      rebuildTreeState,
+      requestProgrammaticScroll,
+      runtimeConfig,
+    ]
+  );
+
+  const applyExactLayoutTransaction = useCallback(
+    (snapshot: ExactLayoutSnapshot<T>): void => {
+      'worklet';
+      const tree: FenwickTree | undefined = fenwickTree.current;
+      if (!tree) return;
+
+      const layout: ExactRowLayout = snapshot.rowLayout;
+      const config: AnimatedListRuntimeConfig = runtimeConfig.value;
+      const previousData: T[] = listFrame.value.data;
+      const currentData: T[] = snapshot.data ?? previousData;
+      const prevScrollOffset: number = scrollViewOffset.value;
+      const prevMaxOffset: number = getMaxScrollOffset({
+        listSize: config.listSize,
+        scrollPaddingEnd: config.scrollPaddingEnd,
+        scrollPaddingStart: config.scrollPaddingStart,
+        totalSize: lastHandledTotalSize.value,
+      });
+      const anchor: MaintainAnchor | null = captureMaintainAnchor(previousData, prevScrollOffset, tree);
+      const nextSizes: Float32Array = buildRowSizesFromOffsets(layout);
+      const nextTree = new FenwickTree({
+        bufferAbove: config.bufferAbove,
+        bufferBelow: config.bufferBelow,
+        gap: config.gap,
+        isInverted: config.isInverted,
+        itemCount: layout.rowDataCount,
+        listSize: config.listSize,
+        rowCount: config.rowCount,
+        scrollPaddingEnd: config.scrollPaddingEnd,
+        scrollPaddingStart: config.scrollPaddingStart,
+      });
+      const nextIndices: Uint32Array = nextTree.rebuild(layout.rowDataCount, config.estimatedRowSize, prevScrollOffset, nextSizes);
+
+      const nextFrame: ListFrame<T> = {
+        data: currentData,
+        rowGlobalIndices: nextIndices,
+        rowLayout: {
+          offsets: layout.offsets,
+          rowDataCount: layout.rowDataCount,
+          sizes: nextSizes,
+          totalSize: nextTree.getTotalSize(),
+        },
+      };
+      const maxOffset: number = getMaxScrollOffset({
+        listSize: config.listSize,
+        scrollPaddingEnd: config.scrollPaddingEnd,
+        scrollPaddingStart: config.scrollPaddingStart,
+        totalSize: nextFrame.rowLayout.totalSize,
+      });
+      const scrollTarget: number | null = getScrollTargetAfterRebuild({
+        anchor,
+        currentData,
+        maxOffset,
+        prevMaxOffset,
+        prevScrollOffset,
+        rowDataCount: nextFrame.rowLayout.rowDataCount,
+        tree: nextTree,
+      });
+
+      if (scrollTarget !== null && scrollTarget > prevMaxOffset) {
+        pendingListFrame.value = {
+          frame: nextFrame,
+          scrollOffset: scrollTarget,
+          syncData: snapshot.data !== undefined,
+        };
+        contentSize.value = nextFrame.rowLayout.totalSize;
+        return;
+      }
+
+      let frameToPublish: ListFrame<T> = nextFrame;
+
+      if (scrollTarget !== null) {
+        const targetIndices = nextTree.setScrollOffset(scrollTarget);
+        if (targetIndices) frameToPublish = replaceFrameIndices(nextFrame, targetIndices);
+      }
+
+      fenwickTree.current = nextTree;
+      listFrame.value = frameToPublish;
+      if (snapshot.data !== undefined) data.value = currentData;
+      contentSize.value = frameToPublish.rowLayout.totalSize;
+      if (scrollTarget !== null) requestProgrammaticScroll(scrollTarget);
+      lastHandledTotalSize.value = frameToPublish.rowLayout.totalSize;
+    },
+    [
+      captureMaintainAnchor,
+      contentSize,
+      data,
+      fenwickTree,
+      getScrollTargetAfterRebuild,
+      lastHandledTotalSize,
+      listFrame,
+      pendingListFrame,
+      requestProgrammaticScroll,
+      runtimeConfig,
+      scrollViewOffset,
+    ]
+  );
+
+  useRunOnce(() => {
+    runOnUISync(
+      (treeContext, controllerContext, applyLayout, config) => {
+        const tree = new FenwickTree(config);
+        tree.rebuild(config.initialRowDataCount, config.estimatedRowSize, config.initialScrollOffset, config.initialSizes);
+        treeContext.current = tree;
+
+        if (controllerContext) {
+          controllerContext.current = { applyLayout };
+          const pendingSnapshot = controllerContext.pendingSnapshot;
+
+          if (pendingSnapshot) {
+            controllerContext.pendingSnapshot = undefined;
+            applyLayout(pendingSnapshot);
+          }
+        }
+      },
+      fenwickTree,
+      exactLayoutController,
+      applyExactLayoutTransaction,
+      {
+        bufferAbove: rowWindowConfig.bufferAbove,
+        bufferBelow: rowWindowConfig.bufferBelow,
+        estimatedRowSize,
+        gap,
+        initialRowDataCount: initialFrame.rowLayout.rowDataCount,
+        initialScrollOffset,
+        initialSizes: initialFrame.rowLayout.sizes,
+        isInverted,
+        itemCount: initialFrame.rowLayout.rowDataCount,
+        listSize: mainAxisSize,
+        rowCount,
+        scrollPaddingEnd,
+        scrollPaddingStart,
+      }
+    );
+  });
+
+  useAnimatedReaction(
+    () => runtimeConfig.value,
+    (currentConfig, previousConfig) => {
+      if (!didRuntimeConfigChange(currentConfig, previousConfig)) return;
+
+      handleMetricsChange();
+    },
+    []
   );
 
   useAnimatedReaction(
     (): T[] => data.value,
     (current: T[], previous: T[] | null) => {
+      if (exactLayoutController) return;
+
       if (!previous) {
-        lastHandledTotalSize.value = totalSize.value;
+        lastHandledTotalSize.value = rowLayout.value.totalSize;
         return;
       }
 
       const tree: FenwickTree | undefined = fenwickTree.current;
       if (!tree) {
-        lastHandledTotalSize.value = totalSize.value;
+        lastHandledTotalSize.value = rowLayout.value.totalSize;
         return;
       }
 
       const currentLength: number = current.length;
       const previousLength: number = previous.length;
       const dataChanged: boolean = current !== previous || currentLength !== previousLength;
+      const config: AnimatedListRuntimeConfig = runtimeConfig.value;
       const prevScrollOffset: number = scrollViewOffset.value;
       const prevMaxOffset: number = getMaxScrollOffset({
-        listSize: mainAxisSize,
-        scrollPaddingEnd,
-        scrollPaddingStart,
+        listSize: config.listSize,
+        scrollPaddingEnd: config.scrollPaddingEnd,
+        scrollPaddingStart: config.scrollPaddingStart,
         totalSize: lastHandledTotalSize.value,
       });
 
-      if (!dataChanged) {
-        return;
-      }
+      if (!dataChanged) return;
 
       handleDataChange({
         currentData: current,
@@ -1803,28 +1792,54 @@ export const AnimatedList = typedMemo(function AnimatedList<T>({
   );
 
   useAnimatedReaction(
+    () => itemSizes?.value,
+    (currentSizes, previousSizes) => {
+      if (currentSizes === undefined || previousSizes === null || currentSizes === previousSizes) {
+        return;
+      }
+
+      handleMetricsChange();
+    },
+    []
+  );
+
+  useAnimatedReaction(
     () => itemMetricsVersion?.value,
     (currentVersion, previousVersion) => {
       if (currentVersion === undefined) return;
       if (previousVersion !== null && currentVersion === previousVersion) return;
       if (previousVersion === null && currentVersion === 0) return;
+
       handleMetricsChange();
     },
     []
   );
 
   const contentSizeStyle = useAnimatedStyle(() => {
-    const rowCountValue: number = rowDataCount.value;
+    const rowCountValue: number = rowLayout.value.rowDataCount;
     const estimatedSize: number = rowCountValue > 0 ? rowCountValue * (estimatedRowSize + gap) - gap : 0;
-    const mainSize: number = totalSize.value || estimatedSize;
-    return isHorizontal ? { height: crossAxisSize, width: mainSize } : { height: mainSize, width: crossAxisSize };
-  }, [crossAxisSize, estimatedRowSize, gap, isHorizontal]);
+    const mainSize: number = contentSize.value || estimatedSize;
 
-  const handleContentSizeChange = useCallback((): void => {}, []);
+    if (isHorizontal) return { height: crossAxisSize, width: mainSize };
+
+    return {
+      height: mainSize,
+      width: crossAxisSize,
+    };
+  }, [contentSize, crossAxisSize, estimatedRowSize, gap, isHorizontal]);
+
+  const handleContentSizeChange = useCallback(
+    (width: number, height: number): void => {
+      const nativeContentSize: number = isHorizontal ? width : height;
+      runOnUISync(applyCurrentScrollOffset, nativeContentSize);
+    },
+    [applyCurrentScrollOffset, isHorizontal]
+  );
 
   return (
     <View style={{ height: listHeight, position: 'relative', width: listWidth }}>
       <Animated.ScrollView
+        contentOffset={initialContentOffset}
         contentContainerStyle={contentContainerStyle}
         horizontal={isHorizontal}
         onContentSizeChange={handleContentSizeChange}
@@ -1840,7 +1855,7 @@ export const AnimatedList = typedMemo(function AnimatedList<T>({
               columnGap={resolvedColumnGap}
               columnIndices={columnIndices}
               crossAxisSize={crossAxisSize}
-              data={data}
+              data={renderData}
               gap={gap}
               isHorizontal={isHorizontal}
               isInverted={isInverted}
@@ -1849,12 +1864,9 @@ export const AnimatedList = typedMemo(function AnimatedList<T>({
               localIndex={localIndex}
               numColumns={resolvedNumColumns}
               renderItem={renderItem}
-              rowDataCount={rowDataCount}
               rowIndices={rowGlobalIndices}
-              rowOffsets={rowOffsets}
+              rowLayout={rowLayout}
               scrollViewRef={scrollViewRef}
-              totalSize={totalSize}
-              {...(itemSizes ? { estimatedItemSize, itemSizes } : getItemSize ? { estimatedItemSize, getItemSize } : { itemSize })}
             />
           ))}
         </Animated.View>
@@ -1868,27 +1880,21 @@ function RecycledRow<T>({
   columnIndices,
   crossAxisSize,
   data,
-  estimatedItemSize,
   gap,
   isHorizontal,
   isInverted,
-  getItemSize,
-  itemSizes,
-  itemSize,
   itemWidth,
   localIndex,
   numColumns,
   renderItem,
-  rowDataCount,
   rowIndices,
-  rowOffsets,
+  rowLayout,
   scrollViewRef,
-  totalSize,
 }: {
   columnGap: number;
   columnIndices: number[];
   crossAxisSize: number;
-  data: SharedValue<T[]>;
+  data: DerivedValue<T[]>;
   gap: number;
   isHorizontal: boolean;
   isInverted: boolean;
@@ -1896,70 +1902,54 @@ function RecycledRow<T>({
   localIndex: number;
   numColumns: number;
   renderItem: (props: RenderItemProps<T>) => React.ReactNode;
-  rowDataCount: SharedValue<number>;
-  rowIndices: SharedValue<Uint32Array>;
-  rowOffsets: SharedValue<Float32Array>;
+  rowIndices: DerivedValue<Uint32Array>;
+  rowLayout: DerivedValue<RowMetrics>;
   scrollViewRef: AnimatedRef<Animated.ScrollView>;
-  totalSize: SharedValue<number>;
-} & ItemSizeConfig<T>): React.ReactElement {
-  const resolvedItemSize: number = itemSize ?? estimatedItemSize;
+}): React.ReactElement {
   const itemCrossSize: number = itemWidth;
 
   const rowIndex = useDerivedValue(() => {
     const indices: Uint32Array = rowIndices.value;
-    const index: number = indices[localIndex] ?? rowDataCount.value;
+    const index: number = indices[localIndex] ?? rowLayout.value.rowDataCount;
     return index;
   });
 
   const isRowActive = useDerivedValue(() => {
-    const dataRowCount: number = rowDataCount.value;
+    const dataRowCount: number = rowLayout.value.rowDataCount;
     return dataRowCount > 0 && rowIndex.value < dataRowCount;
   });
 
   const rowSize = useDerivedValue(() => {
     if (!isRowActive.value) return 0;
 
-    if (!getItemSize && !itemSizes) return resolvedItemSize;
-
-    const dataLength: number = data.value.length;
-    const startIndex: number = rowIndex.value * numColumns;
-    const endIndex: number = Math.min(startIndex + numColumns, dataLength);
-    let maxSize = 0;
-
-    for (let i: number = startIndex; i < endIndex; i += 1) {
-      let itemSizeValue = 0;
-      if (itemSizes) itemSizeValue = itemSizes.value[i] ?? 0;
-      else if (getItemSize) itemSizeValue = getItemSize(i, data.value[i]);
-
-      if (itemSizeValue > maxSize) {
-        maxSize = itemSizeValue;
-      }
-    }
-
-    return maxSize;
+    const metrics: RowMetrics = rowLayout.value;
+    return getRowMainSize({
+      gap,
+      isInverted,
+      offsets: metrics.offsets,
+      rowDataCount: metrics.rowDataCount,
+      rowIndex: rowIndex.value,
+      totalSize: metrics.totalSize,
+    });
   });
 
   const translateMain = useDerivedValue(() => {
     if (!isRowActive.value) return -9999;
 
-    const offsets: Float32Array = rowOffsets.value;
+    const metrics: RowMetrics = rowLayout.value;
+    const offsets: Float32Array = metrics.offsets;
     const rowIndexValue: number = rowIndex.value;
-    const fallbackOffset: number =
-      rowIndexValue >= 0 && rowIndexValue < offsets.length ? (offsets[rowIndexValue] ?? 0) : rowIndexValue * (resolvedItemSize + gap);
+    const rowStart: number = offsets[rowIndexValue] ?? 0;
 
-    if (!isInverted) return fallbackOffset;
+    if (!isInverted) return rowStart;
 
-    const nextOffset: number | undefined = rowIndexValue + 1 < offsets.length ? offsets[rowIndexValue + 1] : undefined;
-    const gapSize: number = getRowGap({
-      gap,
-      isInverted,
-      rowCount: rowDataCount.value,
+    const rowEnd: number = getRowEndOffset({
+      offsets,
+      rowDataCount: metrics.rowDataCount,
       rowIndex: rowIndexValue,
+      totalSize: metrics.totalSize,
     });
-
-    const fallbackEnd: number = nextOffset ?? fallbackOffset + rowSize.value + gapSize;
-
-    return totalSize.value - fallbackEnd;
+    return metrics.totalSize - rowEnd;
   });
 
   const rowStyle = useAnimatedStyle(() => {
@@ -2004,7 +1994,7 @@ function RecycledCell<T>({
 }: {
   columnGap: number;
   columnIndex: number;
-  data: SharedValue<T[]>;
+  data: DerivedValue<T[]>;
   isHorizontal: boolean;
   itemCrossSize: number;
   numColumns: number;
@@ -2028,6 +2018,11 @@ function RecycledCell<T>({
     const index: number = itemIndex.value;
     const dataLength: number = data.value.length;
     return index >= 0 && index < dataLength;
+  });
+
+  const item = useDerivedValue(() => {
+    const index: number = itemIndex.value;
+    return index >= 0 ? data.value[index] : undefined;
   });
 
   const cellOffset: number = columnIndex * (itemCrossSize + columnGap);
@@ -2061,6 +2056,7 @@ function RecycledCell<T>({
         columnIndex,
         data,
         isActive,
+        item,
         itemIndex,
         rowIndex,
         scrollViewRef,

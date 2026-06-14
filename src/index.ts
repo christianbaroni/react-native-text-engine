@@ -1,8 +1,10 @@
+import { coerceTextViewText } from './coerceTextViewText';
 import { GlyphFieldView } from './GlyphFieldView';
 import { GlyphField, createGlyphField } from './GlyphField';
 import { PreparedTextView } from './PreparedTextView';
 import { PreparedText, createPreparedText, layoutPreparedText, measureText, measureTextWidth, releasePreparedText } from './PreparedText';
-import { TextView } from './TextView';
+import { normalizeTextViewChildren } from './normalizeTextViewChildren';
+import { TextView, createTextViewRunPayload } from './TextView';
 
 export type {
   GlyphFieldConfig,
@@ -14,6 +16,7 @@ export type {
   TextLayout,
   TextLayoutLines,
   TextLine,
+  TextEngineDefaults,
   TextMeasureRun,
   TextMeasureRunStyle,
   TextMeasureStyle,
@@ -23,6 +26,7 @@ export type { PreparedTextViewProps } from './PreparedTextView';
 export type { TextViewProps, TextViewRunPayload } from './TextView';
 
 export {
+  coerceTextViewText,
   createGlyphField,
   createPreparedText,
   GlyphField,
@@ -30,8 +34,10 @@ export {
   layoutPreparedText,
   measureText,
   measureTextWidth,
+  normalizeTextViewChildren,
   PreparedText,
   PreparedTextView,
   releasePreparedText,
   TextView,
+  createTextViewRunPayload,
 };

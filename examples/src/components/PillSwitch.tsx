@@ -1,6 +1,11 @@
 import React from 'react';
-import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
+import { EaseView } from 'react-native-ease';
+import { Pressable } from 'react-native-gesture-handler';
 import { demoTheme } from '../theme/demoTheme';
+import { LiquidGlassView } from '@callstack/liquid-glass';
+import { DEMO_TRANSITIONS } from '../animation/ease';
+import { IS_IOS } from '../constants';
 
 type Option<T extends string> = {
   label: string;
@@ -13,24 +18,42 @@ type PillSwitchProps<T extends string> = {
   onChange: (value: T) => void;
 };
 
+const ACTIVE_ITEM_BG = 'rgba(255, 255, 255, 0.06)';
+const INACTIVE_ITEM_BG = 'rgba(255, 255, 255, 0)';
+
+const LiquidGlass = IS_IOS ? LiquidGlassView : View;
+
 export function PillSwitch<T extends string>({ options, value, onChange }: PillSwitchProps<T>) {
   return (
-    <View style={styles.shell}>
-      <View style={styles.root}>
-        {options.map(option => {
-          const isActive = option.value === value;
-          return (
-            <Pressable key={option.value} onPress={() => onChange(option.value)} style={[styles.item, isActive ? styles.itemActive : null]}>
+    <LiquidGlass style={styles.root}>
+      {options.map(option => {
+        const isActive = option.value === value;
+        return (
+          <EaseView
+            key={option.value}
+            animate={{
+              backgroundColor: isActive ? ACTIVE_ITEM_BG : INACTIVE_ITEM_BG,
+              scale: isActive ? 1 : 0.985,
+            }}
+            transition={DEMO_TRANSITIONS.selection}
+            style={styles.itemFrame}
+          >
+            <Pressable onPress={() => onChange(option.value)} style={styles.item}>
               <Text style={[styles.label, isActive ? styles.labelActive : null]}>{option.label}</Text>
             </Pressable>
-          );
-        })}
-      </View>
-    </View>
+          </EaseView>
+        );
+      })}
+    </LiquidGlass>
   );
 }
 
 const styles = StyleSheet.create({
+  itemFrame: {
+    borderCurve: 'continuous',
+    borderRadius: 999,
+    overflow: 'hidden',
+  },
   item: {
     alignItems: 'center',
     borderCurve: 'continuous',
@@ -38,15 +61,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     minHeight: 44,
     paddingHorizontal: 18,
-  },
-  itemActive: {
-    backgroundColor: 'rgba(247, 232, 204, 0.14)',
-    borderColor: 'rgba(255, 241, 214, 0.16)',
-    borderWidth: 1,
-    shadowColor: '#f6ddb6',
-    shadowOffset: { height: 8, width: 0 },
-    shadowOpacity: Platform.OS === 'ios' ? 0.16 : 0,
-    shadowRadius: 18,
   },
   label: {
     color: demoTheme.textSecondary,
@@ -58,27 +72,19 @@ const styles = StyleSheet.create({
     color: demoTheme.textPrimary,
   },
   root: {
-    backgroundColor: 'rgba(20, 14, 10, 0.78)',
-    borderColor: demoTheme.borderStrong,
+    alignItems: 'center',
+    backgroundColor: IS_IOS ? undefined : `rgba(20, 14, 10, ${IS_IOS ? 0.6 : 0.78})`,
+    borderColor: IS_IOS ? undefined : demoTheme.borderStrong,
     borderCurve: 'continuous',
     borderRadius: 999,
-    borderWidth: 1,
+    borderWidth: IS_IOS ? 0 : 1,
     flexDirection: 'row',
     gap: 8,
-    overflow: 'hidden',
+    justifyContent: 'center',
     padding: 8,
-  },
-  shell: {
-    backgroundColor: 'rgba(255, 246, 227, 0.04)',
-    borderColor: 'rgba(255, 239, 212, 0.08)',
-    borderCurve: 'continuous',
-    borderRadius: 999,
-    borderWidth: 1,
-    overflow: 'hidden',
-    padding: 4,
     shadowColor: '#000000',
-    shadowOffset: { height: 18, width: 0 },
-    shadowOpacity: Platform.OS === 'ios' ? 0.22 : 0,
-    shadowRadius: 28,
+    shadowOffset: { height: 12, width: 0 },
+    shadowOpacity: IS_IOS ? 0.52 : 0,
+    shadowRadius: 12,
   },
 });

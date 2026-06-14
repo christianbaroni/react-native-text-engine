@@ -1,6 +1,7 @@
 package com.rntextengine
 
 import android.graphics.Color
+import androidx.core.graphics.toColorInt
 
 internal object RNTextEngineColorParser {
     fun parse(value: String?): Int? {
@@ -8,7 +9,7 @@ internal object RNTextEngineColorParser {
 
         val normalized = value.trim()
         parseRgbFunction(normalized)?.let { return it }
-        return runCatching { Color.parseColor(normalized) }.getOrNull()
+        return runCatching { normalized.toColorInt() }.getOrNull()
     }
 
     private fun parseRgbFunction(value: String): Int? {

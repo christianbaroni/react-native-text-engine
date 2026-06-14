@@ -11,6 +11,7 @@ class RNTextEnginePackage : ReactPackage {
     }
 
     override fun createViewManagers(reactContext: ReactApplicationContext): List<ViewManager<*, *>> {
+        RNTextEngineBindings.initialize(reactContext)
         return listOf(
             RNTextEngineGlyphFieldViewManager(),
             RNTextEngineTextViewManager(),

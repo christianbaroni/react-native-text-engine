@@ -1,11 +1,22 @@
-import { createWorkletRuntime, getUIRuntimeHolder, runOnUISync, scheduleOnRuntime, type WorkletRuntime } from 'react-native-worklets';
+import { createWorkletRuntime, getUIRuntimeHolder, isRNRuntime, scheduleOnRuntime, type WorkletRuntime } from 'react-native-worklets';
 import { getRNTextEngineRuntime } from './initModule';
-import type { GlyphFieldHandle, LayoutOptions, PreparedTextHandle, TextLayout, TextMeasureRun, TextMeasureStyle } from './types';
+import { resolveAnchorToCapHeight, resolveLayoutOptions, resolveTextMeasureStyle } from './textEngineDefaults';
+import type {
+  GlyphFieldHandle,
+  LayoutOptions,
+  NextTextLine,
+  PreparedTextHandle,
+  TextLayout,
+  TextMeasureRun,
+  TextMeasureStyle,
+} from './types';
 
 declare global {
-  var _WORKLET_RUNTIME: ArrayBuffer;
+  var __RNTextEngineCommitGlyphFieldBuffers: ((handle: number) => void) | undefined;
+  var __RNTextEngineCreateGlyphFieldBuffers: ((handle: number) => { glyphIndices: ArrayBuffer; variantIndices: ArrayBuffer }) | undefined;
   var __RNTextEngineInstallWorkletRuntime: ((workletRuntime: object) => boolean) | undefined;
   var __RNTextEngineUpdateGlyphField: ((handle: number, glyphs: string, variantIndices: Uint8Array) => void) | undefined;
+  var __RNTextEngineUpdateGlyphFieldIndices: ((handle: number, glyphIndices: Uint8Array, variantIndices: Uint8Array) => void) | undefined;
 }
 
 export type TextEngineRuntimeConfig = {
@@ -17,32 +28,31 @@ export type TextEngineRuntimeConfig = {
   enableEventLoop?: true;
 };
 
+export type GlyphFieldRuntimeBuffers = {
+  glyphIndices: Uint8Array;
+  variantIndices: Uint8Array;
+};
+
 function buildHandle(id: number): PreparedTextHandle {
   'worklet';
   return { handle: id };
 }
 
-/**
- * Installs `react-native-text-engine` into the Reanimated UI runtime.
- *
- * Call this once during app startup before running text-engine calls from UI
- * worklets.
- */
-export function installTextEngineInUIRuntime(): void {
+function installRuntime(workletRuntime: object, target: string): void {
   const installWorkletRuntime = globalThis.__RNTextEngineInstallWorkletRuntime;
-  if (installWorkletRuntime) {
-    const didInstall = installWorkletRuntime(getUIRuntimeHolder());
-    if (!didInstall) {
-      throw new Error('RNTextEngine: Failed to install bindings into the UI runtime.');
-    }
-    return;
+  if (!installWorkletRuntime) {
+    throw new Error('RNTextEngine: Native installWorkletRuntime() is unavailable in this build.');
   }
 
-  const runtimeToken = runOnUISync(() => {
-    'worklet';
-    return globalThis._WORKLET_RUNTIME;
-  });
-  getRNTextEngineRuntime().installRuntime(runtimeToken);
+  const didInstall = installWorkletRuntime(workletRuntime);
+  if (!didInstall) {
+    throw new Error(`RNTextEngine: Failed to install bindings into the ${target} runtime.`);
+  }
+}
+
+function installUIRuntime(): void {
+  getRNTextEngineRuntime();
+  installRuntime(getUIRuntimeHolder(), 'UI');
 }
 
 /**
@@ -68,15 +78,7 @@ export function createTextEngineRuntime(config?: TextEngineRuntimeConfig): Workl
           name: config?.name,
         });
 
-  const installWorkletRuntime = globalThis.__RNTextEngineInstallWorkletRuntime;
-  if (!installWorkletRuntime) {
-    throw new Error('RNTextEngine: Native installWorkletRuntime() is unavailable in this build.');
-  }
-
-  const didInstall = installWorkletRuntime(workletRuntime);
-  if (!didInstall) {
-    throw new Error('RNTextEngine: Failed to install bindings into the created worklet runtime.');
-  }
+  installRuntime(workletRuntime, 'created worklet');
 
   if (initializer) scheduleOnRuntime(workletRuntime, initializer);
 
@@ -102,7 +104,7 @@ export function measureTextsInRuntime(
     throw new Error('RNTextEngine: measureTextsInRuntime() was called before the current runtime was installed.');
   }
 
-  return measureBatch(texts, style, options, runsByText);
+  return measureBatch(texts, resolveTextMeasureStyle(style), resolveLayoutOptions(options), runsByText);
 }
 
 /**
@@ -120,7 +122,7 @@ export function createPreparedTextsInRuntime(
     throw new Error('RNTextEngine: createPreparedTextsInRuntime() was called before the current runtime was installed.');
   }
 
-  return prepareBatch(texts, style, runsByText).map(buildHandle);
+  return prepareBatch(texts, resolveTextMeasureStyle(style), runsByText).map(buildHandle);
 }
 
 /**
@@ -139,19 +141,90 @@ export function layoutPreparedTextsInRuntime(handles: readonly PreparedTextHandl
     ids[index] = handles[index]?.handle ?? 0;
   }
 
-  return layoutBatch(ids, options);
+  return layoutBatch(ids, resolveLayoutOptions(options));
+}
+
+/**
+ * Worklet-safe single-line layout against the current installed runtime.
+ *
+ * Use this when line width changes one line at a time, such as flowing text
+ * around animated obstacles.
+ */
+export function layoutNextLineInRuntime(
+  handle: PreparedTextHandle | number,
+  start: number,
+  width: number,
+  anchorToCapHeight?: boolean
+): NextTextLine | null {
+  'worklet';
+
+  const layoutNextLine = globalThis.__RNTextEngineLayoutNextLine;
+  if (!layoutNextLine) {
+    throw new Error('RNTextEngine: layoutNextLineInRuntime() was called before the current runtime was installed.');
+  }
+
+  const resolvedHandle = typeof handle === 'number' ? handle : handle.handle;
+
+  return layoutNextLine(resolvedHandle, start, width, resolveAnchorToCapHeight(anchorToCapHeight));
 }
 
 /**
  * Worklet-safe glyph-field update against the current installed runtime.
  */
-export function updateGlyphFieldInRuntime(handle: GlyphFieldHandle | number, glyphs: string, variantIndices: Uint8Array): void {
+export function updateGlyphFieldInRuntime(handle: GlyphFieldHandle | number, glyphs: string, variantIndices: Uint8Array): void;
+export function updateGlyphFieldInRuntime(handle: GlyphFieldHandle | number, glyphIndices: Uint8Array, variantIndices: Uint8Array): void;
+export function updateGlyphFieldInRuntime(
+  handle: GlyphFieldHandle | number,
+  glyphsOrIndices: string | Uint8Array,
+  variantIndices: Uint8Array
+): void {
   'worklet';
 
-  const updateGlyphField = globalThis.__RNTextEngineUpdateGlyphField;
-  if (!updateGlyphField) {
+  const resolvedHandle = typeof handle === 'number' ? handle : handle.handle;
+  if (typeof glyphsOrIndices === 'string') {
+    const updateGlyphField = globalThis.__RNTextEngineUpdateGlyphField;
+    if (!updateGlyphField) {
+      throw new Error('RNTextEngine: updateGlyphFieldInRuntime() was called before the current runtime was installed.');
+    }
+
+    updateGlyphField(resolvedHandle, glyphsOrIndices, variantIndices);
+    return;
+  }
+
+  const updateGlyphFieldIndices = globalThis.__RNTextEngineUpdateGlyphFieldIndices;
+  if (!updateGlyphFieldIndices) {
     throw new Error('RNTextEngine: updateGlyphFieldInRuntime() was called before the current runtime was installed.');
   }
 
-  updateGlyphField(typeof handle === 'number' ? handle : handle.handle, glyphs, variantIndices);
+  updateGlyphFieldIndices(resolvedHandle, glyphsOrIndices, variantIndices);
 }
+
+export function createGlyphFieldBuffersInRuntime(handle: GlyphFieldHandle | number): GlyphFieldRuntimeBuffers {
+  'worklet';
+
+  const createGlyphFieldBuffers = globalThis.__RNTextEngineCreateGlyphFieldBuffers;
+  if (!createGlyphFieldBuffers) {
+    throw new Error('RNTextEngine: createGlyphFieldBuffersInRuntime() was called before the current runtime was installed.');
+  }
+
+  const resolvedHandle = typeof handle === 'number' ? handle : handle.handle;
+  const buffers = createGlyphFieldBuffers(resolvedHandle);
+  return {
+    glyphIndices: new Uint8Array(buffers.glyphIndices),
+    variantIndices: new Uint8Array(buffers.variantIndices),
+  };
+}
+
+export function commitGlyphFieldBuffersInRuntime(handle: GlyphFieldHandle | number): void {
+  'worklet';
+
+  const commitGlyphFieldBuffers = globalThis.__RNTextEngineCommitGlyphFieldBuffers;
+  if (!commitGlyphFieldBuffers) {
+    throw new Error('RNTextEngine: commitGlyphFieldBuffersInRuntime() was called before the current runtime was installed.');
+  }
+
+  const resolvedHandle = typeof handle === 'number' ? handle : handle.handle;
+  commitGlyphFieldBuffers(resolvedHandle);
+}
+
+if (isRNRuntime()) installUIRuntime();

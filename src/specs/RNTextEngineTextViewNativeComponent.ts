@@ -1,30 +1,50 @@
-import { codegenNativeComponent, type CodegenTypes, type ColorValue, type ViewProps } from 'react-native';
+import { codegenNativeComponent, type ColorValue, type ViewProps } from 'react-native';
+import type { Double, Int32 } from 'react-native/Libraries/Types/CodegenTypes';
+
+export interface TextShadowOffset {
+  height: Double;
+  width: Double;
+}
 
 export interface NativeProps extends ViewProps {
+  allowFontScaling?: boolean;
+  anchorToCapHeight?: boolean;
   color?: ColorValue;
   ellipsizeMode?: string;
   fontFamily?: string;
-  fontSize?: CodegenTypes.Double;
+  fontSize?: Double;
   fontStyle?: string;
   fontWeight?: string;
-  letterSpacing?: CodegenTypes.Double;
-  lineHeight?: CodegenTypes.Double;
-  numberOfLines?: CodegenTypes.Int32;
+  letterSpacing?: Double;
+  lineHeight?: Double;
+  numberOfLines?: Int32;
+  rnteHasAllowFontScaling?: boolean;
+  rnteHasLetterSpacing?: boolean;
+  rnteHasTabularNumbers?: boolean;
+  rnteIsVirtualTextSpan?: boolean;
   runColors?: ReadonlyArray<string>;
-  runCount?: CodegenTypes.Int32;
-  runEnds?: ReadonlyArray<CodegenTypes.Double>;
+  runCount?: Int32;
+  runEnds?: ReadonlyArray<Double>;
   runFontFamilies?: ReadonlyArray<string>;
-  runFontSizes?: ReadonlyArray<CodegenTypes.Double>;
+  runFontSizes?: ReadonlyArray<Double>;
   runFontStyles?: ReadonlyArray<string>;
   runFontWeights?: ReadonlyArray<string>;
-  runLetterSpacings?: ReadonlyArray<CodegenTypes.Double>;
-  runLineHeights?: ReadonlyArray<CodegenTypes.Double>;
-  runStarts?: ReadonlyArray<CodegenTypes.Double>;
-  runStyleMasks?: ReadonlyArray<CodegenTypes.Double>;
+  runLetterSpacings?: ReadonlyArray<Double>;
+  runLineHeights?: ReadonlyArray<Double>;
+  runStarts?: ReadonlyArray<Double>;
+  runStyleMasks?: ReadonlyArray<Double>;
   runTabularNumbers?: ReadonlyArray<boolean>;
   selectable?: boolean;
+  tabularNumbers?: boolean;
   text?: string;
   textAlign?: string;
+  textDecorationColor?: ColorValue;
+  textDecorationLine?: string;
+  textDecorationStyle?: string;
+  textShadowColor?: ColorValue;
+  textShadowOffset?: Readonly<TextShadowOffset>;
+  textShadowRadius?: Double;
+  textTransform?: string;
 }
 
 export default codegenNativeComponent<NativeProps>('RNTextEngineTextView');

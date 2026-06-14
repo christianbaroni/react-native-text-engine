@@ -1,23 +1,10 @@
-import React, { forwardRef, type ComponentRef } from 'react';
-import type { TextMeasureRun } from './types';
+import { createContext, forwardRef, useContext, type ComponentRef, type ReactNode } from 'react';
+import type { StyleProp, TextStyle, ViewStyle } from 'react-native';
+import textEngineAppDefaults from './generated/TextEngineAppDefaults';
 import NativeTextView, { type NativeProps as NativeTextViewProps } from './specs/RNTextEngineTextViewNativeComponent';
+import type { TextMeasureRun } from './types';
 
 export type TextViewRunPayload = Readonly<{
-  runColors?: readonly (string | null)[];
-  runCount?: number;
-  runEnds: readonly number[];
-  runFontFamilies?: readonly (string | null)[];
-  runFontSizes?: readonly number[];
-  runFontStyles?: readonly (string | null)[];
-  runFontWeights?: readonly (string | null)[];
-  runLetterSpacings?: readonly number[];
-  runLineHeights?: readonly number[];
-  runStarts: readonly number[];
-  runStyleMasks?: readonly number[];
-  runTabularNumbers?: readonly boolean[];
-}>;
-
-type NativeTextViewRunPayload = Readonly<{
   runColors?: readonly string[];
   runCount?: number;
   runEnds: readonly number[];
@@ -41,41 +28,40 @@ const RUN_STYLE_HAS_LETTER_SPACING = 1 << 5;
 const RUN_STYLE_HAS_LINE_HEIGHT = 1 << 6;
 const RUN_STYLE_HAS_TABULAR_NUMBERS = 1 << 7;
 
-type NativeTextViewStringArrayProp = readonly string[] | undefined;
-
 /**
  * Props for the native text display surface.
  *
- * `selectable` opts into the interaction-oriented native text owner. Leave it
- * off for the lowest-cost display path.
+ * `TextView` is the canonical zero-extra-work render surface. Pass `text`
+ * directly on hot paths. The Babel plugin lowers textual JSX children into
+ * this prop when it can prove the child model, and uses narrowly-scoped
+ * runtime helpers only for dynamic child forwarding boundaries that JSX alone
+ * cannot lower losslessly for a custom text host.
  */
-export type TextViewProps = Omit<
-  NativeTextViewProps,
-  'runColors' | 'runFontFamilies' | 'runFontStyles' | 'runFontWeights' | 'fontStyle' | 'textAlign'
-> & {
-  color?: NativeTextViewProps['color'];
-  ellipsizeMode?: 'clip' | 'head' | 'middle' | 'tail';
-  fontStyle?: 'italic' | 'normal';
-  runColors?: readonly (string | null)[];
-  runFontFamilies?: readonly (string | null)[];
-  runFontStyles?: readonly (string | null)[];
-  runFontWeights?: readonly (string | null)[];
-  runs?: readonly TextMeasureRun[];
-  textAlign?: 'auto' | 'center' | 'justify' | 'left' | 'right';
+type InternalTextViewPropKey = 'rnteHasAllowFontScaling' | 'rnteHasLetterSpacing' | 'rnteHasTabularNumbers' | 'rnteIsVirtualTextSpan';
+
+export type TextViewProps = Omit<NativeTextViewProps, 'style' | InternalTextViewPropKey> & {
+  children?: ReactNode;
+  style?: StyleProp<ViewStyle & TextStyle>;
 };
 
-function normalizeStringArray(values: readonly (string | null)[] | undefined): NativeTextViewStringArrayProp {
-  if (!values) return undefined;
-  return values.map(value => value ?? '');
-}
+const textViewNestingContext = createContext(false);
 
-function flattenRuns(runs: readonly TextMeasureRun[] | undefined): NativeTextViewRunPayload | null {
-  if (!runs || runs.length === 0) return null;
+/**
+ * Flattens inline runs into the canonical `TextView` prop payload.
+ *
+ * Call this where the run list is owned or memoized. `TextView` itself does no
+ * render-time run packing.
+ */
+export function createTextViewRunPayload(runs: readonly TextMeasureRun[] | undefined): TextViewRunPayload | undefined {
+  'worklet';
+
+  if (!runs || runs.length === 0) return undefined;
 
   const runCount = runs.length;
   const runStarts = new Array<number>(runCount);
   const runEnds = new Array<number>(runCount);
   const runStyleMasks = new Array<number>(runCount);
+
   let runColors: string[] | undefined;
   let runFontFamilies: string[] | undefined;
   let runFontSizes: number[] | undefined;
@@ -168,16 +154,28 @@ function flattenRuns(runs: readonly TextMeasureRun[] | undefined): NativeTextVie
 /**
  * Native text display surface that can be driven directly by animated props.
  */
-export const TextView = forwardRef<ComponentRef<typeof NativeTextView>, TextViewProps>(function TextView(
-  { runs, runColors, runFontFamilies, runFontStyles, runFontWeights, ...nativeProps },
-  ref
-) {
-  const runPayload = flattenRuns(runs) ?? {
-    runColors: normalizeStringArray(runColors),
-    runFontFamilies: normalizeStringArray(runFontFamilies),
-    runFontStyles: normalizeStringArray(runFontStyles),
-    runFontWeights: normalizeStringArray(runFontWeights),
-  };
+export const TextView = forwardRef<ComponentRef<typeof NativeTextView>, TextViewProps>(function TextView(props, ref) {
+  const isVirtualTextSpan = useContext(textViewNestingContext);
+  const allowFontScaling = props.allowFontScaling ?? textEngineAppDefaults.allowFontScaling;
+  const anchorToCapHeight = props.anchorToCapHeight ?? textEngineAppDefaults.anchorToCapHeight;
+  const tabularNumbers = props.tabularNumbers ?? textEngineAppDefaults.tabularNumbers;
+  const rnteHasAllowFontScaling = props.allowFontScaling !== undefined;
+  const rnteHasLetterSpacing = props.letterSpacing !== undefined;
+  const rnteHasTabularNumbers = props.tabularNumbers !== undefined;
 
-  return <NativeTextView ref={ref} {...nativeProps} {...runPayload} />;
+  return (
+    <textViewNestingContext.Provider value>
+      <NativeTextView
+        ref={ref}
+        {...props}
+        allowFontScaling={allowFontScaling}
+        anchorToCapHeight={anchorToCapHeight}
+        rnteHasAllowFontScaling={rnteHasAllowFontScaling}
+        rnteHasLetterSpacing={rnteHasLetterSpacing}
+        rnteHasTabularNumbers={rnteHasTabularNumbers}
+        rnteIsVirtualTextSpan={isVirtualTextSpan}
+        tabularNumbers={tabularNumbers}
+      />
+    </textViewNestingContext.Provider>
+  );
 });

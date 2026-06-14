@@ -1,21 +1,29 @@
 import React from 'react';
-import { Platform, StatusBar, StyleSheet, View } from 'react-native';
+import { StatusBar, StyleSheet, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { ChatDemo } from './src/demos/ChatDemo';
-import { TextFieldDemo } from './src/demos/TextFieldDemo';
 import { PillSwitch } from './src/components/PillSwitch';
+import { IS_IOS } from './src/constants';
+import { ChatDemo } from './src/demos/ChatDemo';
+import { FireDemo } from './src/demos/FireDemo';
+import { TextFieldDemo } from './src/demos/TextFieldDemo';
+import { TypeDemo } from './src/demos/TypeDemo';
 import { uiActions, useUiStore } from './src/state/uiStore';
 import { demoTheme } from './src/theme/demoTheme';
 
 const DEMO_OPTIONS = [
-  { label: 'Text Field', value: 'field' },
-  { label: 'AI Chat', value: 'chat' },
+  { label: 'Field', value: 'field' },
+  { label: 'Fire', value: 'fire' },
+  { label: 'Type', value: 'type' },
+  { label: 'Chat', value: 'chat' },
 ] as const;
 
 function App(): React.JSX.Element {
   const demo = useUiStore(state => state.demo);
   const hasMountedChat = useUiStore(state => state.hasMountedChat);
+
+  const showFieldDemo = demo === 'field' || IS_IOS;
+  const showFireDemo = demo === 'fire' || IS_IOS;
 
   return (
     <>
@@ -27,11 +35,27 @@ function App(): React.JSX.Element {
               <PillSwitch options={DEMO_OPTIONS} onChange={uiActions.setDemo} value={demo} />
             </View>
             <View style={styles.content}>
+              {showFieldDemo ? (
+                <View
+                  pointerEvents={demo === 'field' ? 'auto' : 'none'}
+                  style={[styles.demoLayer, demo === 'field' ? styles.visible : styles.hidden]}
+                >
+                  <TextFieldDemo isActive={demo === 'field'} />
+                </View>
+              ) : null}
+              {showFireDemo ? (
+                <View
+                  pointerEvents={demo === 'fire' ? 'auto' : 'none'}
+                  style={[styles.demoLayer, demo === 'fire' ? styles.visible : styles.hidden]}
+                >
+                  <FireDemo isActive={demo === 'fire'} />
+                </View>
+              ) : null}
               <View
-                pointerEvents={demo === 'field' ? 'auto' : 'none'}
-                style={[styles.demoLayer, demo === 'field' ? styles.visible : styles.hidden]}
+                pointerEvents={demo === 'type' ? 'auto' : 'none'}
+                style={[styles.demoLayer, demo === 'type' ? styles.visible : styles.hidden]}
               >
-                <TextFieldDemo isActive={demo === 'field'} />
+                <TypeDemo isActive={demo === 'type'} />
               </View>
               {hasMountedChat ? (
                 <View
@@ -66,7 +90,7 @@ const styles = StyleSheet.create({
   },
   nav: {
     alignItems: 'center',
-    bottom: Platform.OS === 'ios' ? 34 : 24,
+    bottom: IS_IOS ? 34 : 24,
     justifyContent: 'center',
     left: 0,
     position: 'absolute',

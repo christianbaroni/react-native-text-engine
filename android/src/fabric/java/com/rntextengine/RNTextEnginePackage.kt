@@ -16,6 +16,7 @@ class RNTextEnginePackage : BaseReactPackage() {
     }
 
     override fun getViewManagers(reactContext: ReactApplicationContext): List<ModuleSpec> {
+        RNTextEngineBindings.initialize(reactContext)
         return listOf(
             ModuleSpec.viewManagerSpec { RNTextEngineGlyphFieldViewManager() },
             ModuleSpec.viewManagerSpec { RNTextEngineTextViewManager() },
@@ -30,7 +31,6 @@ class RNTextEnginePackage : BaseReactPackage() {
                 RNTextEngineModule.NAME to ReactModuleInfo(
                     RNTextEngineModule.NAME,
                     RNTextEngineModule.NAME,
-                    false,
                     false,
                     false,
                     false,

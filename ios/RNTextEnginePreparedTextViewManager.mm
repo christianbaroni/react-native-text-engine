@@ -1,3 +1,5 @@
+#import "RNTextEngineAttributedTextDisplayView.h"
+#import "RNTextEngineTextLayoutMetrics.h"
 #import <React/RCTConvert.h>
 #ifdef RCT_NEW_ARCH_ENABLED
 #import <React/RCTConversions.h>
@@ -14,6 +16,7 @@
 @property (nonatomic, assign) NSInteger handle;
 @property (nonatomic, assign) NSInteger numberOfLines;
 @property (nonatomic, copy) NSString *ellipsizeMode;
+@property (nonatomic, assign) BOOL anchorToCapHeight;
 @property (nonatomic, assign) BOOL selectable;
 @end
 
@@ -58,6 +61,10 @@ using namespace facebook::react;
     _preparedTextView.handle = static_cast<NSInteger>(newViewProps.handle);
   }
 
+  if (oldViewProps.anchorToCapHeight != newViewProps.anchorToCapHeight) {
+    _preparedTextView.anchorToCapHeight = newViewProps.anchorToCapHeight;
+  }
+
   if (oldViewProps.numberOfLines != newViewProps.numberOfLines) {
     _preparedTextView.numberOfLines = newViewProps.numberOfLines;
   }
@@ -81,11 +88,10 @@ using namespace facebook::react;
 
 - (void)prepareForRecycle
 {
+  const Props::Shared oldProps = _props;
+  static const auto defaultProps = std::make_shared<const RNTextEnginePreparedTextViewProps>();
+  [self updateProps:defaultProps oldProps:oldProps];
   [super prepareForRecycle];
-  _preparedTextView.handle = 0;
-  _preparedTextView.numberOfLines = 0;
-  _preparedTextView.selectable = NO;
-  _preparedTextView.ellipsizeMode = nil;
 }
 
 @end
@@ -93,8 +99,32 @@ using namespace facebook::react;
 #endif
 
 @implementation RNTextEnginePreparedTextView {
-  UITextView *_textView;
+  RNTextEngineAttributedTextDisplayView *_displayView;
+  UITextView *_interactionTextView;
   NSAttributedString *_resolvedText;
+}
+
+@synthesize anchorToCapHeight = _anchorToCapHeight;
+
+- (void)commonInit
+{
+  self.backgroundColor = UIColor.clearColor;
+  self.opaque = NO;
+  self.layer.backgroundColor = UIColor.clearColor.CGColor;
+  self.layer.opaque = NO;
+
+  _displayView = [[RNTextEngineAttributedTextDisplayView alloc] initWithFrame:self.bounds];
+  _displayView.userInteractionEnabled = NO;
+  [self addSubview:_displayView];
+}
+
+- (instancetype)initWithFrame:(CGRect)frame
+{
+  if ((self = [super initWithFrame:frame])) {
+    [self commonInit];
+  }
+
+  return self;
 }
 
 - (BOOL)isOpaque
@@ -102,86 +132,33 @@ using namespace facebook::react;
   return NO;
 }
 
-static NSLineBreakMode RNTextEnginePreparedResolveLineBreakMode(NSString *ellipsizeMode)
-{
-  if ([ellipsizeMode isEqualToString:@"head"]) return NSLineBreakByTruncatingHead;
-  if ([ellipsizeMode isEqualToString:@"middle"]) return NSLineBreakByTruncatingMiddle;
-  if ([ellipsizeMode isEqualToString:@"tail"]) return NSLineBreakByTruncatingTail;
-  return NSLineBreakByClipping;
-}
-
-static NSAttributedString *RNTextEnginePreparedSelectionText(NSAttributedString *attributedText)
-{
-  if (attributedText.length == 0) return attributedText;
-
-  NSMutableAttributedString *selectionText = [[NSMutableAttributedString alloc] initWithAttributedString:attributedText];
-  [selectionText addAttribute:NSForegroundColorAttributeName
-                        value:UIColor.clearColor
-                        range:NSMakeRange(0, selectionText.length)];
-  return selectionText;
-}
-
-static void RNTextEnginePreparedDrawAttributedText(
-    NSAttributedString *attributedText,
-    CGRect bounds,
-    NSInteger numberOfLines,
-    NSString *ellipsizeMode)
-{
-  if (attributedText.length == 0 || CGRectIsEmpty(bounds)) return;
-
-  NSTextStorage *textStorage = [[NSTextStorage alloc] initWithAttributedString:attributedText];
-  NSLayoutManager *layoutManager = [[NSLayoutManager alloc] init];
-  NSTextContainer *textContainer = [[NSTextContainer alloc] initWithSize:bounds.size];
-  textContainer.lineFragmentPadding = 0;
-  textContainer.lineBreakMode = RNTextEnginePreparedResolveLineBreakMode(ellipsizeMode);
-  textContainer.maximumNumberOfLines = numberOfLines > 0 ? numberOfLines : 0;
-
-  [layoutManager addTextContainer:textContainer];
-  [textStorage addLayoutManager:layoutManager];
-  [layoutManager ensureLayoutForTextContainer:textContainer];
-
-  NSRange glyphRange = [layoutManager glyphRangeForTextContainer:textContainer];
-  [layoutManager drawBackgroundForGlyphRange:glyphRange atPoint:bounds.origin];
-  [layoutManager drawGlyphsForGlyphRange:glyphRange atPoint:bounds.origin];
-}
-
 - (instancetype)init
 {
-  if ((self = [super init])) {
-    self.backgroundColor = UIColor.clearColor;
-    self.clearsContextBeforeDrawing = NO;
-    self.opaque = NO;
-    self.contentMode = UIViewContentModeRedraw;
-    self.layer.backgroundColor = UIColor.clearColor.CGColor;
-    self.layer.opaque = NO;
+  return [self initWithFrame:CGRectZero];
+}
 
-    _textView = [[UITextView alloc] initWithFrame:self.bounds];
-    _textView.autoresizingMask =
-        UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    _textView.backgroundColor = UIColor.clearColor;
-    _textView.opaque = NO;
-    _textView.layer.opaque = NO;
-    _textView.editable = NO;
-    _textView.scrollEnabled = NO;
-    _textView.selectable = NO;
-    _textView.showsHorizontalScrollIndicator = NO;
-    _textView.showsVerticalScrollIndicator = NO;
-    _textView.textContainerInset = UIEdgeInsetsZero;
-    _textView.textContainer.lineFragmentPadding = 0;
-    _textView.hidden = YES;
-    _textView.userInteractionEnabled = NO;
-    [self addSubview:_textView];
-  }
+- (UITextView *)ensureInteractionTextView
+{
+  if (_interactionTextView != nil) return _interactionTextView;
 
-  return self;
+  _interactionTextView = [[UITextView alloc] initWithFrame:self.bounds];
+  RNTextEngineConfigureInteractionTextView(_interactionTextView);
+  _interactionTextView.textContainer.maximumNumberOfLines = _numberOfLines > 0 ? _numberOfLines : 0;
+  _interactionTextView.textContainer.lineBreakMode = RNTextEngineResolveLineBreakMode(_numberOfLines, _ellipsizeMode);
+  [self addSubview:_interactionTextView];
+  return _interactionTextView;
+}
+
+- (void)discardInteractionTextView
+{
+  [_interactionTextView removeFromSuperview];
+  _interactionTextView = nil;
 }
 
 - (void)layoutSubviews
 {
   [super layoutSubviews];
-  _textView.frame = self.bounds;
-  _textView.textContainer.size = self.bounds.size;
-  [self setNeedsDisplay];
+  [self updateContentFrames];
 }
 
 - (void)setHandle:(NSInteger)handle
@@ -191,53 +168,89 @@ static void RNTextEnginePreparedDrawAttributedText(
 
   if (handle <= 0) {
     _resolvedText = nil;
+    _displayView.uniformCapHeight = 0;
     [self updateTextDisplay];
     return;
   }
 
   _resolvedText = rntextengine::preparedAttributedTextForHandle((uint64_t)handle);
+  _displayView.uniformCapHeight = rntextengine::preparedUniformCapHeightForHandle((uint64_t)handle);
   [self updateTextDisplay];
+}
+
+- (void)setAnchorToCapHeight:(BOOL)anchorToCapHeight
+{
+  if (_anchorToCapHeight == anchorToCapHeight) return;
+  _anchorToCapHeight = anchorToCapHeight;
+  [self setNeedsLayout];
 }
 
 - (void)setNumberOfLines:(NSInteger)numberOfLines
 {
   _numberOfLines = numberOfLines;
-  _textView.textContainer.maximumNumberOfLines = numberOfLines > 0 ? numberOfLines : 0;
-  [self setNeedsDisplay];
+  _displayView.numberOfLines = numberOfLines;
+  _interactionTextView.textContainer.maximumNumberOfLines = numberOfLines > 0 ? numberOfLines : 0;
+  _interactionTextView.textContainer.lineBreakMode = RNTextEngineResolveLineBreakMode(numberOfLines, _ellipsizeMode);
+  [self setNeedsLayout];
 }
 
 - (void)setEllipsizeMode:(NSString *)ellipsizeMode
 {
   _ellipsizeMode = [ellipsizeMode copy];
-  _textView.textContainer.lineBreakMode = RNTextEnginePreparedResolveLineBreakMode(ellipsizeMode);
-  [self setNeedsDisplay];
+  _displayView.ellipsizeMode = _ellipsizeMode;
+  _interactionTextView.textContainer.lineBreakMode = RNTextEngineResolveLineBreakMode(_numberOfLines, ellipsizeMode);
+  [self setNeedsLayout];
 }
 
 - (void)setSelectable:(BOOL)selectable
 {
+  if (_selectable == selectable) return;
   _selectable = selectable;
-  _textView.hidden = !selectable;
-  _textView.selectable = selectable;
-  _textView.userInteractionEnabled = selectable;
-  [self setNeedsDisplay];
+  if (selectable) {
+    [self ensureInteractionTextView];
+  } else {
+    [self discardInteractionTextView];
+  }
+  [self updateTextDisplay];
 }
 
 - (void)updateTextDisplay
 {
-  _textView.attributedText = _selectable ? RNTextEnginePreparedSelectionText(_resolvedText ?: [[NSAttributedString alloc] initWithString:@""]) : nil;
-  [self setNeedsDisplay];
+  _displayView.attributedText = _resolvedText ?: [[NSAttributedString alloc] initWithString:@""];
+  _displayView.ellipsizeMode = _ellipsizeMode;
+  _displayView.numberOfLines = _numberOfLines;
+  _displayView.hidden = _selectable;
+  if (_selectable) {
+    UITextView *interactionTextView = [self ensureInteractionTextView];
+    interactionTextView.attributedText = _resolvedText ?: [[NSAttributedString alloc] initWithString:@""];
+    [self bringSubviewToFront:interactionTextView];
+  }
+  [self setNeedsLayout];
 }
 
-- (void)drawRect:(CGRect)rect
+- (UIEdgeInsets)resolvedCapHeightInsets
 {
-  CGContextRef context = UIGraphicsGetCurrentContext();
-  if (context == nullptr) return;
+  if (!_anchorToCapHeight || CGRectIsEmpty(self.bounds)) return UIEdgeInsetsZero;
 
-  CGContextSetBlendMode(context, kCGBlendModeCopy);
-  CGContextSetFillColorWithColor(context, UIColor.clearColor.CGColor);
-  CGContextFillRect(context, self.bounds);
-  CGContextSetBlendMode(context, kCGBlendModeNormal);
-  RNTextEnginePreparedDrawAttributedText(_resolvedText ?: [[NSAttributedString alloc] initWithString:@""], self.bounds, _numberOfLines, _ellipsizeMode);
+  CGFloat width = CGRectGetWidth(self.bounds);
+  return [_displayView capHeightInsetsForWidth:width];
+}
+
+- (CGRect)contentFrameForInsets:(UIEdgeInsets)insets
+{
+  CGRect frame = self.bounds;
+  frame.origin.y -= insets.top;
+  frame.size.height += insets.top + insets.bottom;
+  return frame;
+}
+
+- (void)updateContentFrames
+{
+  UIEdgeInsets insets = [self resolvedCapHeightInsets];
+  CGRect contentFrame = [self contentFrameForInsets:insets];
+
+  _displayView.frame = contentFrame;
+  RNTextEngineApplyInteractionTextViewFrame(_interactionTextView, contentFrame, UIEdgeInsetsZero);
 }
 
 @end
@@ -260,6 +273,7 @@ RCT_EXPORT_MODULE(RNTextEnginePreparedTextView)
 }
 
 RCT_EXPORT_VIEW_PROPERTY(handle, NSInteger)
+RCT_EXPORT_VIEW_PROPERTY(anchorToCapHeight, BOOL)
 RCT_EXPORT_VIEW_PROPERTY(numberOfLines, NSInteger)
 RCT_EXPORT_VIEW_PROPERTY(selectable, BOOL)
 RCT_CUSTOM_VIEW_PROPERTY(ellipsizeMode, NSString, RNTextEnginePreparedTextView)

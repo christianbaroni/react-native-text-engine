@@ -27,6 +27,7 @@ class RNTextEngineModule(context: ReactApplicationContext) :
         RNTextEngineBindings.cleanup()
     }
 
+    @Suppress("DEPRECATION")
     override fun install(): Boolean {
         return try {
             val catalystInstance = reactApplicationContext.catalystInstance ?: return false

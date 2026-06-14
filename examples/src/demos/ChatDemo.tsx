@@ -1,13 +1,7 @@
 import React, { useCallback, useEffect, useRef } from 'react';
-import { StyleSheet, Text, View, useWindowDimensions } from 'react-native';
-import {
-  PreparedTextView,
-  TextView,
-  releasePreparedText,
-  type PreparedTextHandle,
-  type TextLayout,
-  type TextMeasureStyle,
-} from 'react-native-text-engine';
+import { StyleSheet, View, useWindowDimensions } from 'react-native';
+import { EaseView } from 'react-native-ease';
+import { releasePreparedText, TextView, type PreparedTextHandle, type TextLayout, type TextMeasureStyle } from 'react-native-text-engine';
 import { createPreparedTextsInRuntime, layoutPreparedTextsInRuntime, measureTextsInRuntime } from 'react-native-text-engine/worklets';
 import Animated, {
   type DerivedValue,
@@ -18,97 +12,104 @@ import Animated, {
   useSharedValue,
 } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { runOnRuntimeAsync } from 'react-native-worklets';
+import { runOnRuntimeAsync, runOnUISync } from 'react-native-worklets';
+import { DEMO_TRANSITIONS } from '../animation/ease';
+import { AnimatedPreparedTextView } from '../components/AnimatedPreparedTextView';
+import { AnimatedTextView } from '../components/AnimatedTextView';
 import { PillSwitch } from '../components/PillSwitch';
+import { IS_IOS } from '../constants';
 import { buildConversation } from '../data/chatData';
+import { useStableValue } from '../hooks/useStableValue';
 import { getChatTextEngineRuntime } from '../text-engine/runtimes';
 import { uiActions, useUiStore, type WidthMode } from '../state/uiStore';
 import { demoTheme } from '../theme/demoTheme';
-import { AnimatedList, type RenderItemProps } from '../worklet-list';
+import { AnimatedList, type ExactLayoutControllerContext, type ExactRowLayout, type RenderItemProps } from '../worklet-list';
 
 type LayoutBuffer = Float32Array;
 type HandleBuffer = Float64Array;
 
-type ChatMessage = {
-  id: string;
-  role: 'assistant' | 'user';
-  text: string;
-};
+type ChatListItem = { handleId: number; messageIndex: number; width: number };
+type ChatMessage = { id: string; role: 'assistant' | 'user'; text: string };
 
 const EDGE_INSET = 12;
 const ROW_GAP = 10;
-const BUBBLE_BORDER_WIDTH = 1;
-const BUBBLE_PADDING_X = 15;
-const BUBBLE_PADDING_Y = 12;
+const BUBBLE_BORDER_WIDTH = 4 / 3;
+const BUBBLE_PADDING_X = 16;
+const BUBBLE_PADDING_Y = 16;
 const TOP_OVERLAY_HEIGHT = 188;
 const PREVIEW_MESSAGE_COUNT = 28;
 
 const MESSAGES: readonly ChatMessage[] = buildConversation(1000);
 const MESSAGE_TEXTS = MESSAGES.map(message => message.text);
 const MESSAGE_ROLES = MESSAGES.map(message => (message.role === 'user' ? 1 : 0));
-const FULL_MESSAGE_INDICES = Array.from({ length: MESSAGES.length }, (_value, index) => index);
-const PREVIEW_MESSAGE_INDICES = FULL_MESSAGE_INDICES.slice(0, PREVIEW_MESSAGE_COUNT);
+
+const INITIAL_ANIMATION_FROM_ABOVE = { opacity: 0, translateY: -10 };
+const INITIAL_ANIMATION_FROM_BELOW = { opacity: 0, translateY: 10 };
+const SCROLL_INDICATOR_INSETS = { bottom: 172, top: TOP_OVERLAY_HEIGHT + 20 };
 
 const CHAT_STYLE: TextMeasureStyle = {
   fontSize: 17,
-  fontWeight: '500',
+  fontWeight: IS_IOS ? '500' : '400',
   letterSpacing: 0.1,
   lineHeight: 24,
 };
 
-const ASSISTANT_CHAT_STYLE = {
-  ...CHAT_STYLE,
-  color: demoTheme.textPrimary,
-};
+const ASSISTANT_CHAT_STYLE = { ...CHAT_STYLE, color: demoTheme.textPrimary };
+const USER_CHAT_STYLE = { ...CHAT_STYLE, color: '#ffffff' };
+const METRIC_VALUE_TEXT_STYLE = { color: demoTheme.textPrimary, fontSize: 15, fontWeight: '800' as const };
 
-const USER_CHAT_STYLE = {
-  ...CHAT_STYLE,
-  color: '#ffffff',
-};
+const EMPTY_HANDLES: PreparedTextHandle[] = [];
+const EMPTY_LAYOUT: TextLayout = { height: 0, lastLineWidth: 0, lineCount: 0, width: 0 };
 
-const EMPTY_LAYOUT: TextLayout = {
-  height: 0,
-  lastLineWidth: 0,
-  lineCount: 0,
-  width: 0,
-};
-
-const METRIC_VALUE_TEXT_STYLE = {
-  color: demoTheme.textPrimary,
-  fontSize: 15,
-  fontWeight: '800' as const,
-};
-
-const WIDTH_FACTORS: Record<WidthMode, number> = {
-  compact: 0.56,
-  phone: 0.72,
-  wide: 0.9,
-};
-
+const WIDTH_FACTORS: Record<WidthMode, number> = { compact: 0.56, phone: 0.72, wide: 0.9 };
 const WIDTH_OPTIONS: ReadonlyArray<{ label: string; value: WidthMode }> = [
   { label: 'Compact', value: 'compact' },
   { label: 'Phone', value: 'phone' },
   { label: 'Wide', value: 'wide' },
 ];
 
-const EMPTY_HANDLES: PreparedTextHandle[] = [];
-const AnimatedTextView = Animated.createAnimatedComponent(TextView);
-const AnimatedPreparedTextView = Animated.createAnimatedComponent(PreparedTextView);
+function publishChatLayout({
+  exactLayoutController,
+  nextData,
+  rowLayoutValue,
+}: {
+  exactLayoutController: ExactLayoutControllerContext<ChatListItem>;
+  nextData: ChatListItem[];
+  rowLayoutValue: ExactRowLayout;
+}): void {
+  runOnUISync(
+    (controllerContext, snapshot) => {
+      if (controllerContext.current) {
+        controllerContext.current.applyLayout(snapshot);
+        return;
+      }
+
+      controllerContext.pendingSnapshot = snapshot;
+    },
+    exactLayoutController,
+    {
+      data: nextData,
+      rowLayout: rowLayoutValue,
+    }
+  );
+}
 
 export function ChatDemo({ isActive = true }: { isActive?: boolean }) {
   const { height, width } = useWindowDimensions();
   const widthMode = useUiStore(state => state.chatWidthMode);
+
   const jobRef = useRef(0);
   const handlesRef = useRef<PreparedTextHandle[] | null>(null);
   const lastMeasuredTextWidthRef = useRef<number | null>(null);
-  const workletRuntime = getChatTextEngineRuntime();
 
-  const data = useSharedValue<number[]>([]);
-  const messageHandles = useSharedValue<HandleBuffer>(new Float64Array(0));
-  const bubbleHeights = useSharedValue<LayoutBuffer>(new Float32Array(0));
-  const bubbleWidths = useSharedValue<LayoutBuffer>(new Float32Array(0));
-  const itemMetricsVersion = useSharedValue(0);
+  const workletRuntime = getChatTextEngineRuntime();
+  const data = useSharedValue<ChatListItem[]>([]);
   const layoutMetricText = useSharedValue('...');
+
+  const exactLayoutController = useStableValue<ExactLayoutControllerContext<ChatListItem>>(() => ({
+    __workletContextObject: true,
+    current: undefined,
+  }));
 
   const listWidth = width;
   const listHeight = height;
@@ -140,22 +141,17 @@ export function ChatDemo({ isActive = true }: { isActive?: boolean }) {
       runOnRuntimeAsync(
         workletRuntime,
         (texts, roles, currentTextWidth, currentBubbleMaxWidth, previewCount) => {
-          'worklet';
-
           const previewTexts = texts.slice(0, previewCount);
           const previewRoles = roles.slice(0, previewCount);
-          const previewLayouts = measureTextsInRuntime(previewTexts, CHAT_STYLE, {
-            width: currentTextWidth,
-          });
+          const previewLayouts = measureTextsInRuntime(previewTexts, CHAT_STYLE, { width: currentTextWidth });
           const previewHandles = prepareChatHandles(previewTexts, previewRoles);
-          const previewHandleIds = buildHandleBufferInRuntime(previewHandles);
-          const geometry = buildChatGeometryBuffersInRuntime(previewLayouts, currentBubbleMaxWidth);
+          const previewHandleIds = buildHandleBuffer(previewHandles);
+          const geometry = buildChatGeometryBuffers(previewLayouts, currentBubbleMaxWidth);
 
           return {
             handles: previewHandles,
-            handleIds: previewHandleIds,
-            heights: geometry.heights,
-            widths: geometry.widths,
+            items: buildChatItems(previewHandleIds, geometry.widths),
+            rowLayout: buildChatRowLayout(geometry.heights),
           };
         },
         MESSAGE_TEXTS,
@@ -170,16 +166,13 @@ export function ChatDemo({ isActive = true }: { isActive?: boolean }) {
         }
 
         const previousHandles = handlesRef.current;
-        if (previousHandles && previousHandles !== preview.handles) {
-          releasePreparedText(previousHandles);
-        }
-
         handlesRef.current = preview.handles;
-        messageHandles.value = preview.handleIds;
-        bubbleWidths.value = preview.widths;
-        bubbleHeights.value = preview.heights;
-        data.value = Array.from(PREVIEW_MESSAGE_INDICES);
-        itemMetricsVersion.value += 1;
+        publishChatLayout({
+          exactLayoutController,
+          nextData: preview.items,
+          rowLayoutValue: preview.rowLayout,
+        });
+        if (previousHandles && previousHandles !== preview.handles) releasePreparedText(previousHandles);
         layoutMetricText.set('...');
       });
     }
@@ -187,21 +180,18 @@ export function ChatDemo({ isActive = true }: { isActive?: boolean }) {
     runOnRuntimeAsync(
       workletRuntime,
       (texts, roles, currentHandles, currentTextWidth, currentBubbleMaxWidth) => {
-        'worklet';
-
         const start = Date.now();
         const handles = currentHandles.length > 0 ? currentHandles : prepareChatHandles(texts, roles);
         const layouts = layoutPreparedTextsInRuntime(handles, { width: currentTextWidth });
-        const geometry = buildChatGeometryBuffersInRuntime(layouts, currentBubbleMaxWidth);
-        const handleIds = buildHandleBufferInRuntime(handles);
+        const geometry = buildChatGeometryBuffers(layouts, currentBubbleMaxWidth);
+        const handleIds = buildHandleBuffer(handles);
 
         return {
-          handleIds,
           handles: currentHandles.length > 0 ? null : handles,
-          heights: geometry.heights,
+          items: buildChatItems(handleIds, geometry.widths),
           measuredTextWidth: currentTextWidth,
           nextLayoutMs: Date.now() - start,
-          widths: geometry.widths,
+          rowLayout: buildChatRowLayout(geometry.heights),
         };
       },
       MESSAGE_TEXTS,
@@ -215,91 +205,73 @@ export function ChatDemo({ isActive = true }: { isActive?: boolean }) {
         return;
       }
 
-      if (rows.handles && rows.handles.length > 0) {
-        const previousHandles = handlesRef.current;
-        if (previousHandles && previousHandles !== rows.handles) {
-          releasePreparedText(previousHandles);
-        }
-        handlesRef.current = rows.handles;
-      }
+      const previousHandles = rows.handles && rows.handles.length > 0 ? handlesRef.current : null;
+      if (rows.handles && rows.handles.length > 0) handlesRef.current = rows.handles;
 
-      messageHandles.value = rows.handleIds;
-      bubbleWidths.value = rows.widths;
-      bubbleHeights.value = rows.heights;
-      data.value = Array.from(FULL_MESSAGE_INDICES);
-      itemMetricsVersion.value += 1;
+      publishChatLayout({ exactLayoutController, nextData: rows.items, rowLayoutValue: rows.rowLayout });
+      if (previousHandles && previousHandles !== rows.handles) releasePreparedText(previousHandles);
+
       layoutMetricText.set(`${rows.nextLayoutMs.toFixed(1)}ms`);
       lastMeasuredTextWidthRef.current = rows.measuredTextWidth;
     });
-  }, [
-    bubbleHeights,
-    bubbleMaxWidth,
-    bubbleWidths,
-    data,
-    isActive,
-    itemMetricsVersion,
-    layoutMetricText,
-    messageHandles,
-    textWidth,
-    workletRuntime,
-  ]);
+  }, [bubbleMaxWidth, data, exactLayoutController, isActive, layoutMetricText, textWidth, workletRuntime]);
 
-  const keyExtractor = useCallback((messageIndex: number) => {
+  const keyExtractor = useCallback((chatItem: ChatListItem) => {
     'worklet';
-    return MESSAGES[messageIndex]?.id ?? `${messageIndex}`;
+    const index = chatItem.messageIndex;
+    return MESSAGES[index]?.id ?? `${index}`;
   }, []);
 
   const renderItem = useCallback(
-    ({ data, itemIndex }: RenderItemProps<number>) => (
-      <ChatBubble
-        messageHandles={messageHandles}
-        bubbleHeights={bubbleHeights}
-        bubbleWidths={bubbleWidths}
-        data={data}
-        itemIndex={itemIndex}
-        itemMetricsVersion={itemMetricsVersion}
-        listWidth={listWidth}
-        messages={MESSAGES}
-      />
-    ),
-    [bubbleHeights, bubbleWidths, itemMetricsVersion, listWidth, messageHandles]
+    ({ item }: RenderItemProps<ChatListItem>) => <ChatBubble item={item} listWidth={listWidth} messages={MESSAGES} />,
+    [listWidth]
   );
 
   return (
     <SafeAreaView style={styles.root}>
-      <View style={styles.backgroundGlowLeft} />
-      <View style={styles.backgroundGlowRight} />
-
       <View style={styles.listShell}>
         <AnimatedList
           contentContainerStyle={styles.listContent}
           data={data}
-          estimatedItemSize={92}
+          exactLayoutController={exactLayoutController}
           gap={ROW_GAP}
-          itemMetricsVersion={itemMetricsVersion}
-          itemSizes={bubbleHeights}
+          itemSize={92}
           itemWidth={listWidth}
+          initialScrollToEnd
           keyExtractor={keyExtractor}
           listHeight={listHeight}
           listWidth={listWidth}
+          maintainScrollAtEdge={{ mode: 'always', edge: 'end' }}
           renderItem={renderItem}
-          rowBuffer={{ above: 10, below: 12 }}
-          scrollIndicatorInsets={{ bottom: 172, top: TOP_OVERLAY_HEIGHT + 20 }}
+          rowBuffer={10}
+          scrollIndicatorInsets={SCROLL_INDICATOR_INSETS}
           style={styles.list}
         />
       </View>
 
       <View pointerEvents="box-none" style={styles.topOverlay}>
-        <View style={styles.overlayStrip}>
-          <Text style={styles.eyebrow}>Exact row geometry</Text>
-          <View style={styles.metricRow}>
-            <Metric label="messages" value={MESSAGES.length.toLocaleString()} />
-            <Metric label="layout" value={layoutMetricText} />
-            <Metric label="max" value={`${bubbleMaxWidth}px`} />
+        <EaseView
+          animate={{ opacity: isActive ? 1 : 0, translateY: isActive ? 0 : -10 }}
+          initialAnimate={INITIAL_ANIMATION_FROM_ABOVE}
+          transition={DEMO_TRANSITIONS.overlayReveal}
+        >
+          <View style={styles.overlayStrip}>
+            <TextView style={styles.eyebrow}>Exact row geometry</TextView>
+            <View style={styles.metricRow}>
+              <Metric label="messages" value={MESSAGES.length.toLocaleString()} />
+              <Metric label="layout" value={layoutMetricText} />
+              <Metric label="max" value={`${bubbleMaxWidth}px`} />
+            </View>
           </View>
-        </View>
+        </EaseView>
 
-        <PillSwitch onChange={uiActions.setChatWidthMode} options={WIDTH_OPTIONS} value={widthMode} />
+        <EaseView
+          animate={{ opacity: isActive ? 1 : 0, translateY: isActive ? 0 : 10 }}
+          initialAnimate={INITIAL_ANIMATION_FROM_BELOW}
+          transition={DEMO_TRANSITIONS.overlayReveal}
+        >
+          <PillSwitch onChange={uiActions.setChatWidthMode} options={WIDTH_OPTIONS} value={widthMode} />
+        </EaseView>
       </View>
     </SafeAreaView>
   );
@@ -323,6 +295,24 @@ function buildChatGeometryBuffers(
   }
 
   return { heights, widths };
+}
+
+function buildChatRowLayout(heights: LayoutBuffer): ExactRowLayout {
+  'worklet';
+  const rowDataCount = heights.length;
+  const offsets = new Float32Array(rowDataCount);
+  const sizes = new Float32Array(rowDataCount);
+  let totalSize = 0;
+
+  for (let rowIndex = 0; rowIndex < rowDataCount; rowIndex += 1) {
+    offsets[rowIndex] = totalSize;
+    const gapSize = rowIndex < rowDataCount - 1 ? ROW_GAP : 0;
+    const size = (heights[rowIndex] ?? 0) + gapSize;
+    sizes[rowIndex] = size;
+    totalSize += size;
+  }
+
+  return { offsets, rowDataCount, sizes, totalSize };
 }
 
 function prepareChatHandles(texts: readonly string[], roles: readonly number[]): PreparedTextHandle[] {
@@ -370,44 +360,33 @@ function buildHandleBuffer(handles: readonly PreparedTextHandle[]): HandleBuffer
   return ids;
 }
 
-function buildHandleBufferInRuntime(handles: readonly PreparedTextHandle[]): HandleBuffer {
+function buildChatItems(handleIds: HandleBuffer, widths: LayoutBuffer): ChatListItem[] {
   'worklet';
-  return buildHandleBuffer(handles);
-}
+  const count = Math.min(handleIds.length, widths.length);
+  const items = new Array<ChatListItem>(count);
 
-function buildChatGeometryBuffersInRuntime(
-  layouts: readonly TextLayout[],
-  bubbleMaxWidth: number
-): {
-  heights: LayoutBuffer;
-  widths: LayoutBuffer;
-} {
-  'worklet';
-  return buildChatGeometryBuffers(layouts, bubbleMaxWidth);
+  for (let index = 0; index < count; index += 1) {
+    items[index] = {
+      handleId: handleIds[index] ?? 0,
+      messageIndex: index,
+      width: widths[index] ?? 0,
+    };
+  }
+
+  return items;
 }
 
 function ChatBubble({
-  messageHandles,
-  bubbleHeights,
-  bubbleWidths,
-  data,
-  itemIndex,
-  itemMetricsVersion,
+  item,
   listWidth,
   messages,
 }: {
-  messageHandles: SharedValue<HandleBuffer>;
-  bubbleHeights: SharedValue<LayoutBuffer>;
-  bubbleWidths: SharedValue<LayoutBuffer>;
-  data: RenderItemProps<number>['data'];
-  itemIndex: RenderItemProps<number>['itemIndex'];
-  itemMetricsVersion: SharedValue<number>;
+  item: RenderItemProps<ChatListItem>['item'];
   listWidth: number;
   messages: readonly ChatMessage[];
 }) {
   const messageIndex = useDerivedValue(() => {
-    const index = itemIndex.value;
-    return data.value[index] ?? -1;
+    return item.value?.messageIndex ?? -1;
   });
 
   const role = useDerivedValue<'assistant' | 'user'>(() => {
@@ -416,11 +395,10 @@ function ChatBubble({
   });
 
   const handle = useDerivedValue(() => {
-    const index = messageIndex.value;
-    return messageHandles.value[index] ?? 0;
+    return item.value?.handleId ?? 0;
   });
 
-  const bubbleStyle = useBubbleStyle(bubbleHeights, bubbleWidths, itemMetricsVersion, messageIndex, role, listWidth);
+  const bubbleStyle = useBubbleStyle(item, messageIndex, role, listWidth);
 
   return (
     <Animated.View style={[styles.bubble, bubbleStyle]}>
@@ -434,35 +412,28 @@ function PreparedBubbleText({ handle }: { handle: DerivedValue<number> }) {
     handle: handle.value,
   }));
 
-  return <AnimatedPreparedTextView animatedProps={animatedProps} ellipsizeMode="clip" selectable style={styles.preparedTextFrame} />;
+  return <AnimatedPreparedTextView animatedProps={animatedProps} ellipsizeMode="clip" style={styles.preparedTextFrame} />;
 }
 
 function useBubbleStyle(
-  bubbleHeights: SharedValue<LayoutBuffer>,
-  bubbleWidths: SharedValue<LayoutBuffer>,
-  itemMetricsVersion: SharedValue<number>,
+  item: RenderItemProps<ChatListItem>['item'],
   messageIndex: DerivedValue<number>,
   role: DerivedValue<'assistant' | 'user'>,
   listWidth: number
 ) {
   return useAnimatedStyle(() => {
-    const metricsVersion = itemMetricsVersion.value;
-    if (metricsVersion < 0) return { opacity: 0, width: 0 };
-
     const index = messageIndex.value;
     if (index < 0) return { opacity: 0, width: 0 };
 
-    const bubbleHeight = bubbleHeights.value[index] ?? 0;
-    const bubbleWidth = bubbleWidths.value[index] ?? 0;
-    if (!bubbleHeight || !bubbleWidth) return { opacity: 0, width: 0 };
+    const bubbleWidth = item.value?.width ?? 0;
+    if (!bubbleWidth) return { opacity: 0, width: 0 };
 
     const isUser = role.value === 'user';
     const left = isUser ? listWidth - EDGE_INSET - bubbleWidth : EDGE_INSET;
 
     return {
       backgroundColor: isUser ? demoTheme.bubbleUser : demoTheme.bubbleAssistant,
-      borderColor: isUser ? 'rgba(227, 230, 255, 0.14)' : demoTheme.borderStrong,
-      height: bubbleHeight,
+      borderColor: isUser ? 'rgba(255, 255, 255, 0.2)' : demoTheme.borderStrong,
       left,
       opacity: 1,
       width: bubbleWidth,
@@ -473,48 +444,35 @@ function useBubbleStyle(
 function Metric({ label, value }: { label: string; value: SharedValue<string> | string }) {
   return (
     <View style={styles.metric}>
-      <Text style={styles.metricLabel}>{label}</Text>
-      {typeof value === 'string' ? <Text style={styles.metricValue}>{value}</Text> : <MetricValueText value={value} />}
+      <TextView style={styles.metricLabel}>{label}</TextView>
+      {typeof value === 'string' ? <TextView style={styles.metricValue}>{value}</TextView> : <MetricValueText value={value} />}
     </View>
   );
 }
 
 function MetricValueText({ value }: { value: SharedValue<string> }) {
   const animatedProps = useAnimatedProps(() => ({
-    color: METRIC_VALUE_TEXT_STYLE.color,
-    fontSize: METRIC_VALUE_TEXT_STYLE.fontSize,
-    fontWeight: METRIC_VALUE_TEXT_STYLE.fontWeight,
     text: value.value,
   }));
 
-  return <AnimatedTextView animatedProps={animatedProps} style={styles.metricValueFill} />;
+  return (
+    <AnimatedTextView
+      animatedProps={animatedProps}
+      color={METRIC_VALUE_TEXT_STYLE.color}
+      fontSize={METRIC_VALUE_TEXT_STYLE.fontSize}
+      fontWeight={METRIC_VALUE_TEXT_STYLE.fontWeight}
+      style={styles.metricValueFill}
+    />
+  );
 }
 
 const styles = StyleSheet.create({
-  backgroundGlowLeft: {
-    backgroundColor: demoTheme.glowBlue,
-    borderCurve: 'continuous',
-    borderRadius: 260,
-    height: 360,
-    left: -140,
-    position: 'absolute',
-    top: 220,
-    width: 360,
-  },
-  backgroundGlowRight: {
-    backgroundColor: demoTheme.glowPurple,
-    borderCurve: 'continuous',
-    borderRadius: 280,
-    height: 420,
-    position: 'absolute',
-    right: -170,
-    top: 120,
-    width: 420,
-  },
   bubble: {
     borderRadius: 24,
     borderCurve: 'continuous',
     borderWidth: BUBBLE_BORDER_WIDTH,
+    height: '100%',
+    overflow: 'hidden',
     paddingHorizontal: BUBBLE_PADDING_X,
     paddingVertical: BUBBLE_PADDING_Y,
     position: 'absolute',
@@ -542,11 +500,11 @@ const styles = StyleSheet.create({
     borderColor: demoTheme.border,
     borderCurve: 'continuous',
     borderRadius: 14,
-    borderWidth: 1,
-    gap: 2,
+    borderWidth: BUBBLE_BORDER_WIDTH,
+    gap: 6,
     overflow: 'hidden',
     paddingHorizontal: 10,
-    paddingVertical: 8,
+    paddingVertical: 12,
   },
   metricLabel: {
     color: demoTheme.textTertiary,

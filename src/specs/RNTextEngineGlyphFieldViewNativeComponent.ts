@@ -1,7 +1,8 @@
-import { codegenNativeComponent, type CodegenTypes, type ViewProps } from 'react-native';
+import { codegenNativeComponent, type ViewProps } from 'react-native';
+import type { Double } from 'react-native/Libraries/Types/CodegenTypes';
 
 export interface NativeProps extends ViewProps {
-  handle?: CodegenTypes.Double;
+  handle?: Double;
 }
 
 export default codegenNativeComponent<NativeProps>('RNTextEngineGlyphFieldView');
