@@ -101,7 +101,7 @@ internal class RNTextEnginePreparedTextViewManager :
         }
 
         init {
-            super.addView(
+            addInternalChild(
                 attributedDisplayView,
                 LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT),
             )
@@ -153,7 +153,7 @@ internal class RNTextEnginePreparedTextViewManager :
         private fun syncInteractionTextView(selectable: Boolean) {
             if (selectable) {
                 if (textContentView.parent !== this) {
-                    super.addView(
+                    addInternalChild(
                         textContentView,
                         LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT),
                     )
@@ -164,7 +164,7 @@ internal class RNTextEnginePreparedTextViewManager :
             }
 
             if (textContentView.parent === this) {
-                super.removeView(textContentView)
+                removeInternalChild(textContentView)
             }
             attributedDisplayView.visibility = View.VISIBLE
         }

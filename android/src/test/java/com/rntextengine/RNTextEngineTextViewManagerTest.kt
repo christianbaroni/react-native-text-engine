@@ -11,6 +11,7 @@ import android.widget.FrameLayout
 import androidx.appcompat.widget.AppCompatTextView
 import androidx.test.core.app.ApplicationProvider
 import com.facebook.react.bridge.JavaOnlyMap
+import com.facebook.react.bridge.JavaOnlyArray
 import com.facebook.react.bridge.Callback
 import com.facebook.react.bridge.CatalystInstance
 import com.facebook.react.bridge.JavaScriptContextHolder
@@ -783,6 +784,116 @@ class RNTextEngineTextViewManagerTest {
         assertEquals(0, view.childCount)
         assertEquals(null, view.getChildAt(0))
         assertEquals(-1, view.indexOfChild(view.displayView))
+
+        repeat(2) {
+            view.setSelectable(true)
+            assertEquals(view, view.textContentView.parent)
+            assertEquals(0, view.childCount)
+            assertEquals(null, view.getChildAt(0))
+            assertEquals(-1, view.indexOfChild(view.textContentView))
+
+            view.setSelectable(false)
+            assertEquals(null, view.textContentView.parent)
+            assertEquals(view, view.displayView.parent)
+            assertEquals(View.VISIBLE, view.displayView.visibility)
+            assertEquals(0, view.childCount)
+        }
+    }
+
+    @Test
+    fun preparedHostRemovesItsPrivateSelectableChild() {
+        val view = RNTextEnginePreparedTextViewManager.RNTextEnginePreparedTextView(application)
+
+        repeat(2) {
+            view.setSelectable(true)
+            assertEquals(view, view.textContentView.parent)
+            assertEquals(0, view.childCount)
+            assertEquals(null, view.getChildAt(0))
+            assertEquals(-1, view.indexOfChild(view.textContentView))
+
+            view.setSelectable(false)
+            assertEquals(null, view.textContentView.parent)
+            assertEquals(view, view.displayView.parent)
+            assertEquals(View.VISIBLE, view.displayView.visibility)
+            assertEquals(0, view.childCount)
+        }
+    }
+
+    @Test
+    fun mountedRunArrayPropsIgnoreOutOfTextRangesDuringFabricPropUpdates() {
+        val manager = RNTextEngineTextViewManager()
+        val view = RNTextEngineTextViewManager.RNTextEngineTextView(application)
+
+        manager.setText(view, "Hello world")
+        manager.setRunStarts(view, JavaOnlyArray.of(6))
+        manager.setRunEnds(view, JavaOnlyArray.of(11))
+        manager.setRunStyleMasks(view, JavaOnlyArray.of(1 shl 4))
+        manager.setRunFontWeights(view, JavaOnlyArray.of("700"))
+        measureAndLayout(view, width = 200, height = 50)
+
+        manager.setText(view, "short")
+        measureAndLayout(view, width = 200, height = 50)
+        assertEquals("short", view.textContentView.text.toString())
+        val staleText = view.textContentView.text as? Spanned
+        assertEquals(0, staleText?.getSpans(0, staleText.length, RNTextEngineTextPaintSpan::class.java)?.size ?: 0)
+
+        manager.setRunStarts(view, JavaOnlyArray.of(0))
+        manager.setRunEnds(view, JavaOnlyArray.of(5))
+        measureAndLayout(view, width = 200, height = 50)
+        val updatedText = view.textContentView.text as Spanned
+        assertEquals(1, updatedText.getSpans(0, updatedText.length, RNTextEngineTextPaintSpan::class.java).size)
+    }
+
+    @Test
+    fun emptyRunArrayPropsOverrideLegacyRunsUntilTheArrayPropsAreRemoved() {
+        val manager = RNTextEngineTextViewManager()
+        val view = RNTextEngineTextViewManager.RNTextEngineTextView(application)
+        manager.setText(view, "Hello")
+        manager.setRuns(view, JavaOnlyArray.of(JavaOnlyMap.of("start", 0, "end", 5, "style", JavaOnlyMap.of("fontWeight", "700"))))
+        measureAndLayout(view, width = 200, height = 50)
+        val originalText = view.textContentView.text as Spanned
+        assertEquals(1, originalText.getSpans(0, originalText.length, RNTextEngineTextPaintSpan::class.java).size)
+
+        manager.setRunEnds(view, JavaOnlyArray.of(5))
+        measureAndLayout(view, width = 200, height = 50)
+        val partialText = view.textContentView.text as? Spanned
+        assertEquals(0, partialText?.getSpans(0, partialText.length, RNTextEngineTextPaintSpan::class.java)?.size ?: 0)
+
+        manager.setRunStarts(view, JavaOnlyArray())
+        manager.setRunEnds(view, JavaOnlyArray())
+        manager.setRunStyleMasks(view, JavaOnlyArray())
+        measureAndLayout(view, width = 200, height = 50)
+        val clearedText = view.textContentView.text as? Spanned
+        assertEquals(0, clearedText?.getSpans(0, clearedText.length, RNTextEngineTextPaintSpan::class.java)?.size ?: 0)
+
+        manager.setRunStarts(view, null)
+        manager.setRunEnds(view, null)
+        manager.setRunStyleMasks(view, null)
+        measureAndLayout(view, width = 200, height = 50)
+        val restoredText = view.textContentView.text as Spanned
+        assertEquals(1, restoredText.getSpans(0, restoredText.length, RNTextEngineTextPaintSpan::class.java).size)
+    }
+
+    @Test
+    fun nestedPayloadDiscardsRunsOutsideItsText() {
+        val manager = RNTextEngineTextViewManager()
+        val view = RNTextEngineTextViewManager.RNTextEngineTextView(application)
+        val payload = RNTextEngineTextShadowNode.RNTextEngineResolvedTextPayload.EMPTY.copy(
+            hasNested = true,
+            hash = 1L,
+            text = "short",
+            runStarts = intArrayOf(6),
+            runEnds = intArrayOf(11),
+            runStyleMasks = intArrayOf(1 shl 4),
+            runFontWeights = arrayOf("700"),
+        )
+
+        manager.updateExtraData(view, payload)
+        measureAndLayout(view, width = 200, height = 50)
+
+        assertEquals("short", view.textContentView.text.toString())
+        val text = view.textContentView.text as? Spanned
+        assertEquals(0, text?.getSpans(0, text.length, RNTextEngineTextPaintSpan::class.java)?.size ?: 0)
     }
 
     @Test

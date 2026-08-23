@@ -17,6 +17,7 @@ internal abstract class RNTextEngineCapAnchoredContainer(context: Context) : Fra
 
     private var cachedCapHeightInsets = RNTextEngineCapHeightInsetsPx(bottom = 0f, top = 0f)
     private var cachedCapHeightInsetsWidth = -1
+    private var exposesInternalChildren = false
     private var paperOpacity = 1f
     private var opacityBackground: Drawable? = null
     private var opacityBackgroundBaseAlpha = 255
@@ -35,11 +36,33 @@ internal abstract class RNTextEngineCapAnchoredContainer(context: Context) : Fra
         setBackgroundColor(Color.TRANSPARENT)
     }
 
-    override fun getChildCount(): Int = 0
+    override fun getChildCount(): Int = if (exposesInternalChildren) super.getChildCount() else 0
 
-    override fun getChildAt(index: Int): View? = null
+    override fun getChildAt(index: Int): View? = if (exposesInternalChildren) super.getChildAt(index) else null
 
-    override fun indexOfChild(child: View?): Int = -1
+    override fun indexOfChild(child: View?): Int = if (exposesInternalChildren) super.indexOfChild(child) else -1
+
+    protected fun addInternalChild(child: View, params: LayoutParams) {
+        withInternalChildAccess {
+            super.addView(child, params)
+        }
+    }
+
+    protected fun removeInternalChild(child: View) {
+        withInternalChildAccess {
+            super.removeView(child)
+        }
+    }
+
+    private fun withInternalChildAccess(action: () -> Unit) {
+        val previouslyExposed = exposesInternalChildren
+        exposesInternalChildren = true
+        try {
+            action()
+        } finally {
+            exposesInternalChildren = previouslyExposed
+        }
+    }
 
     fun requestCapAnchorLayout() {
         cachedCapHeightInsetsWidth = -1

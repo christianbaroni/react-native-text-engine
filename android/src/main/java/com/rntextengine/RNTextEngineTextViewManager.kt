@@ -369,7 +369,7 @@ internal class RNTextEngineTextViewManager :
         }
 
         init {
-            super.addView(
+            addInternalChild(
                 attributedDisplayView,
                 LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT),
             )
@@ -507,7 +507,7 @@ internal class RNTextEngineTextViewManager :
         private fun syncInteractionTextView(selectable: Boolean) {
             if (selectable) {
                 if (textContentView.parent !== this) {
-                    super.addView(
+                    addInternalChild(
                         textContentView,
                         LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT),
                     )
@@ -518,7 +518,7 @@ internal class RNTextEngineTextViewManager :
             }
 
             if (textContentView.parent === this) {
-                super.removeView(textContentView)
+                removeInternalChild(textContentView)
             }
             attributedDisplayView.visibility = View.VISIBLE
         }
@@ -681,7 +681,7 @@ internal class RNTextEngineTextViewManager :
                 val start = payload.runStarts[index]
                 val end = payload.runEnds[index]
                 val styleMask = payload.runStyleMasks[index]
-                if (styleMask == 0 || start < previousEnd || start < 0 || end <= start) continue
+                if (styleMask == 0 || start < previousEnd || start < 0 || end <= start || end > payload.text.length) continue
 
                 val style =
                     RNTextEngineTextRunStyle(
@@ -729,8 +729,7 @@ internal class RNTextEngineTextViewManager :
                     runs = buildRunsFromResolvedPayload(nestedPayload),
                 )
             } else {
-                val animatedRuns = resolveAnimatedRuns()
-                val activeRuns = if (animatedRuns.isNotEmpty()) animatedRuns else runs
+                val activeRuns = resolveRunArrayProps() ?: runs
                 RNTextEngineBindings.buildTextViewDisplayData(
                     text = textValue,
                     textTransform = textTransform,
@@ -786,8 +785,21 @@ internal class RNTextEngineTextViewManager :
 
         fun resolveLayout(width: Int): Layout? = buildLayoutForTextView(this, width)
 
-        private fun resolveAnimatedRuns(): List<RNTextEngineTextRun> {
-            val starts = runStarts ?: return emptyList()
+        private fun resolveRunArrayProps(): List<RNTextEngineTextRun>? {
+            val hasRunArrayProps =
+                runStarts != null ||
+                    runEnds != null ||
+                    runStyleMasks != null ||
+                    runColors != null ||
+                    runFontFamilies != null ||
+                    runFontSizes != null ||
+                    runFontStyles != null ||
+                    runFontWeights != null ||
+                    runLetterSpacings != null ||
+                    runLineHeights != null ||
+                    runTabularNumbers != null ||
+                    runCount > 0
+            val starts = runStarts ?: return if (hasRunArrayProps) emptyList() else null
             val ends = runEnds ?: return emptyList()
             val styleMasks = runStyleMasks ?: return emptyList()
             val resolvedRunCount =
@@ -807,7 +819,7 @@ internal class RNTextEngineTextViewManager :
                 val start = starts.getInt(index)
                 val end = ends.getInt(index)
                 val styleMask = styleMasks.getInt(index)
-                if (styleMask == 0 || start < previousEnd || start < 0 || end <= start) continue
+                if (styleMask == 0 || start < previousEnd || start < 0 || end <= start || end > textValue.length) continue
 
                 val style =
                     RNTextEngineTextRunStyle(
