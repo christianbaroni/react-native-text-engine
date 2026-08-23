@@ -2,6 +2,7 @@
 #import <UIKit/UIKit.h>
 #import <hermes/hermes.h>
 #import <objc/message.h>
+#import <objc/runtime.h>
 
 #import "../../../ios/RNTextEngineBindings.h"
 #import "../../../ios/RNTextEngineAttributedTextDisplayView.h"
@@ -122,6 +123,38 @@ static id FindTextViewSubview(id view)
   }
 
   return nil;
+}
+
+static char RNTextEngineLayoutRequestCountKey;
+
+static void RNTextEngineCountingSetNeedsLayout(id self, SEL selector)
+{
+  NSNumber *current = objc_getAssociatedObject(self, &RNTextEngineLayoutRequestCountKey);
+  objc_setAssociatedObject(
+      self,
+      &RNTextEngineLayoutRequestCountKey,
+      @((current != nil ? current.integerValue : 0) + 1),
+      OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+
+  struct objc_super superInfo = {
+      .receiver = self,
+      .super_class = class_getSuperclass(object_getClass(self)),
+  };
+  ((void (*)(struct objc_super *, SEL))objc_msgSendSuper)(&superInfo, selector);
+}
+
+static Class LayoutCountingTextViewClass(void)
+{
+  static Class countingClass;
+  static dispatch_once_t onceToken;
+  dispatch_once(&onceToken, ^{
+    Class textViewClass = NSClassFromString(@"RNTextEngineTextView");
+    if (textViewClass == Nil) return;
+    countingClass = objc_allocateClassPair(textViewClass, "RNTextEngineLayoutCountingTextView", 0);
+    class_addMethod(countingClass, @selector(setNeedsLayout), (IMP)RNTextEngineCountingSetNeedsLayout, "v@:");
+    objc_registerClassPair(countingClass);
+  });
+  return countingClass;
 }
 
 static id FindDisplaySubview(id view)
@@ -1205,6 +1238,28 @@ static void AssertDisplayViewUsesBoundsGeometry(UIView *displayView, UIView *hos
                                                              effectiveRange:nil];
     XCTAssertNotNil(foregroundColor);
     XCTAssertNotEqualObjects(foregroundColor, UIColor.clearColor);
+  });
+}
+
+- (void)testTextViewDisplayRefreshDoesNotScheduleFollowUpLayout
+{
+  RunOnMainSync(^{
+    Class textViewClass = LayoutCountingTextViewClass();
+    XCTAssertNotNil(textViewClass);
+
+    UIView *view = [[textViewClass alloc] initWithFrame:CGRectMake(0, 0, 240, 48)];
+    [view setValue:@"A direct text view must settle display text in one layout pass." forKey:@"text"];
+    [view setValue:@"TestTiemposText-Regular" forKey:@"fontFamily"];
+    [view setValue:@18 forKey:@"fontSize"];
+    [view setValue:@26 forKey:@"lineHeight"];
+    SetBoolProperty(view, @"anchorToCapHeight", YES);
+
+    objc_setAssociatedObject(view, &RNTextEngineLayoutRequestCountKey, @0, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    [view setNeedsLayout];
+    [view layoutIfNeeded];
+
+    NSNumber *requests = objc_getAssociatedObject(view, &RNTextEngineLayoutRequestCountKey);
+    XCTAssertEqual(requests.integerValue, 1);
   });
 }
 

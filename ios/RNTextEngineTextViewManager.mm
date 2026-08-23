@@ -1133,7 +1133,6 @@ static NSTextAlignment RNTextEngineTextResolveAlignment(NSString *textAlign)
     interactionTextView.attributedText = _displayText ?: [[NSAttributedString alloc] initWithString:@""];
     [self bringSubviewToFront:interactionTextView];
   }
-  [self setNeedsLayout];
 }
 
 @end
