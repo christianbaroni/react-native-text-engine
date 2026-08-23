@@ -6,10 +6,20 @@ const rootDir = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   resolve: {
-    alias: {
-      'react-native': path.resolve(rootDir, 'tests/mocks/react-native.ts'),
-      'react-native-worklets': path.resolve(rootDir, 'tests/mocks/react-native-worklets.ts'),
-    },
+    alias: [
+      {
+        find: 'react-native/Libraries/Utilities/codegenNativeComponent',
+        replacement: path.resolve(rootDir, 'tests/mocks/codegenNativeComponent.ts'),
+      },
+      {
+        find: 'react-native',
+        replacement: path.resolve(rootDir, 'tests/mocks/react-native.ts'),
+      },
+      {
+        find: 'react-native-worklets',
+        replacement: path.resolve(rootDir, 'tests/mocks/react-native-worklets.ts'),
+      },
+    ],
   },
   test: {
     clearMocks: true,

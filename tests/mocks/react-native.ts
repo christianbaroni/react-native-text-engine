@@ -48,7 +48,7 @@ export const StyleSheet = {
   },
 };
 
-export function codegenNativeComponent<Props extends object>(name: string) {
+export function createMockNativeComponent<Props extends object>(name: string) {
   return forwardRef<unknown, Props>(function MockNativeComponent(props, ref) {
     nativeComponentProps[name] = { ...props, ref };
     return React.createElement('div', { 'data-testid': name });

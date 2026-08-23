@@ -1,4 +1,5 @@
-import { codegenNativeComponent, type ColorValue, type ViewProps } from 'react-native';
+import codegenNativeComponent from 'react-native/Libraries/Utilities/codegenNativeComponent';
+import type { ColorValue, ViewProps } from 'react-native';
 import type { Double, Int32 } from 'react-native/Libraries/Types/CodegenTypes';
 
 export interface TextShadowOffset {
