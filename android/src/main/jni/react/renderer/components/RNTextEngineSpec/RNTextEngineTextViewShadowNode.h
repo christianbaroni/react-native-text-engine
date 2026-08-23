@@ -21,6 +21,7 @@
 namespace rntextengine {
 
 struct TextViewMeasurementRuns {
+  std::vector<std::string> colors;
   std::vector<int> ends;
   std::vector<std::string> fontFamilies;
   std::vector<double> fontSizes;

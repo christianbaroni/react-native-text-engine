@@ -239,6 +239,7 @@ uint64_t prepareTextViewMeasurementHandle(
     auto runStarts = toIntArray(env, runs.starts);
     auto runEnds = toIntArray(env, runs.ends);
     auto runStyleMasks = toIntArray(env, runs.styleMasks);
+    auto runColors = toStringArray(env, runs.colors);
     auto runFontFamilies = toStringArray(env, runs.fontFamilies);
     auto runFontSizes = toDoubleArray(env, runs.fontSizes);
     auto runFontWeights = toStringArray(env, runs.fontWeights);
@@ -266,7 +267,7 @@ uint64_t prepareTextViewMeasurementHandle(
         runStarts,
         runEnds,
         runStyleMasks,
-        nullptr,
+        runColors,
         runFontFamilies,
         runFontSizes,
         runFontWeights,
@@ -278,6 +279,7 @@ uint64_t prepareTextViewMeasurementHandle(
     cleanupLocalRef(env, runStarts);
     cleanupLocalRef(env, runEnds);
     cleanupLocalRef(env, runStyleMasks);
+    cleanupLocalRef(env, runColors);
     cleanupLocalRef(env, runFontFamilies);
     cleanupLocalRef(env, runFontSizes);
     cleanupLocalRef(env, runFontWeights);
@@ -1018,6 +1020,7 @@ RNTextEngineTextViewShadowNode::buildRuns() const {
   runs.starts.reserve(runCount);
   runs.ends.reserve(runCount);
   runs.styleMasks.reserve(runCount);
+  runs.colors.reserve(runCount);
   runs.fontFamilies.reserve(runCount);
   runs.fontSizes.reserve(runCount);
   runs.fontStyles.reserve(runCount);
@@ -1033,6 +1036,7 @@ RNTextEngineTextViewShadowNode::buildRuns() const {
         static_cast<int>(valueOrDefault(props.runEnds, index, 0.0)));
     runs.styleMasks.push_back(
         static_cast<int>(valueOrDefault(props.runStyleMasks, index, 0.0)));
+    runs.colors.push_back(valueOrDefault(props.runColors, index, std::string{}));
     runs.fontFamilies.push_back(valueOrDefault(
         props.runFontFamilies, index, std::string{}));
     runs.fontSizes.push_back(valueOrDefault(props.runFontSizes, index, 0.0));
@@ -1057,6 +1061,7 @@ RNTextEngineTextViewShadowNode::buildRuns(const ResolvedPayload& payload) const 
   runs.starts = payload.runStarts;
   runs.ends = payload.runEnds;
   runs.styleMasks = payload.runStyleMasks;
+  runs.colors = payload.runColors;
   runs.fontFamilies = payload.runFontFamilies;
   runs.fontSizes = payload.runFontSizes;
   runs.fontStyles = payload.runFontStyles;
