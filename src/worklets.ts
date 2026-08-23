@@ -10,11 +10,11 @@ import type {
   TextMeasureRun,
   TextMeasureStyle,
 } from './types';
+import { installTextEngineRuntime, installTextEngineUIRuntime } from './workletRuntimeInstall';
 
 declare global {
   var __RNTextEngineCommitGlyphFieldBuffers: ((handle: number) => void) | undefined;
   var __RNTextEngineCreateGlyphFieldBuffers: ((handle: number) => { glyphIndices: ArrayBuffer; variantIndices: ArrayBuffer }) | undefined;
-  var __RNTextEngineInstallWorkletRuntime: ((workletRuntime: object) => boolean) | undefined;
   var __RNTextEngineUpdateGlyphField: ((handle: number, glyphs: string, variantIndices: Uint8Array) => void) | undefined;
   var __RNTextEngineUpdateGlyphFieldIndices: ((handle: number, glyphIndices: Uint8Array, variantIndices: Uint8Array) => void) | undefined;
 }
@@ -36,23 +36,6 @@ export type GlyphFieldRuntimeBuffers = {
 function buildHandle(id: number): PreparedTextHandle {
   'worklet';
   return { handle: id };
-}
-
-function installRuntime(workletRuntime: object, target: string): void {
-  const installWorkletRuntime = globalThis.__RNTextEngineInstallWorkletRuntime;
-  if (!installWorkletRuntime) {
-    throw new Error('RNTextEngine: Native installWorkletRuntime() is unavailable in this build.');
-  }
-
-  const didInstall = installWorkletRuntime(workletRuntime);
-  if (!didInstall) {
-    throw new Error(`RNTextEngine: Failed to install bindings into the ${target} runtime.`);
-  }
-}
-
-function installUIRuntime(): void {
-  getRNTextEngineRuntime();
-  installRuntime(getUIRuntimeHolder(), 'UI');
 }
 
 /**
@@ -78,7 +61,7 @@ export function createTextEngineRuntime(config?: TextEngineRuntimeConfig): Workl
           name: config?.name,
         });
 
-  installRuntime(workletRuntime, 'created worklet');
+  installTextEngineRuntime(workletRuntime, 'created worklet');
 
   if (initializer) scheduleOnRuntime(workletRuntime, initializer);
 
@@ -227,4 +210,4 @@ export function commitGlyphFieldBuffersInRuntime(handle: GlyphFieldHandle | numb
   commitGlyphFieldBuffers(resolvedHandle);
 }
 
-if (isRNRuntime()) installUIRuntime();
+if (isRNRuntime()) installTextEngineUIRuntime(getUIRuntimeHolder());
