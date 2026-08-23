@@ -52,6 +52,8 @@ def resolveNodeExecutable() {
 
 def reactNativeRootDir = resolveReactNativeDirectory()
 def reactNativeWorkletsRootDir = resolveReactNativeWorkletsDirectory()
+def reactNativeArchitectures = (project.findProperty("reactNativeArchitectures")
+        ?: "armeabi-v7a,x86,x86_64,arm64-v8a").split(",")
 
 apply plugin: 'com.facebook.react'
 
@@ -96,6 +98,7 @@ android {
                         "-DANDROID_STL=c++_shared",
                         "-DREACT_NATIVE_DIR=${reactNativeRootDir ? toPlatformFileString(reactNativeRootDir.path) : ''}",
                         "-DREACT_NATIVE_WORKLETS_DIR=${reactNativeWorkletsRootDir ? toPlatformFileString(reactNativeWorkletsRootDir.path) : ''}"
+                abiFilters(*reactNativeArchitectures)
             }
         }
     }
