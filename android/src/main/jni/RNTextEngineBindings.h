@@ -27,7 +27,6 @@ struct PreparedTextLayoutMeasurement {
 void cleanup(JNIEnv* env);
 double currentFontScaleMultiplier();
 void install(facebook::jsi::Runtime& runtime);
-void install(facebook::jsi::Runtime& runtime, JNIEnv* env, jobject context);
 uint64_t prepareTextViewMeasurementHandle(
     const std::string& text,
     bool allowFontScaling,

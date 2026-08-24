@@ -2080,11 +2080,6 @@ void install(Runtime& runtime) {
       });
 }
 
-void install(Runtime& runtime, JNIEnv* env, jobject context) {
-  initializeIfNeeded(env, context);
-  install(runtime);
-}
-
 } // namespace rntextengine
 
 extern "C" {
@@ -2098,7 +2093,8 @@ Java_com_rntextengine_RNTextEngineModule_nativeInstall(
   if (runtime == nullptr) return JNI_FALSE;
 
   try {
-    rntextengine::install(*runtime, env, context);
+    rntextengine::initializeIfNeeded(env, context);
+    rntextengine::install(*runtime);
     return JNI_TRUE;
   } catch (const std::exception& exception) {
     LOGE("Failed to install RNTextEngine: %s", exception.what());

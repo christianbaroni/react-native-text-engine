@@ -1,17 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import jiti from 'jiti';
+import { createJiti } from 'jiti';
 import type { TextEngineDefaults } from '../src/types';
-
-type JitiFactory = (
-  source: string,
-  options: {
-    alias?: Record<string, string>;
-    fsCache: boolean;
-    interopDefault: boolean;
-    moduleCache: boolean;
-  }
-) => (specifier: string) => unknown;
 
 export type SyncTextEngineDefaultsResult = {
   configPath: string | null;
@@ -25,7 +15,6 @@ export type SyncTextEngineDefaultsOptions = {
   appRoot: string;
   packageRoot: string;
 };
-type TextEngineConfigLoader = ReturnType<JitiFactory>;
 
 const CONFIG_BASENAME = 'react-native-text-engine.config';
 const CONFIG_EXTENSIONS = ['ts', 'cts', 'mts', 'js', 'cjs', 'mjs', 'json'] as const;
@@ -50,27 +39,11 @@ type TextEngineDefaultsArtifact = {
   path: string;
 };
 
-const createJiti = resolveCreateJiti(jiti);
-
 function isRecordLike(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function isJitiFactory(value: unknown): value is JitiFactory {
-  return typeof value === 'function';
-}
-
-function hasCreateJiti(value: unknown): value is { createJiti: JitiFactory } {
-  return isRecordLike(value) && isJitiFactory(value.createJiti);
-}
-
-function resolveCreateJiti(value: unknown): JitiFactory {
-  if (isJitiFactory(value)) return value;
-  if (hasCreateJiti(value)) return value.createJiti;
-  throw new Error('RNTextEngine: unable to initialize config loader.');
-}
-
-function createConfigLoader(packageRoot: string): TextEngineConfigLoader {
+function createConfigLoader(packageRoot: string) {
   return createJiti(import.meta.url, {
     alias: {
       'react-native-text-engine': path.join(packageRoot, 'src/index.ts'),

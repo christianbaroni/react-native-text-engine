@@ -73,77 +73,7 @@ type RNTextEngineRuntime = {
 
 let cachedRuntime: RNTextEngineRuntime | null = null;
 
-function hasInstall(value: unknown): value is { install: () => boolean } {
-  if (typeof value !== 'object' || value === null) return false;
-  return typeof Reflect.get(value, 'install') === 'function';
-}
-
-function resolveInstallModule(): { install: () => boolean } | null {
-  if (hasInstall(RNTextEngineModule)) return RNTextEngineModule;
-
-  const nativeModule = NativeModules.RNTextEngine;
-  if (hasInstall(nativeModule)) return nativeModule;
-
-  return null;
-}
-
-function buildRuntime(): RNTextEngineRuntime {
-  const createGlyphField = globalThis.__RNTextEngineCreateGlyphField;
-  const prepare = globalThis.__RNTextEnginePrepare;
-  const prepareBatch = globalThis.__RNTextEnginePrepareBatch;
-  const releaseGlyphField = globalThis.__RNTextEngineReleaseGlyphField;
-  const release = globalThis.__RNTextEngineRelease;
-  const releaseMany = globalThis.__RNTextEngineReleaseMany;
-  const updateGlyphField = globalThis.__RNTextEngineUpdateGlyphField;
-  const updateGlyphFieldIndices = globalThis.__RNTextEngineUpdateGlyphFieldIndices;
-  const measureWidth = globalThis.__RNTextEngineMeasureWidth;
-  const measure = globalThis.__RNTextEngineMeasure;
-  const measureBatch = globalThis.__RNTextEngineMeasureBatch;
-  const layout = globalThis.__RNTextEngineLayout;
-  const layoutBatch = globalThis.__RNTextEngineLayoutBatch;
-  const layoutNextLine = globalThis.__RNTextEngineLayoutNextLine;
-  const layoutLines = globalThis.__RNTextEngineLayoutLines;
-
-  if (
-    !createGlyphField ||
-    !prepare ||
-    !prepareBatch ||
-    !releaseGlyphField ||
-    !release ||
-    !releaseMany ||
-    !updateGlyphField ||
-    !updateGlyphFieldIndices ||
-    !measureWidth ||
-    !measure ||
-    !measureBatch ||
-    !layout ||
-    !layoutBatch ||
-    !layoutNextLine ||
-    !layoutLines
-  ) {
-    throw new Error('RNTextEngine: Native runtime installed incompletely. Expected all JSI bindings to be present.');
-  }
-
-  return {
-    createGlyphField,
-    layout,
-    layoutBatch,
-    layoutNextLine,
-    layoutLines,
-    measure,
-    measureBatch,
-    measureWidth,
-    prepare,
-    prepareBatch,
-    releaseGlyphField,
-    release,
-    releaseMany,
-    updateGlyphField,
-    updateGlyphFieldIndices,
-  };
-}
-
-export function initRNTextEngine(): RNTextEngineRuntime {
+export function getRNTextEngineRuntime(): RNTextEngineRuntime {
   if (cachedRuntime) return cachedRuntime;
 
   try {
@@ -172,6 +102,47 @@ export function initRNTextEngine(): RNTextEngineRuntime {
   }
 }
 
-export function getRNTextEngineRuntime(): RNTextEngineRuntime {
-  return initRNTextEngine();
+function buildRuntime(): RNTextEngineRuntime {
+  const runtime = {
+    createGlyphField: globalThis.__RNTextEngineCreateGlyphField,
+    prepare: globalThis.__RNTextEnginePrepare,
+    prepareBatch: globalThis.__RNTextEnginePrepareBatch,
+    releaseGlyphField: globalThis.__RNTextEngineReleaseGlyphField,
+    release: globalThis.__RNTextEngineRelease,
+    releaseMany: globalThis.__RNTextEngineReleaseMany,
+    updateGlyphField: globalThis.__RNTextEngineUpdateGlyphField,
+    updateGlyphFieldIndices: globalThis.__RNTextEngineUpdateGlyphFieldIndices,
+    measureWidth: globalThis.__RNTextEngineMeasureWidth,
+    measure: globalThis.__RNTextEngineMeasure,
+    measureBatch: globalThis.__RNTextEngineMeasureBatch,
+    layout: globalThis.__RNTextEngineLayout,
+    layoutBatch: globalThis.__RNTextEngineLayoutBatch,
+    layoutNextLine: globalThis.__RNTextEngineLayoutNextLine,
+    layoutLines: globalThis.__RNTextEngineLayoutLines,
+  } satisfies { [K in keyof RNTextEngineRuntime]: RNTextEngineRuntime[K] | undefined };
+
+  requireAllBindings(runtime);
+
+  return runtime;
+}
+
+function requireAllBindings<T extends object>(bindings: T): asserts bindings is T & { [K in keyof T]-?: NonNullable<T[K]> } {
+  for (const binding of Object.values(bindings)) {
+    if (typeof binding === 'function') continue;
+    throw new Error('RNTextEngine: Native runtime installed incompletely. Expected all JSI bindings to be present.');
+  }
+}
+
+function resolveInstallModule(): { install: () => boolean } | null {
+  if (hasInstall(RNTextEngineModule)) return RNTextEngineModule;
+
+  const nativeModule = NativeModules.RNTextEngine;
+  if (hasInstall(nativeModule)) return nativeModule;
+
+  return null;
+}
+
+function hasInstall(value: unknown): value is { install: () => boolean } {
+  if (typeof value !== 'object' || value === null) return false;
+  return typeof Reflect.get(value, 'install') === 'function';
 }

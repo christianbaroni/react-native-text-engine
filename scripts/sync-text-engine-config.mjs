@@ -1,6 +1,4 @@
-import jiti from 'jiti';
-
-const createJiti = typeof jiti === 'function' ? jiti : jiti.createJiti;
+import { createJiti } from 'jiti';
 
 createJiti(import.meta.url, {
   fsCache: false,
