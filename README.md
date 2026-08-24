@@ -326,3 +326,7 @@ The example app in [`examples/`](./examples) shows:
 - `TextView` and prepared text in the type demo
 - prepared text measurement in the chat demo
 - glyph fields in the field and fire demos
+
+## Benchmarks
+
+See the [TextView vs React Native Text comparison](benchmarks/rn-text/README.md) and [library benchmarks](benchmarks/library/README.md) for results and run instructions.

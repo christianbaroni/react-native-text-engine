@@ -14,14 +14,19 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
   ) -> Bool {
+    window = UIWindow(frame: UIScreen.main.bounds)
+    if ProcessInfo.processInfo.environment["RNTE_BENCHMARK"] == "1" {
+      window?.rootViewController = UIViewController()
+      window?.makeKeyAndVisible()
+      return true
+    }
+
     let delegate = ReactNativeDelegate()
     let factory = RNTextEngineExampleReactNativeFactory(delegate: delegate)
     delegate.dependencyProvider = RCTAppDependencyProvider()
 
     reactNativeDelegate = delegate
     reactNativeFactory = factory
-
-    window = UIWindow(frame: UIScreen.main.bounds)
 
     factory.startReactNative(
       withModuleName: "example",
