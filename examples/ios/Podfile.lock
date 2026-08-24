@@ -2043,7 +2043,7 @@ PODS:
     - ReactNativeDependencies
     - RNWorklets
     - Yoga
-  - RNTextEngine (0.1.0):
+  - RNTextEngine (0.2.0):
     - hermes-engine
     - RCTRequired
     - RCTTypeSafety
@@ -2476,7 +2476,7 @@ SPEC CHECKSUMS:
   ReactNativeDependencies: a83c79c607c87cc7d7b8eb402f08c4932763d597
   RNGestureHandler: b4f6de20b30325ee40b693f558ad02213201ce91
   RNReanimated: 7ec68695deea4949378fbe73141eca8117b26fa6
-  RNTextEngine: 87a234941d49404a4b296ec3568e29dd7e700190
+  RNTextEngine: 06c38599626e5e6e074e34ed56c5bcee2b977dfb
   RNWorklets: 06ce05d69455cc14f5676c177050a39aa557d4d2
   Yoga: c0b3f2c7e8d3e327e450223a2414ca3fa296b9a2
 
