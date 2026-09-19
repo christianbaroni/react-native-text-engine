@@ -50,6 +50,8 @@ def resolveNodeExecutable() {
     return System.getenv("NODE_BINARY") ?: "node"
 }
 
+def textComparisonEnabled = project.findProperty('rnteTextComparison') == 'true'
+
 def reactNativeRootDir = resolveReactNativeDirectory()
 def reactNativeWorkletsRootDir = resolveReactNativeWorkletsDirectory()
 def reactNativeArchitectures = (project.findProperty("reactNativeArchitectures")
@@ -67,12 +69,16 @@ android {
 
     packaging {
         jniLibs {
-            excludes += [
-                    "**/libc++_shared.so",
-                    "**/libjsi.so",
-                    "**/libreactnative.so",
-                    "**/libworklets.so",
-            ]
+            if (textComparisonEnabled) {
+                pickFirsts += ["**/libc++_shared.so", "**/libjsi.so", "**/libreactnative.so", "**/libworklets.so", "**/libfbjni.so"]
+            } else {
+                excludes += [
+                        "**/libc++_shared.so",
+                        "**/libjsi.so",
+                        "**/libreactnative.so",
+                        "**/libworklets.so",
+                ]
+            }
         }
     }
 
@@ -89,12 +95,13 @@ android {
         minSdkVersion safeExtGet('minSdkVersion', 21)
         targetSdkVersion safeExtGet('targetSdkVersion', 33)
         buildConfigField("boolean", "IS_NEW_ARCHITECTURE_ENABLED", isNewArchitectureEnabled().toString())
-        testInstrumentationRunner "androidx.benchmark.junit4.AndroidBenchmarkRunner"
+        testInstrumentationRunner textComparisonEnabled ? "androidx.test.runner.AndroidJUnitRunner" : "androidx.benchmark.junit4.AndroidBenchmarkRunner"
         testInstrumentationRunnerArguments["androidx.benchmark.suppressErrors"] = "EMULATOR"
         externalNativeBuild {
             cmake {
                 cppFlags "-std=c++20"
-                arguments "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON",
+                arguments "-DRNTEXTENGINE_BUILD_TEXT_COMPARISON=${textComparisonEnabled ? 'ON' : 'OFF'}",
+                        "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON",
                         "-DANDROID_STL=c++_shared",
                         "-DREACT_NATIVE_DIR=${reactNativeRootDir ? toPlatformFileString(reactNativeRootDir.path) : ''}",
                         "-DREACT_NATIVE_WORKLETS_DIR=${reactNativeWorkletsRootDir ? toPlatformFileString(reactNativeWorkletsRootDir.path) : ''}"
@@ -205,4 +212,12 @@ preBuild.dependsOn(syncTextEngineDefaults)
 
 if (isNewArchitectureEnabled()) {
     preBuild.dependsOn(overlayFabricTextViewCodegenOverrides)
+}
+
+if (textComparisonEnabled) {
+    tasks.configureEach { task ->
+        if (task.name.startsWith("configureCMake")) {
+            task.dependsOn(overlayFabricTextViewCodegenOverrides)
+        }
+    }
 }

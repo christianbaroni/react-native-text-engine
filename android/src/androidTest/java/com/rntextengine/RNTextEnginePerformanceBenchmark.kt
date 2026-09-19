@@ -23,7 +23,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 
-private class BenchmarkReactApplicationContext(application: Application) : ReactApplicationContext(application) {
+internal class BenchmarkReactApplicationContext(application: Application) : ReactApplicationContext(application) {
     override fun <T : JavaScriptModule> getJSModule(jsInterface: Class<T>): T {
         throw UnsupportedOperationException("JS modules are not used in RNTextEngine performance benchmarks.")
     }

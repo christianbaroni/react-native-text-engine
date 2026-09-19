@@ -12,6 +12,7 @@
 		13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB51A68108700A75B9A /* Images.xcassets */; };
 		1EAA11BB2EFF001122334455 /* RNTextEnginePerformanceTests.mm in Sources */ = {isa = PBXBuildFile; fileRef = 1EAA11BA2EFF001122334455 /* RNTextEnginePerformanceTests.mm */; };
 		1EAA11BC2EFF001122334455 /* UIKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1EAA11BD2EFF001122334455 /* UIKit.framework */; };
+		1EAA11BE2EFF001122334455 /* RNTextEngineTextViewComparisonBenchmarks.mm in Sources */ = {isa = PBXBuildFile; fileRef = 1EAA11BF2EFF001122334455 /* RNTextEngineTextViewComparisonBenchmarks.mm */; };
 		2A9C71D24A8F4D0AA11B22C3 /* RNTextEngineExampleReactNativeFactory.mm in Sources */ = {isa = PBXBuildFile; fileRef = 2A9C71D14A8F4D0AA11B22C3 /* RNTextEngineExampleReactNativeFactory.mm */; };
 		733ECB0A7FF9565CF171AA78 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */; };
 		7BF5F3C8585C4BFAAB8BEA39 /* FoundersGroteskText-Medium.otf in Resources */ = {isa = PBXBuildFile; fileRef = 994E76B6643D47008EA122C1 /* FoundersGroteskText-Medium.otf */; };
@@ -45,6 +46,7 @@
 		13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = PrivacyInfo.xcprivacy; path = example/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		1EAA11BA2EFF001122334455 /* RNTextEnginePerformanceTests.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = RNTextEnginePerformanceTests.mm; sourceTree = "<group>"; };
 		1EAA11BD2EFF001122334455 /* UIKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = UIKit.framework; path = System/Library/Frameworks/UIKit.framework; sourceTree = SDKROOT; };
+		1EAA11BF2EFF001122334455 /* RNTextEngineTextViewComparisonBenchmarks.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = RNTextEngineTextViewComparisonBenchmarks.mm; sourceTree = "<group>"; };
 		2A9C71D04A8F4D0AA11B22C3 /* RNTextEngineExampleReactNativeFactory.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = example/RNTextEngineExampleReactNativeFactory.h; sourceTree = "<group>"; };
 		2A9C71D14A8F4D0AA11B22C3 /* RNTextEngineExampleReactNativeFactory.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = example/RNTextEngineExampleReactNativeFactory.mm; sourceTree = "<group>"; };
 		3191E472D61D492DBE165B7A /* FoundersGroteskText-Regular.otf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = "FoundersGroteskText-Regular.otf"; path = "../assets/fonts/FoundersGroteskText-Regular.otf"; sourceTree = "<group>"; };
@@ -88,6 +90,7 @@
 			children = (
 				00E356F21AD99517003FC87E /* exampleTests.mm */,
 				1EAA11BA2EFF001122334455 /* RNTextEnginePerformanceTests.mm */,
+				1EAA11BF2EFF001122334455 /* RNTextEngineTextViewComparisonBenchmarks.mm */,
 				00E356F01AD99517003FC87E /* Supporting Files */,
 			);
 			path = exampleTests;
@@ -377,6 +380,7 @@
 			files = (
 				00E356F31AD99517003FC87E /* exampleTests.mm in Sources */,
 				1EAA11BB2EFF001122334455 /* RNTextEnginePerformanceTests.mm in Sources */,
+				1EAA11BE2EFF001122334455 /* RNTextEngineTextViewComparisonBenchmarks.mm in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -402,6 +406,7 @@
 /* Begin XCBuildConfiguration section */
 		00E356F61AD99517003FC87E /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 3B4392A12AC88292D35C810B /* Pods-example.debug.xcconfig */;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				DEVELOPMENT_TEAM = S6B4G26KL2;
@@ -417,6 +422,7 @@
 				HEADER_SEARCH_PATHS = (
 					"$(inherited)",
 					"$(SRCROOT)/Pods/hermes-engine/destroot/include",
+					"$(SRCROOT)/Pods/Headers/Public/ReactCodegen",
 				);
 				INFOPLIST_FILE = exampleTests/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
@@ -431,8 +437,9 @@
 					"-framework",
 					React,
 					"-framework",
+					ReactNativeDependencies,
+					"-framework",
 					hermesvm,
-					"$(inherited)",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.rntextengine.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -442,6 +449,7 @@
 		};
 		00E356F71AD99517003FC87E /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 5709B34CF0A7D63546082F79 /* Pods-example.release.xcconfig */;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				COPY_PHASE_STRIP = NO;
@@ -454,6 +462,7 @@
 				HEADER_SEARCH_PATHS = (
 					"$(inherited)",
 					"$(SRCROOT)/Pods/hermes-engine/destroot/include",
+					"$(SRCROOT)/Pods/Headers/Public/ReactCodegen",
 				);
 				INFOPLIST_FILE = exampleTests/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
@@ -468,8 +477,9 @@
 					"-framework",
 					React,
 					"-framework",
+					ReactNativeDependencies,
+					"-framework",
 					hermesvm,
-					"$(inherited)",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.rntextengine.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
