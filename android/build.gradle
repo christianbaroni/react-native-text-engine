@@ -18,7 +18,7 @@ def resolveReactNativeWorkletsDirectory() {
         def workletsPackage = file(
             providers.exec {
                 workingDir(rootDir)
-                commandLine("node", "--print", "require.resolve('react-native-worklets/package.json')")
+                commandLine(resolveNodeExecutable(), "--print", "require.resolve('react-native-worklets/package.json')")
             }.standardOutput.asText.get().trim()
         )
         return workletsPackage.exists() ? workletsPackage.parentFile : null
@@ -32,7 +32,7 @@ def resolveReactNativeDirectory() {
         def reactNativePackage = file(
             providers.exec {
                 workingDir(rootDir)
-                commandLine("node", "--print", "require.resolve('react-native/package.json')")
+                commandLine(resolveNodeExecutable(), "--print", "require.resolve('react-native/package.json')")
             }.standardOutput.asText.get().trim()
         )
         return reactNativePackage.exists() ? reactNativePackage.parentFile : null
@@ -51,6 +51,7 @@ def resolveNodeExecutable() {
 }
 
 def textComparisonEnabled = project.findProperty('rnteTextComparison') == 'true'
+def reactRuntimeLibraries = ["**/libc++_shared.so", "**/libjsi.so", "**/libreactnative.so", "**/libworklets.so"]
 
 def reactNativeRootDir = resolveReactNativeDirectory()
 def reactNativeWorkletsRootDir = resolveReactNativeWorkletsDirectory()
@@ -68,18 +69,7 @@ android {
     }
 
     packaging {
-        jniLibs {
-            if (textComparisonEnabled) {
-                pickFirsts += ["**/libc++_shared.so", "**/libjsi.so", "**/libreactnative.so", "**/libworklets.so", "**/libfbjni.so"]
-            } else {
-                excludes += [
-                        "**/libc++_shared.so",
-                        "**/libjsi.so",
-                        "**/libreactnative.so",
-                        "**/libworklets.so",
-                ]
-            }
-        }
+        jniLibs.excludes += reactRuntimeLibraries
     }
 
     // Used to override the NDK path/version on internal CI or by allowing
@@ -136,6 +126,16 @@ android {
     externalNativeBuild {
         cmake {
             path "src/main/jni/CMakeLists.txt"
+        }
+    }
+}
+
+androidComponents {
+    onVariants(selector().all()) { variant ->
+        def test = variant.androidTest
+        if (test != null) {
+            test.packaging.jniLibs.excludes.set(providers.provider { android.packaging.jniLibs.excludes - reactRuntimeLibraries })
+            test.packaging.jniLibs.pickFirsts.addAll(reactRuntimeLibraries + ["**/libfbjni.so"])
         }
     }
 }

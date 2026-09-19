@@ -659,6 +659,10 @@ static void AssertDisplayViewUsesBoundsGeometry(UIView *displayView, UIView *hos
 
 - (void)testTextShadowViewResolvesNestedPayloadForVirtualChildren
 {
+#ifdef RCT_REMOVE_LEGACY_ARCH
+  XCTSkip(@"Requires the legacy RCTShadowView implementation, which this React Native build removes.");
+#endif
+
   @try {
     RunOnMainSync(^{
       RNTextEngineFakeBridge *bridge = [RNTextEngineFakeBridge new];
@@ -702,6 +706,10 @@ static void AssertDisplayViewUsesBoundsGeometry(UIView *displayView, UIView *hos
 
 - (void)testTextShadowViewEnqueuesMountingWhileYogaNodeIsDirty
 {
+#ifdef RCT_REMOVE_LEGACY_ARCH
+  XCTSkip(@"Requires the legacy RCTShadowView implementation, which this React Native build removes.");
+#endif
+
   @try {
     RunOnMainSync(^{
       RNTextEngineFakeUIManager *uiManager = [RNTextEngineFakeUIManager new];
@@ -725,6 +733,10 @@ static void AssertDisplayViewUsesBoundsGeometry(UIView *displayView, UIView *hos
 
 - (void)testTextShadowViewAppliesNestedPayloadOnFirstMountingPass
 {
+#ifdef RCT_REMOVE_LEGACY_ARCH
+  XCTSkip(@"Requires the legacy RCTShadowView implementation, which this React Native build removes.");
+#endif
+
   @try {
     RunOnMainSync(^{
       RNTextEngineFakeUIManager *uiManager = [RNTextEngineFakeUIManager new];
@@ -763,6 +775,10 @@ static void AssertDisplayViewUsesBoundsGeometry(UIView *displayView, UIView *hos
 
 - (void)testTextShadowViewRequestsLayoutRetryWhenFirstMountMissesView
 {
+#ifdef RCT_REMOVE_LEGACY_ARCH
+  XCTSkip(@"Requires the legacy RCTShadowView implementation, which this React Native build removes.");
+#endif
+
   @try {
     RunOnMainSync(^{
       RNTextEngineFakeUIManager *uiManager = [RNTextEngineFakeUIManager new];
