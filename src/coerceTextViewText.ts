@@ -1,11 +1,11 @@
 import { isValidElement } from 'react';
 
 /**
- * Coerces one dynamic text expression into the canonical `text` prop surface.
+ * Coerces a dynamic text expression into the canonical `text` prop surface.
  *
- * This is intentionally strict: text expressions may vanish (`null`/booleans)
- * or produce textual primitives, but they may not smuggle React nodes or
- * objects through the direct-text path.
+ * This is intentionally strict: text expressions may vanish (`null`, booleans)
+ * or produce textual primitives, but they may not pass React nodes or objects
+ * through the direct-text path.
  */
 export function coerceTextViewText(value: unknown): string {
   if (value == null || value === false || value === true) return '';

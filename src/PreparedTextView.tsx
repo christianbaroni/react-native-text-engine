@@ -1,4 +1,4 @@
-import { forwardRef, type ComponentRef } from 'react';
+import { forwardRef, type ComponentRef, type ForwardRefExoticComponent, type PropsWithoutRef, type RefAttributes } from 'react';
 import textEngineAppDefaults from './generated/TextEngineAppDefaults';
 import NativePreparedTextView, {
   type NativeProps as NativePreparedTextViewProps,
@@ -22,9 +22,10 @@ export type PreparedTextViewProps = NativePreparedTextViewProps & {
 /**
  * Native prepared-handle render surface.
  */
-export const PreparedTextView = forwardRef<ComponentRef<typeof NativePreparedTextView>, PreparedTextViewProps>(
-  function PreparedTextView(props, ref) {
-    const anchorToCapHeight = props.anchorToCapHeight ?? textEngineAppDefaults.anchorToCapHeight;
-    return <NativePreparedTextView ref={ref} {...props} anchorToCapHeight={anchorToCapHeight} />;
-  }
-);
+export const PreparedTextView: ForwardRefExoticComponent<
+  PropsWithoutRef<PreparedTextViewProps> & RefAttributes<ComponentRef<typeof NativePreparedTextView>>
+> = forwardRef<ComponentRef<typeof NativePreparedTextView>, PreparedTextViewProps>(function PreparedTextView(props, ref) {
+  return (
+    <NativePreparedTextView ref={ref} {...props} anchorToCapHeight={props.anchorToCapHeight ?? textEngineAppDefaults.anchorToCapHeight} />
+  );
+});

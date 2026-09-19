@@ -5,6 +5,7 @@
 #import <objc/runtime.h>
 
 #import "../../../ios/RNTextEngineBindings.h"
+#import "../../../ios/RNTextEngineModule.h"
 #import "../../../ios/RNTextEngineAttributedTextDisplayView.h"
 #import "RNTextEngineTestRuntimeHelpers.h"
 
@@ -501,6 +502,19 @@ static void AssertDisplayViewUsesBoundsGeometry(UIView *displayView, UIView *hos
   XCTAssertEqualWithAccuracy([layout[@"height"] doubleValue], expected.height, 0.001);
   XCTAssertEqualWithAccuracy([layout[@"lineCount"] doubleValue], expected.lineCount, 0.001);
   XCTAssertEqualWithAccuracy([layout[@"lastLineWidth"] doubleValue], expected.lastLineWidth, 0.001);
+}
+
+- (void)testModuleReportsInstallationUntilInvalidated
+{
+  RNTextEngineModule *module = [RNTextEngineModule new];
+  XCTAssertFalse([[module install] boolValue]);
+
+  [module installJSIBindingsWithRuntime:*_runtime callInvoker:nullptr];
+  XCTAssertTrue([[module install] boolValue]);
+  XCTAssertGreaterThan([self evaluateNumber:"__RNTextEngineMeasureWidth('Installed runtime', {fontSize: 17})"], 0);
+
+  [module invalidate];
+  XCTAssertFalse([[module install] boolValue]);
 }
 
 - (void)testPreparedTextMeasureLayoutAndReleaseStayConsistent

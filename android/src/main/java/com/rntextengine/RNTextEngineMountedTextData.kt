@@ -53,6 +53,7 @@ internal fun applyPreparedTextViewData(
         return RNTextEngineMountedTextMetrics(baseCapHeightPx = 0f, uniformCapHeightPx = 0f)
     }
 
+    textView.paintFlags = textView.paintFlags or RN_TEXT_ENGINE_SHAPING_FLAGS
     textView.includeFontPadding = prepared.includeFontPadding
     textView.typeface = prepared.textPaint.typeface
     textView.setTextSize(TypedValue.COMPLEX_UNIT_PX, prepared.textPaint.textSize)

@@ -1,4 +1,4 @@
-import { forwardRef, type ComponentRef } from 'react';
+import { forwardRef, type ComponentRef, type ForwardRefExoticComponent, type PropsWithoutRef, type RefAttributes } from 'react';
 import NativeGlyphFieldView, { type NativeProps as NativeGlyphFieldViewProps } from './specs/RNTextEngineGlyphFieldViewNativeComponent';
 
 /**
@@ -9,8 +9,8 @@ import NativeGlyphFieldView, { type NativeProps as NativeGlyphFieldViewProps } f
  */
 export type GlyphFieldViewProps = NativeGlyphFieldViewProps;
 
-export const GlyphFieldView = forwardRef<ComponentRef<typeof NativeGlyphFieldView>, GlyphFieldViewProps>(
-  function GlyphFieldView(props, ref) {
-    return <NativeGlyphFieldView ref={ref} {...props} />;
-  }
-);
+export const GlyphFieldView: ForwardRefExoticComponent<
+  PropsWithoutRef<GlyphFieldViewProps> & RefAttributes<ComponentRef<typeof NativeGlyphFieldView>>
+> = forwardRef<ComponentRef<typeof NativeGlyphFieldView>, GlyphFieldViewProps>(function GlyphFieldView(props, ref) {
+  return <NativeGlyphFieldView ref={ref} {...props} />;
+});

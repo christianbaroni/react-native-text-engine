@@ -18,6 +18,7 @@ import com.facebook.react.bridge.JavaScriptContextHolder
 import com.facebook.react.bridge.JavaScriptModule
 import com.facebook.react.bridge.NativeModule
 import com.facebook.react.bridge.ReactApplicationContext
+import com.facebook.react.bridge.RuntimeExecutor
 import com.facebook.react.bridge.UIManager
 import com.facebook.react.uimanager.DisplayMetricsHolder
 import com.facebook.react.uimanager.PixelUtil
@@ -76,6 +77,8 @@ private class TextViewManagerTestReactContext(application: Application) : ReactA
     override fun isBridgeless(): Boolean = false
 
     override fun getJavaScriptContextHolder(): JavaScriptContextHolder? = null
+
+    override fun getRuntimeExecutor(): RuntimeExecutor? = null
 
     override fun getJSCallInvokerHolder(): CallInvokerHolder? = null
 

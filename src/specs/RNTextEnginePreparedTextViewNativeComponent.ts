@@ -1,6 +1,5 @@
-import codegenNativeComponent from 'react-native/Libraries/Utilities/codegenNativeComponent';
 import type { ViewProps } from 'react-native';
-import type { Double, Int32 } from 'react-native/Libraries/Types/CodegenTypes';
+import codegenNativeComponent, { type Double, type Int32 } from './codegen';
 
 export interface NativeProps extends ViewProps {
   anchorToCapHeight?: boolean;

@@ -48,7 +48,7 @@ This is the package’s example of a glyph field owning the whole effect from st
 
 ## Run
 
-Use Node 22 or newer.
+The example uses React Native 0.87.1, Reanimated 4.6, and Worklets 0.12. Use Node 22.13+ or 24.3+.
 
 ```sh
 cd examples
@@ -80,6 +80,8 @@ That means:
 
 That last part is already handled in the example’s Metro config.
 
+The patches in `patches/` keep Worklets bundle mode working with Metro 0.87: generated Worklet files are hashed from their contents, and hot updates are forwarded to Worklet runtimes.
+
 ## App structure
 
 The app has one shell with a floating switch between:
@@ -101,3 +103,24 @@ Use the example app when you need to verify:
 - text measurement or glyph-field behavior under live interaction
 
 If you only need the public package surface, read the root [`README.md`](../README.md) first.
+
+## Runtime integration check
+
+`runtime-tests.tsx` checks synchronous measurement on the JS, UI, and dedicated Worklet runtimes, mounts all three native view types plus nested text, and checks prepared-handle release after unmounting. A successful run displays `RNTE_RUNTIME_TEST_PASS`. Native rendering assertions remain in the Android instrumentation and iOS XCTest suites.
+
+Build this entry in Release mode from `examples/`:
+
+```sh
+# Android: install app/build/outputs/apk/release/app-release.apk after building.
+cd android
+./gradlew :app:assembleRelease -PrnteEntryFile=../runtime-tests.tsx
+cd ..
+
+# iOS: install the resulting example.app on a simulator.
+ENTRY_FILE=runtime-tests.tsx xcodebuild build \
+  -workspace ios/example.xcworkspace -scheme example -configuration Release \
+  -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+  -derivedDataPath ios/build CODE_SIGNING_ALLOWED=NO
+```
+
+Omit the entry override on the next build to restore the demos.

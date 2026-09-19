@@ -1,4 +1,13 @@
-import { createContext, forwardRef, useContext, type ComponentRef, type ReactNode } from 'react';
+import {
+  createContext,
+  forwardRef,
+  useContext,
+  type ForwardRefExoticComponent,
+  type PropsWithoutRef,
+  type RefAttributes,
+  type ComponentRef,
+  type ReactNode,
+} from 'react';
 import type { StyleProp, TextStyle, ViewStyle } from 'react-native';
 import textEngineAppDefaults from './generated/TextEngineAppDefaults';
 import NativeTextView, { type NativeProps as NativeTextViewProps } from './specs/RNTextEngineTextViewNativeComponent';
@@ -154,28 +163,22 @@ export function createTextViewRunPayload(runs: readonly TextMeasureRun[] | undef
 /**
  * Native text display surface that can be driven directly by animated props.
  */
-export const TextView = forwardRef<ComponentRef<typeof NativeTextView>, TextViewProps>(function TextView(props, ref) {
-  const isVirtualTextSpan = useContext(textViewNestingContext);
-  const allowFontScaling = props.allowFontScaling ?? textEngineAppDefaults.allowFontScaling;
-  const anchorToCapHeight = props.anchorToCapHeight ?? textEngineAppDefaults.anchorToCapHeight;
-  const tabularNumbers = props.tabularNumbers ?? textEngineAppDefaults.tabularNumbers;
-  const rnteHasAllowFontScaling = props.allowFontScaling !== undefined;
-  const rnteHasLetterSpacing = props.letterSpacing !== undefined;
-  const rnteHasTabularNumbers = props.tabularNumbers !== undefined;
-
-  return (
-    <textViewNestingContext.Provider value>
-      <NativeTextView
-        ref={ref}
-        {...props}
-        allowFontScaling={allowFontScaling}
-        anchorToCapHeight={anchorToCapHeight}
-        rnteHasAllowFontScaling={rnteHasAllowFontScaling}
-        rnteHasLetterSpacing={rnteHasLetterSpacing}
-        rnteHasTabularNumbers={rnteHasTabularNumbers}
-        rnteIsVirtualTextSpan={isVirtualTextSpan}
-        tabularNumbers={tabularNumbers}
-      />
-    </textViewNestingContext.Provider>
-  );
-});
+export const TextView: ForwardRefExoticComponent<PropsWithoutRef<TextViewProps> & RefAttributes<ComponentRef<typeof NativeTextView>>> =
+  forwardRef<ComponentRef<typeof NativeTextView>, TextViewProps>(function TextView(props, ref) {
+    const isVirtualTextSpan = useContext(textViewNestingContext);
+    return (
+      <textViewNestingContext.Provider value>
+        <NativeTextView
+          ref={ref}
+          {...props}
+          allowFontScaling={props.allowFontScaling ?? textEngineAppDefaults.allowFontScaling}
+          anchorToCapHeight={props.anchorToCapHeight ?? textEngineAppDefaults.anchorToCapHeight}
+          rnteHasAllowFontScaling={props.allowFontScaling !== undefined}
+          rnteHasLetterSpacing={props.letterSpacing !== undefined}
+          rnteHasTabularNumbers={props.tabularNumbers !== undefined}
+          rnteIsVirtualTextSpan={isVirtualTextSpan}
+          tabularNumbers={props.tabularNumbers ?? textEngineAppDefaults.tabularNumbers}
+        />
+      </textViewNestingContext.Provider>
+    );
+  });

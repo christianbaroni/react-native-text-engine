@@ -392,7 +392,7 @@ function BodySlotView({ bodySlots, bodyTop, index }: { bodySlots: SharedValue<Bo
       top: bodyTop + (slot?.y ?? 0),
       width: Math.max(1, Math.ceil(slot?.width ?? 0) + 4),
     };
-  }, [bodyTop]);
+  });
 
   return (
     <AnimatedTextView
@@ -576,8 +576,7 @@ export function TypeDemo({ isActive = true }: { isActive?: boolean }) {
         pointer.value,
         pointerRadius.value
       );
-    },
-    []
+    }
   );
 
   const dragGesture = useMemo(

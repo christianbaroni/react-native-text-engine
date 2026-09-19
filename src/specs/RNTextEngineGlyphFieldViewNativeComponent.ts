@@ -1,6 +1,5 @@
-import codegenNativeComponent from 'react-native/Libraries/Utilities/codegenNativeComponent';
 import type { ViewProps } from 'react-native';
-import type { Double } from 'react-native/Libraries/Types/CodegenTypes';
+import codegenNativeComponent, { type Double } from './codegen';
 
 export interface NativeProps extends ViewProps {
   handle?: Double;

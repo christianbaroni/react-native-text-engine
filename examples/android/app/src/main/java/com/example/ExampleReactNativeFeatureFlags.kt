@@ -17,7 +17,7 @@ private class ExampleReactNativeFeatureFlags : ReactNativeNewArchitectureFeature
 }
 
 internal object ExampleReactNativeFeatureFlagsLoader {
-  private const val METHOD_PREFIX = "loadWithFeatureFlags\$ReactAndroid_"
+  private const val METHOD_PREFIX = "loadWithFeatureFlags\$"
 
   private val loadMethod: Method by lazy {
     DefaultNewArchitectureEntryPoint::class.java.declaredMethods.firstOrNull { method ->

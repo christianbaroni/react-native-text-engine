@@ -1,8 +1,10 @@
 package com.rntextengine
 
 import android.app.Application
+import android.content.res.Configuration
 import android.text.Layout
 import android.text.TextPaint
+import android.util.DisplayMetrics
 import android.view.View
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -14,11 +16,13 @@ import com.facebook.react.bridge.JavaScriptContextHolder
 import com.facebook.react.bridge.JavaScriptModule
 import com.facebook.react.bridge.NativeModule
 import com.facebook.react.bridge.ReactApplicationContext
+import com.facebook.react.bridge.RuntimeExecutor
 import com.facebook.react.bridge.UIManager
 import com.facebook.react.soloader.OpenSourceMergedSoMapping
 import com.facebook.react.turbomodule.core.interfaces.CallInvokerHolder
 import com.facebook.react.uimanager.DisplayMetricsHolder
 import com.facebook.react.uimanager.PixelUtil
+import com.facebook.yoga.YogaMeasureMode
 import com.facebook.soloader.SoLoader
 import kotlin.math.abs
 import kotlin.math.ceil
@@ -82,6 +86,8 @@ private class InstrumentedTestReactApplicationContext(application: Application) 
     override fun isBridgeless(): Boolean = false
 
     override fun getJavaScriptContextHolder(): JavaScriptContextHolder? = null
+
+    override fun getRuntimeExecutor(): RuntimeExecutor? = null
 
     override fun getJSCallInvokerHolder(): CallInvokerHolder? = null
 
@@ -317,6 +323,56 @@ class RNTextEngineBindingsInstrumentedTest {
         RNTextEngineBindings.release(handle)
 
         assertTrue("width=$width", width > 0.0)
+    }
+
+    @Test
+    @Suppress("DEPRECATION")
+    fun nestedPaperTextUsesConfigurationFontScaleWhenScreenMetricsAreUnscaled() {
+        val originalConfiguration = Configuration(application.resources.configuration)
+        val configuration = Configuration(originalConfiguration).apply { fontScale = 1.5f }
+        val originalMetrics = DisplayMetrics().apply { setTo(DisplayMetricsHolder.getScreenDisplayMetrics()) }
+        val unscaledMetrics = DisplayMetrics().apply {
+            setTo(originalMetrics)
+            scaledDensity = density
+        }
+        val parent = RNTextEngineTextShadowNode()
+        val child = RNTextEngineTextShadowNode()
+        try {
+            application.resources.updateConfiguration(configuration, application.resources.displayMetrics)
+            DisplayMetricsHolder.setScreenDisplayMetrics(unscaledMetrics)
+            assertEquals(1.5, RNTextEngineBindings.currentFontScaleMultiplier(), 0.0)
+            parent.measureRnteHasAllowFontScaling = true
+            parent.measureFontSize = 16.0
+            parent.measureLineHeight = 24.0
+            parent.measureRnteHasLetterSpacing = true
+            parent.measureLetterSpacing = 2.0
+            parent.measureText = "Parent "
+            child.measureRnteIsVirtualTextSpan = true
+            child.measureText = "child"
+            parent.addChildAt(child, 0)
+
+            for (allowFontScaling in booleanArrayOf(true, false)) {
+                parent.measureAllowFontScaling = allowFontScaling
+                val handle = resolvePreparedHandle(parent)
+                val prepared = requireNotNull(RNTextEngineBindings.resolvePreparedTextViewData(handle))
+                val measurement = measurePreparedAutoSizeText(handle, 0f, YogaMeasureMode.UNDEFINED, 0f, YogaMeasureMode.UNDEFINED, 0, null, false)
+                val multiplier = if (allowFontScaling) 1.5f else 1f
+
+                assertEquals("Parent child", prepared.text.toString())
+                assertEquals(PixelUtil.toPixelFromDIP(16f * multiplier), prepared.textPaint.textSize, 0.001f)
+                assertEquals(PixelUtil.toPixelFromDIP(24f * multiplier), measurement.heightPx, 0.001f)
+                assertEquals(
+                    PixelUtil.toPixelFromDIP(2f * multiplier),
+                    prepared.textPaint.letterSpacing * prepared.textPaint.textSize,
+                    0.001f,
+                )
+            }
+        } finally {
+            parent.removeAndDisposeAllChildren()
+            parent.dispose()
+            application.resources.updateConfiguration(originalConfiguration, application.resources.displayMetrics)
+            DisplayMetricsHolder.setScreenDisplayMetrics(originalMetrics)
+        }
     }
 
     @Test
@@ -708,20 +764,34 @@ class RNTextEngineBindingsInstrumentedTest {
             )
 
         try {
-            val constrainedWidthDp = 180.0
-            val measured = RNTextEngineBindings.layout(handle, constrainedWidthDp, 0, null, true)
-            val hostWidthPx = ceil(PixelUtil.toPixelFromDIP(measured[0].toFloat()).toDouble()).toInt()
-            val hostHeightPx = ceil(PixelUtil.toPixelFromDIP(measured[1].toFloat()).toDouble()).toInt()
             val view = RNTextEnginePreparedTextViewManager.RNTextEnginePreparedTextView(application)
+            for (widthDp in listOf(180.0, 224.0, 280.0)) {
+                val measured = RNTextEngineBindings.layout(handle, widthDp, 0, null, true)
+                val hostWidthPx = ceil(PixelUtil.toPixelFromDIP(measured[0].toFloat()).toDouble()).toInt()
+                val hostHeightPx = ceil(PixelUtil.toPixelFromDIP(measured[1].toFloat()).toDouble()).toInt()
+                val actualWidthDp = hostWidthPx / application.resources.displayMetrics.density.toDouble()
+                val expectedLines = unpackLines(RNTextEngineBindings.layoutLines(handle, actualWidthDp, 0, null, true))
 
-            InstrumentationRegistry.getInstrumentation().runOnMainSync {
-                view.anchorToCapHeight = true
-                view.setPreparedHandle(handle)
-                measureAndLayout(view, width = hostWidthPx, height = hostHeightPx)
+                for (selectable in listOf(false, true)) {
+                    InstrumentationRegistry.getInstrumentation().runOnMainSync {
+                        view.anchorToCapHeight = true
+                        view.setPreparedHandle(handle)
+                        view.setSelectable(selectable)
+                        measureAndLayout(view, width = hostWidthPx, height = hostHeightPx)
+                    }
+
+                    val layout = requireNotNull(
+                        if (selectable) view.textContentView.layout else view.displayView.resolveLayout(hostWidthPx)
+                    )
+                    val context = "width=$widthDp selectable=$selectable"
+                    assertEquals(context, expectedLines.size, layout.lineCount)
+                    expectedLines.forEachIndexed { index, line ->
+                        val expected = text.substring(line.start.toInt(), line.end.toInt()).trimEnd()
+                        val actual = text.substring(layout.getLineStart(index), layout.getLineEnd(index)).trimEnd()
+                        assertEquals("$context line=$index", expected, actual)
+                    }
+                }
             }
-
-            val mountedLayout = requireNotNull(view.displayView.resolveLayout(hostWidthPx))
-            assertEquals("measured=${measured.contentToString()}", measured[2].toInt(), mountedLayout.lineCount)
         } finally {
             RNTextEngineBindings.release(handle)
         }

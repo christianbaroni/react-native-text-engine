@@ -11,6 +11,7 @@ import com.facebook.react.bridge.JavaScriptContextHolder
 import com.facebook.react.bridge.JavaScriptModule
 import com.facebook.react.bridge.NativeModule
 import com.facebook.react.bridge.ReactApplicationContext
+import com.facebook.react.bridge.RuntimeExecutor
 import com.facebook.react.bridge.UIManager
 import com.facebook.react.turbomodule.core.interfaces.CallInvokerHolder
 import com.facebook.react.uimanager.DisplayMetricsHolder
@@ -60,6 +61,8 @@ internal class BenchmarkReactApplicationContext(application: Application) : Reac
     override fun isBridgeless(): Boolean = false
 
     override fun getJavaScriptContextHolder(): JavaScriptContextHolder? = null
+
+    override fun getRuntimeExecutor(): RuntimeExecutor? = null
 
     override fun getJSCallInvokerHolder(): CallInvokerHolder? = null
 

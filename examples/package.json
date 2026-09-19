@@ -12,18 +12,18 @@
     "test": "jest"
   },
   "dependencies": {
-    "@callstack/liquid-glass": "^0.7.1",
+    "@callstack/liquid-glass": "^0.8.2",
     "@storesjs/stores": "0.8.7",
     "react": "19.2.3",
-    "react-native": "0.84.1",
+    "react-native": "0.87.1",
     "react-native-ease": "^0.7.2",
-    "react-native-gesture-handler": "2.31.2",
-    "react-native-mmkv": "^4.3.0",
+    "react-native-gesture-handler": "2.33.0",
+    "react-native-mmkv": "^4.3.2",
     "react-native-nitro-modules": "^0.35.6",
-    "react-native-reanimated": "4.3.1",
-    "react-native-safe-area-context": "5.7.0",
+    "react-native-reanimated": "4.6.0",
+    "react-native-safe-area-context": "5.10.0",
     "react-native-text-engine": "portal:..",
-    "react-native-worklets": "0.8.3"
+    "react-native-worklets": "0.12.2"
   },
   "reanimated": {
     "staticFeatureFlags": {
@@ -38,12 +38,13 @@
     "@babel/core": "^7.25.2",
     "@babel/preset-env": "^7.25.3",
     "@babel/runtime": "^7.25.0",
-    "@react-native-community/cli": "20.1.0",
-    "@react-native-community/cli-platform-android": "20.1.0",
-    "@react-native-community/cli-platform-ios": "20.1.0",
-    "@react-native/babel-preset": "0.84.1",
-    "@react-native/metro-config": "0.84.1",
-    "@react-native/typescript-config": "0.84.1",
+    "@react-native-community/cli": "20.2.0",
+    "@react-native-community/cli-platform-android": "20.2.0",
+    "@react-native-community/cli-platform-ios": "20.2.0",
+    "@react-native/babel-preset": "0.87.1",
+    "@react-native/jest-preset": "0.87.1",
+    "@react-native/metro-config": "0.87.1",
+    "@react-native/typescript-config": "0.87.1",
     "@types/jest": "^29.5.13",
     "@types/react": "^19.2.0",
     "@types/react-test-renderer": "^19.1.0",
@@ -59,12 +60,10 @@
     "typescript": "^5.8.3"
   },
   "engines": {
-    "node": ">=22.11.0"
+    "node": "^22.13.0 || ^24.3.0 || >=26.0.0"
   },
   "resolutions": {
-    "metro@npm:0.83.5": "patch:metro@npm%3A0.83.5#~/.yarn/patches/metro-npm-0.83.5-4e3c362296.patch",
-    "metro@npm:^0.83.3": "patch:metro@npm%3A0.83.5#~/.yarn/patches/metro-npm-0.83.5-4e3c362296.patch",
-    "metro-runtime@npm:^0.83.3": "patch:metro-runtime@npm%3A0.83.5#~/.yarn/patches/metro-runtime-npm-0.83.5-2eab6444ae.patch",
-    "metro-runtime@npm:0.83.5": "patch:metro-runtime@npm%3A0.83.5#~/.yarn/patches/metro-runtime-npm-0.83.5-2eab6444ae.patch"
+    "metro": "patch:metro@npm%3A0.87.1#./patches/metro-worklets.patch",
+    "metro-runtime": "patch:metro-runtime@npm%3A0.87.1#./patches/metro-runtime-worklets.patch"
   }
 }

@@ -1,5 +1,5 @@
 import React, { ComponentProps, memo, useCallback, useMemo } from 'react';
-import { type Insets, type NativeScrollEvent, StyleSheet, View, type ViewStyle } from 'react-native';
+import { type Insets, type NativeScrollEvent, type StyleProp, StyleSheet, View, type ViewStyle } from 'react-native';
 import { useStableValue } from '@storesjs/stores';
 import Animated, {
   type AnimatedRef,
@@ -668,7 +668,7 @@ function resolveScrollPadding({
   contentContainerStyle: AnimatedScrollViewProps['contentContainerStyle'] | undefined;
   isHorizontal: boolean;
 }): ScrollPadding {
-  const flattened: unknown = StyleSheet.flatten(contentContainerStyle);
+  const flattened: unknown = StyleSheet.flatten<StyleProp<object>>(contentContainerStyle);
   if (!flattened || typeof flattened !== 'object') {
     return ZERO_SCROLL_PADDING;
   }
@@ -1188,9 +1188,9 @@ export const AnimatedList = typedMemo(function AnimatedList<T>({
   const lastHandledTotalSize = useSharedValue<number>(initialFrame.rowLayout.totalSize);
   const initialScrollPending = useSharedValue<boolean>(initialScrollToEnd === true && initialFrame.rowLayout.rowDataCount === 0);
 
-  const rowGlobalIndices = useDerivedValue(() => listFrame.value.rowGlobalIndices, [listFrame]);
-  const rowLayout = useDerivedValue(() => listFrame.value.rowLayout, [listFrame]);
-  const renderData = useDerivedValue(() => listFrame.value.data, [listFrame]);
+  const rowGlobalIndices = useDerivedValue(() => listFrame.value.rowGlobalIndices);
+  const rowLayout = useDerivedValue(() => listFrame.value.rowLayout);
+  const renderData = useDerivedValue(() => listFrame.value.data);
 
   const scrollViewRef = useAnimatedRef<Animated.ScrollView>();
   const fenwickTree = useStableValue<WorkletContextValue<FenwickTree | undefined>>(() => ({
@@ -1207,33 +1207,19 @@ export const AnimatedList = typedMemo(function AnimatedList<T>({
       }),
     [maintainScrollAtEdge, maintainVisibleContentIndices, maintainVisibleContentPosition]
   );
-  const maintainConfigValue = useDerivedValue(() => maintainConfig, [maintainConfig]);
-  const runtimeConfig = useDerivedValue<AnimatedListRuntimeConfig>(
-    () => ({
-      bufferAbove: rowWindowConfig.bufferAbove,
-      bufferBelow: rowWindowConfig.bufferBelow,
-      estimatedRowSize,
-      gap,
-      isInverted,
-      listSize: mainAxisSize,
-      numColumns: resolvedNumColumns,
-      rowCount,
-      scrollPaddingEnd,
-      scrollPaddingStart,
-    }),
-    [
-      estimatedRowSize,
-      gap,
-      isInverted,
-      mainAxisSize,
-      resolvedNumColumns,
-      rowCount,
-      rowWindowConfig.bufferAbove,
-      rowWindowConfig.bufferBelow,
-      scrollPaddingEnd,
-      scrollPaddingStart,
-    ]
-  );
+  const maintainConfigValue = useDerivedValue(() => maintainConfig);
+  const runtimeConfig = useDerivedValue<AnimatedListRuntimeConfig>(() => ({
+    bufferAbove: rowWindowConfig.bufferAbove,
+    bufferBelow: rowWindowConfig.bufferBelow,
+    estimatedRowSize,
+    gap,
+    isInverted,
+    listSize: mainAxisSize,
+    numColumns: resolvedNumColumns,
+    rowCount,
+    scrollPaddingEnd,
+    scrollPaddingStart,
+  }));
 
   const handleScroll = useAnimatedScrollHandler(event => {
     const offset = isHorizontal ? event.contentOffset.x : event.contentOffset.y;
@@ -1746,8 +1732,7 @@ export const AnimatedList = typedMemo(function AnimatedList<T>({
       if (!didRuntimeConfigChange(currentConfig, previousConfig)) return;
 
       handleMetricsChange();
-    },
-    []
+    }
   );
 
   useAnimatedReaction(
@@ -1787,8 +1772,7 @@ export const AnimatedList = typedMemo(function AnimatedList<T>({
         prevScrollOffset,
         tree,
       });
-    },
-    []
+    }
   );
 
   useAnimatedReaction(
@@ -1799,8 +1783,7 @@ export const AnimatedList = typedMemo(function AnimatedList<T>({
       }
 
       handleMetricsChange();
-    },
-    []
+    }
   );
 
   useAnimatedReaction(
@@ -1811,8 +1794,7 @@ export const AnimatedList = typedMemo(function AnimatedList<T>({
       if (previousVersion === null && currentVersion === 0) return;
 
       handleMetricsChange();
-    },
-    []
+    }
   );
 
   const contentSizeStyle = useAnimatedStyle(() => {
@@ -1826,7 +1808,7 @@ export const AnimatedList = typedMemo(function AnimatedList<T>({
       height: mainSize,
       width: crossAxisSize,
     };
-  }, [contentSize, crossAxisSize, estimatedRowSize, gap, isHorizontal]);
+  });
 
   const handleContentSizeChange = useCallback(
     (width: number, height: number): void => {
@@ -1957,7 +1939,7 @@ function RecycledRow<T>({
     const mainSize: number = rowSize.value;
     const transform: ViewStyle['transform'] = isHorizontal ? [{ translateX: translateMain.value }] : [{ translateY: translateMain.value }];
     return isHorizontal ? { opacity, transform, width: mainSize } : { height: mainSize, opacity, transform };
-  }, [isHorizontal]);
+  });
 
   const rowBaseStyle: ViewStyle = isHorizontal
     ? { height: crossAxisSize, position: 'absolute' }

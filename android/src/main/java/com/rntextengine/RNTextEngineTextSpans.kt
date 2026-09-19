@@ -20,6 +20,9 @@ import kotlin.math.max
 
 internal const val RN_TEXT_ENGINE_CAP_HEIGHT_EPSILON_PX = 0.01f
 
+/** Enables fractional, unhinted glyph metrics for measurement and rendering. */
+internal const val RN_TEXT_ENGINE_SHAPING_FLAGS = TextPaint.SUBPIXEL_TEXT_FLAG or TextPaint.LINEAR_TEXT_FLAG
+
 private val capHeightPathThreadLocal = ThreadLocal<Path>()
 private val capHeightBoundsThreadLocal = ThreadLocal<RectF>()
 

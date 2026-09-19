@@ -5,7 +5,6 @@ package com.rntextengine
 import com.facebook.react.bridge.ReadableArray
 import com.facebook.react.common.annotations.internal.LegacyArchitecture
 import com.facebook.react.common.annotations.internal.LegacyArchitectureLogLevel
-import com.facebook.react.uimanager.DisplayMetricsHolder
 import com.facebook.react.uimanager.LayoutShadowNode
 import com.facebook.react.uimanager.ReactShadowNodeImpl
 import com.facebook.react.uimanager.UIViewOperationQueue
@@ -358,7 +357,7 @@ internal class RNTextEngineTextShadowNode : LayoutShadowNode(), YogaMeasureFunct
 
         if (!hasValidatedNestedTextChildren()) {
             if (lastEmittedNestedHash != null) {
-                uiViewOperationQueue.enqueueUpdateExtraData(reactTag, RNTextEngineResolvedTextPayload.EMPTY)
+                uiViewOperationQueue.enqueueUpdateExtraData(getReactTag(), RNTextEngineResolvedTextPayload.EMPTY)
                 lastEmittedNestedHash = null
             }
             return
@@ -367,7 +366,7 @@ internal class RNTextEngineTextShadowNode : LayoutShadowNode(), YogaMeasureFunct
         val payload = resolvePayload()
         if (!payload.hasNested) {
             if (lastEmittedNestedHash != null) {
-                uiViewOperationQueue.enqueueUpdateExtraData(reactTag, RNTextEngineResolvedTextPayload.EMPTY)
+                uiViewOperationQueue.enqueueUpdateExtraData(getReactTag(), RNTextEngineResolvedTextPayload.EMPTY)
                 lastEmittedNestedHash = null
             }
             return
@@ -375,7 +374,7 @@ internal class RNTextEngineTextShadowNode : LayoutShadowNode(), YogaMeasureFunct
 
         if (lastEmittedNestedHash == payload.hash) return
         lastEmittedNestedHash = payload.hash
-        uiViewOperationQueue.enqueueUpdateExtraData(reactTag, payload)
+        uiViewOperationQueue.enqueueUpdateExtraData(getReactTag(), payload)
     }
 
     override fun measure(
@@ -540,7 +539,7 @@ internal class RNTextEngineTextShadowNode : LayoutShadowNode(), YogaMeasureFunct
 
     private fun hasValidatedNestedTextChildren(): Boolean {
         return validateTextViewChildren(
-            children = List(childCount) { index -> getChildAt(index) },
+            children = List(getChildCount()) { index -> getChildAt(index) },
             isTextViewChild = { child -> child is RNTextEngineTextShadowNode },
             describeChild = { child -> child?.javaClass?.name ?: "null" },
         )
@@ -646,7 +645,7 @@ internal class RNTextEngineTextShadowNode : LayoutShadowNode(), YogaMeasureFunct
         emitStyledText(localText, nodeStyle, localRuns, textBuilder, segments)
 
         var hasNested = false
-        val children = List(node.childCount) { index -> node.getChildAt(index) }
+        val children = List(node.getChildCount()) { index -> node.getChildAt(index) }
         hasNested =
             validateTextViewChildren(
                 children = children,
@@ -831,14 +830,8 @@ internal class RNTextEngineTextShadowNode : LayoutShadowNode(), YogaMeasureFunct
 
     private fun resolvedLineHeight(): Double = if (lineHeight > 0) lineHeight else Double.NaN
     private fun resolvedFontSize(): Double = if (fontSize > 0) fontSize else 14.0
-    private fun fontScaleMultiplier(): Double {
-        val metrics = DisplayMetricsHolder.getWindowDisplayMetrics()
-        if (metrics.density == 0f) return 1.0
-        return (metrics.scaledDensity / metrics.density).toDouble()
-    }
-
     private fun scaleTypographyValue(value: Double, allowFontScaling: Boolean): Double {
-        return if (allowFontScaling) value * fontScaleMultiplier() else value
+        return if (allowFontScaling) value * RNTextEngineBindings.currentFontScaleMultiplier() else value
     }
 
     private fun ResolvedStyle.normalizedForPreparedText(): ResolvedStyle {
@@ -851,7 +844,7 @@ internal class RNTextEngineTextShadowNode : LayoutShadowNode(), YogaMeasureFunct
         )
     }
 
-    private fun isVirtualNestedTextNode(): Boolean = parent is RNTextEngineTextShadowNode
+    private fun isVirtualNestedTextNode(): Boolean = getParent() is RNTextEngineTextShadowNode
 
     private fun markMeasureDirty() {
         invalidateNode(affectsMeasurement = true)
@@ -869,7 +862,7 @@ internal class RNTextEngineTextShadowNode : LayoutShadowNode(), YogaMeasureFunct
         markUpdated()
 
         if (isVirtualNestedTextNode()) {
-            val parentNode = parent
+            val parentNode = getParent()
             if (parentNode is RNTextEngineTextShadowNode) {
                 parentNode.invalidateNode(affectsMeasurement)
             }

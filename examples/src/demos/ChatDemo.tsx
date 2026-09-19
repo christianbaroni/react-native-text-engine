@@ -438,7 +438,7 @@ function useBubbleStyle(
       opacity: 1,
       width: bubbleWidth,
     };
-  }, [listWidth]);
+  });
 }
 
 function Metric({ label, value }: { label: string; value: SharedValue<string> | string }) {

@@ -17,6 +17,7 @@ import com.facebook.react.bridge.JavaScriptContextHolder
 import com.facebook.react.bridge.JavaScriptModule
 import com.facebook.react.bridge.NativeModule
 import com.facebook.react.bridge.ReactApplicationContext
+import com.facebook.react.bridge.RuntimeExecutor
 import com.facebook.react.bridge.UIManager
 import com.facebook.react.uimanager.DisplayMetricsHolder
 import com.facebook.react.uimanager.PixelUtil
@@ -80,6 +81,8 @@ private class TestReactApplicationContext(application: Application) : ReactAppli
 
     override fun getJavaScriptContextHolder(): JavaScriptContextHolder? = null
 
+    override fun getRuntimeExecutor(): RuntimeExecutor? = null
+
     override fun getJSCallInvokerHolder(): CallInvokerHolder? = null
 
     override fun getFabricUIManager(): UIManager? = null
@@ -97,7 +100,7 @@ class RNTextEngineBindingsTest {
     @Before
     fun setUp() {
         application = ApplicationProvider.getApplicationContext()
-        DisplayMetricsHolder.initDisplayMetricsIfNotInitialized(application)
+        DisplayMetricsHolder.initDisplayMetrics(application)
         RNTextEngineBindings.initialize(TestReactApplicationContext(application))
         RNTextEngineBindings.cleanup()
     }
@@ -222,6 +225,7 @@ class RNTextEngineBindingsTest {
     }
 
     @Test
+    @Config(qualifiers = "xhdpi")
     fun intrinsicWidthMatchesReactTextMeasurement() {
         val handle =
             RNTextEngineBindings.prepare(

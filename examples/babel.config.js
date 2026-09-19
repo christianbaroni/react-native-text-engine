@@ -6,7 +6,10 @@ module.exports = {
       'react-native-worklets/plugin',
       {
         bundleMode: true,
-        workletizableModules: ['react-native-text-engine/worklets', 'src/worklet-list'],
+        importForwarding: {
+          moduleNames: ['react-native-text-engine/worklets'],
+          relativePaths: ['src/worklet-list'],
+        },
       },
     ],
   ],

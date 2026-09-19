@@ -1,0 +1,17 @@
+diff --git a/src/node-haste/DependencyGraph.js b/src/node-haste/DependencyGraph.js
+--- a/src/node-haste/DependencyGraph.js
++++ b/src/node-haste/DependencyGraph.js
+@@ -137,6 +137,13 @@
+     return (0, _nullthrows.default)(this._fileSystem).getAllFiles();
+   }
+   async getOrComputeSha1(mixedPath) {
++    if (mixedPath.includes("react-native-worklets/.worklets/")) {
++      const content = await require("node:fs/promises").readFile(mixedPath);
++      return {
++        content,
++        sha1: require("node:crypto").createHash("sha1").update(content).digest("hex"),
++      };
++    }
+     const result = await this._fileSystem.getOrComputeSha1(mixedPath);
+     if (!result || !result.sha1) {
+       throw new Error(`Failed to get the SHA-1 for: ${mixedPath}.

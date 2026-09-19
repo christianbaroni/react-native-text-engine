@@ -15,7 +15,6 @@ import android.text.TextUtils
 import android.util.LongSparseArray
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.common.assets.ReactFontManager
-import com.facebook.react.uimanager.DisplayMetricsHolder
 import com.facebook.react.uimanager.PixelUtil
 import com.facebook.react.views.text.ReactTypefaceUtils.parseFontWeight
 import java.lang.ref.WeakReference
@@ -1848,7 +1847,7 @@ internal object RNTextEngineBindings {
         tabularNumbers: Boolean,
         textBreakStrategy: String?,
     ): ResolvedTextStyle {
-        val textPaint = TextPaint(TextPaint.ANTI_ALIAS_FLAG)
+        val textPaint = TextPaint(TextPaint.ANTI_ALIAS_FLAG or RN_TEXT_ENGINE_SHAPING_FLAGS)
         val effectiveFontSize = scale(fontSize, allowFontScaling, defaultValue = 14.0)
         textPaint.textSize = effectiveFontSize
 
@@ -3030,7 +3029,7 @@ internal object RNTextEngineBindings {
     }
 
     private fun currentDensity(): Double {
-        return DisplayMetricsHolder.getWindowDisplayMetrics().density.toDouble()
+        return PixelUtil.getDisplayMetricDensity().toDouble()
     }
 
     private fun Double.toDp(): Double {

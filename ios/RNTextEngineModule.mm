@@ -2,10 +2,14 @@
 
 #import "RNTextEngineBindings.h"
 
+#ifndef RCT_NEW_ARCH_ENABLED
 #import <React/RCTBridge+Private.h>
+#endif
 #if RNTEXTENGINE_HAS_CODEGEN
 #import <ReactCommon/RCTTurboModule.h>
 #endif
+
+#include <atomic>
 
 using namespace facebook;
 
@@ -26,7 +30,9 @@ bool RNTextEngineInstallBindings(jsi::Runtime &runtime) {
 
 }
 
-@implementation RNTextEngineModule
+@implementation RNTextEngineModule {
+  std::atomic<bool> _installed;
+}
 
 RCT_EXPORT_MODULE(RNTextEngine)
 
@@ -35,10 +41,14 @@ RCT_EXPORT_MODULE(RNTextEngine)
 }
 
 - (void)invalidate {
+  _installed = false;
   rntextengine::cleanup();
 }
 
 RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(install) {
+#ifdef RCT_NEW_ARCH_ENABLED
+  return @(_installed.load());
+#else
   RCTBridge *bridge = [RCTBridge currentBridge];
   RCTCxxBridge *cxxBridge = (RCTCxxBridge *)bridge;
   if (cxxBridge == nil) return @false;
@@ -46,7 +56,9 @@ RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(install) {
   auto runtime = (facebook::jsi::Runtime *)cxxBridge.runtime;
   if (runtime == nil) return @false;
 
-  return @(RNTextEngineInstallBindings(*runtime));
+  _installed = RNTextEngineInstallBindings(*runtime);
+  return @(_installed.load());
+#endif
 }
 
 #if RNTEXTENGINE_HAS_CODEGEN
@@ -60,12 +72,12 @@ RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(install) {
                           callInvoker:(const std::shared_ptr<facebook::react::CallInvoker> &)callInvoker
 {
   (void)callInvoker;
-  RNTextEngineInstallBindings(runtime);
+  _installed = RNTextEngineInstallBindings(runtime);
 }
 
 - (void)installJSIBindingsWithRuntime:(facebook::jsi::Runtime &)runtime
 {
-  RNTextEngineInstallBindings(runtime);
+  _installed = RNTextEngineInstallBindings(runtime);
 }
 #endif
 

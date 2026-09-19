@@ -1,4 +1,5 @@
 #import <React/RCTBridgeModule.h>
+#import <React/RCTInvalidating.h>
 
 #if __has_include(<RNTextEngineSpec/RNTextEngineSpec.h>)
 #import <RNTextEngineSpec/RNTextEngineSpec.h>
@@ -13,8 +14,8 @@
 #endif
 
 #if RNTEXTENGINE_HAS_CODEGEN
-@interface RNTextEngineModule : NSObject <NativeRNTextEngineSpec, RCTTurboModuleWithJSIBindings>
+@interface RNTextEngineModule : NSObject <NativeRNTextEngineSpec, RCTTurboModuleWithJSIBindings, RCTInvalidating>
 #else
-@interface RNTextEngineModule : NSObject <RCTBridgeModule>
+@interface RNTextEngineModule : NSObject <RCTBridgeModule, RCTInvalidating>
 #endif
 @end
