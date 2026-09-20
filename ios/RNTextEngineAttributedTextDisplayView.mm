@@ -3,14 +3,12 @@
 static CGFloat RNTextEngineResolveHorizontalDrawOrigin(
     NSLayoutManager *layoutManager,
     NSTextContainer *textContainer,
+    NSRange glyphRange,
     NSTextAlignment textAlignment,
     CGFloat width)
 {
-  NSRange glyphRange = [layoutManager glyphRangeForTextContainer:textContainer];
-  if (glyphRange.length == 0) return 0;
-
-  CGRect glyphBounds = [layoutManager boundingRectForGlyphRange:glyphRange inTextContainer:textContainer];
   if (textAlignment == NSTextAlignmentCenter) return 0;
+  CGRect glyphBounds = [layoutManager boundingRectForGlyphRange:glyphRange inTextContainer:textContainer];
 
   CGFloat leftInset = MAX(0, -CGRectGetMinX(glyphBounds));
   CGFloat rightOverflow = MAX(0, CGRectGetMaxX(glyphBounds) - width);
@@ -171,7 +169,7 @@ void RNTextEngineApplyInteractionTextViewFrame(
   CGFloat contentWidth = MAX(CGRectGetWidth(self.bounds) - _contentInsets.left - _contentInsets.right, 0);
   CGFloat drawOriginX =
       _contentInsets.left +
-      RNTextEngineResolveHorizontalDrawOrigin(_layoutManager, _textContainer, _textAlignment, contentWidth);
+      RNTextEngineResolveHorizontalDrawOrigin(_layoutManager, _textContainer, glyphRange, _textAlignment, contentWidth);
   CGPoint drawPoint = CGPointMake(drawOriginX, _contentInsets.top);
   [_layoutManager drawBackgroundForGlyphRange:glyphRange atPoint:drawPoint];
   [_layoutManager drawGlyphsForGlyphRange:glyphRange atPoint:drawPoint];
