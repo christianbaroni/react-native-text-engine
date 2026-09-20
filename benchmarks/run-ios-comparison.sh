@@ -6,7 +6,7 @@ NODE_BINARY="${NODE_BINARY:-$(command -v node)}"
 DESTINATION_ID="${IOS_DESTINATION_ID:-$(xcrun simctl list devices booted available | awk -F '[()]' '/iPhone/ { print $2; exit }')}"
 
 if [[ -z "${DESTINATION_ID}" ]]; then
-  echo "Boot an iOS simulator or set IOS_DESTINATION_ID to a simulator UDID." >&2
+  echo "Boot an iOS simulator or set IOS_DESTINATION_ID to a simulator or device UDID." >&2
   exit 1
 fi
 
@@ -21,7 +21,6 @@ XCODE_ARGS=(
   -workspace examples/ios/example.xcworkspace
   -scheme example
   -configuration Release
-  -sdk iphonesimulator
   -destination "id=${DESTINATION_ID}"
   -derivedDataPath benchmarks/.results/derived-data
   -parallel-testing-enabled NO

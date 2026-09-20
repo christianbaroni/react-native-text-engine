@@ -15,7 +15,7 @@ const workloads = {
   cold_rich_inline_layout: 384,
 };
 
-function runLog(run: number, platform: Platform, scale = 1): string {
+function runLog(run: number, platform: Platform, scale = 1, sdk = 'iphonesimulator26.2'): string {
   const meta = {
     run,
     pid: 1000 + run,
@@ -28,6 +28,7 @@ function runLog(run: number, platform: Platform, scale = 1): string {
     samples: 9,
     warmups: platform === 'ios' ? 2 : 10,
     includesAutoreleasePoolDrain: true,
+    sdk,
     rnLayoutCacheEnabled: true,
     apiLevel: 34,
     abi: 'arm64-v8a',
@@ -48,7 +49,7 @@ function runLog(run: number, platform: Platform, scale = 1): string {
   ].join('\n');
 }
 
-it('reports the median of run medians, dispersion, ratio, and unfiltered samples', () => {
+it.each(['iphonesimulator26.2', 'iphoneos26.2'])('reports %s measurements with dispersion and unfiltered samples', sdk => {
   const metadata = {
     startedAt: '2026-09-19T12:00:00Z',
     reactNativeVersion: '0.84.1',
@@ -61,12 +62,13 @@ it('reports the median of run medians, dispersion, ratio, and unfiltered samples
     architecture: 'arm64',
     node: 'v22.21.1',
     xcode: 'Xcode 26.3',
-    sdk: '26.2',
   };
   const report = renderComparison(
     metadata,
-    [1, 4, 10].map((scale, index) => runLog(index + 1, 'ios', scale))
+    [1, 4, 10].map((scale, index) => runLog(index + 1, 'ios', scale, sdk))
   );
+  expect(report).toContain(`${sdk.startsWith('iphonesimulator') ? 'Test device simulator' : 'Test device'}, iOS 26.2.`);
+  expect(report).toContain(`SDK ${sdk};`);
   expect(report).toContain('| Chat list layout | 512 | 40.000 ± 30.000 | 20.000 ± 15.000 | 0.500× |');
   expect(report).toContain(
     '| Chat list layout | RN Text | 1 | 2.000000, 18.000000, 6.000000, 14.000000, 10.000000, 16.000000, 4.000000, 8.000000, 200.000000 |'

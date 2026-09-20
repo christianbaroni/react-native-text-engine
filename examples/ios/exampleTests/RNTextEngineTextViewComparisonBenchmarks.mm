@@ -30,6 +30,7 @@
 #include <limits>
 #include <optional>
 #include <string>
+#include <sys/utsname.h>
 #include <vector>
 
 using namespace facebook;
@@ -689,9 +690,17 @@ static std::shared_ptr<RootShadowNode> BuildTextViewTree(
 {
   UIDevice *device = UIDevice.currentDevice;
   NSDictionary *environment = NSProcessInfo.processInfo.environment;
+#if TARGET_OS_SIMULATOR
+  NSString *deviceName = device.name;
+#else
+  struct utsname systemInfo = {};
+  XCTAssertEqual(uname(&systemInfo), 0);
+  NSString *deviceName = [NSString stringWithUTF8String:systemInfo.machine];
+#endif
   NSDictionary *payload = @{
-    @"deviceName" : device.name ?: @"unknown",
+    @"deviceName" : deviceName ?: @"unknown",
     @"osVersion" : device.systemVersion ?: @"unknown",
+    @"sdk" : [[NSBundle bundleForClass:self.class] objectForInfoDictionaryKey:@"DTSDKName"] ?: @"unknown",
 #ifdef DEBUG
     @"configuration" : @"Debug",
 #else

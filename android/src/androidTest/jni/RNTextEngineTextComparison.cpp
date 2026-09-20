@@ -437,8 +437,11 @@ void CheckLines(const TextLayoutManager &manager, const AttributedStringBox &inp
         "Line break mismatch at width " + std::to_string(width) + ": " + text);
   }
   if (width == 10000) {
-    Require(lines.size() == 1 && std::abs(lines[0].frame.size.width - values[6]) <= 1.0 / density,
-        "Single-line glyph width mismatch: " + text);
+    Require(lines.size() == 1, "Unconstrained text must fit on one line: " + text);
+    Require(std::abs(lines[0].frame.size.width - values[6]) <= 1.0 / density,
+        "Single-line glyph width mismatch: " + text + "; RN=" +
+            std::to_string(lines[0].frame.size.width) +
+            "; TextView=" + std::to_string(values[6]) + "; density=" + std::to_string(density));
   }
   auto truncated = layoutLines(bindings, static_cast<jlong>(handle), width, 2, jni::make_jstring("tail").get(), false);
   double header[4];
@@ -488,7 +491,6 @@ std::string RunComparison(const jni::global_ref<jobject> &fabricManager, float d
     text << richText << " Case " << std::setw(3) << std::setfill('0') << index << ".";
     richTexts.push_back(text.str());
   }
-  // Android weights 400/700 and pixel-aligned sizes match both native implementations.
   const TextStyleFixture chatStyle{.fontSize = 16, .letterSpacing = 0.1, .lineHeight = 24, .fontWeight = "700"};
   const TextStyleFixture richStyle{.fontSize = 16, .letterSpacing = 0.05, .lineHeight = 32};
   const auto richRuns = RichRuns(richText);
@@ -640,7 +642,7 @@ Java_com_rntextengine_RNTextEngineTextComparisonBenchmark_runNativeComparison(
   try {
     return env->NewStringUTF(RunComparison(jni::make_global(manager), density, run).c_str());
   } catch (const std::exception &error) {
-    env->ThrowNew(env->FindClass("java/lang/AssertionError"), error.what());
+    env->ThrowNew(env->FindClass("java/lang/RuntimeException"), error.what());
     return nullptr;
   }
 }

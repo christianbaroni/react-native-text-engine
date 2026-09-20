@@ -50,6 +50,7 @@ export function parseRun(log, run, platform = 'ios') {
   assert.equal(meta.samples, 9);
   if (platform === 'ios') {
     assert.equal(meta.includesAutoreleasePoolDrain, true);
+    assert.match(meta.sdk, /^(iphoneos|iphonesimulator)\d+(\.\d+)*$/, 'Missing iOS build SDK');
   } else {
     assert.equal(meta.platform, 'android');
     assert.equal(meta.rnLayoutCacheEnabled, true);
@@ -98,6 +99,8 @@ export function renderComparison(metadata, logs) {
     );
     assert.equal(metadata.compilation, 'speed');
     assert.match(metadata.apkSha256, /^[a-f0-9]{64}$/);
+  } else {
+    assert.equal(new Set(runs.map(run => run.meta.sdk)).size, 1, 'iOS build SDK changed');
   }
   const date = new Date(metadata.startedAt).toLocaleDateString('en-US', {
     year: 'numeric',
@@ -110,7 +113,7 @@ export function renderComparison(metadata, logs) {
     '',
     platform === 'android'
       ? `${date}. ${runs[0].meta.deviceName}, Android ${runs[0].meta.osVersion} (API ${runs[0].meta.apiLevel}). React Native ${metadata.reactNativeVersion}, Text Engine ${metadata.textEngineVersion}, Release build.`
-      : `${date}. ${runs[0].meta.deviceName} simulator, iOS ${runs[0].meta.osVersion}. React Native ${metadata.reactNativeVersion}, Text Engine ${metadata.textEngineVersion}, Release build.`,
+      : `${date}. ${runs[0].meta.deviceName}${runs[0].meta.sdk.startsWith('iphonesimulator') ? ' simulator' : ''}, iOS ${runs[0].meta.osVersion}. React Native ${metadata.reactNativeVersion}, Text Engine ${metadata.textEngineVersion}, Release build.`,
     '',
     '| Test | Operations/sample | RN Text (ms) | TextView (ms) | TextView / RN |',
     '| --- | ---: | ---: | ---: | ---: |',
@@ -140,7 +143,7 @@ export function renderComparison(metadata, logs) {
           `- Toolchain: ${metadata.java}; Gradle ${metadata.gradle}; Node ${metadata.node}`,
           `- APK SHA256: \`${metadata.apkSha256}\``,
         ]
-      : [`- Toolchain: ${metadata.xcode.replaceAll('\n', ' / ')}; simulator SDK ${metadata.sdk}; Node ${metadata.node}`]),
+      : [`- Toolchain: ${metadata.xcode.replaceAll('\n', ' / ')}; SDK ${runs[0].meta.sdk}; Node ${metadata.node}`]),
     `- Git HEAD: \`${metadata.revision}\``,
     `- Source checksum (SHA256): \`${metadata.sourceHash}\``,
     `- Local logs: \`benchmarks/${metadata.relativeRunDirectory}\``,
@@ -269,7 +272,6 @@ function main() {
           }
         : {
             xcode: read('xcodebuild', ['-version']),
-            sdk: read('xcrun', ['--sdk', 'iphonesimulator', '--show-sdk-version']),
           }),
       cpu: os.cpus()[0].model,
       architecture: os.arch(),

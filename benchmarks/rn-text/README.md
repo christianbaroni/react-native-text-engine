@@ -14,7 +14,9 @@ yarn perf:compare:android
 
 Each command builds the tests in Release and runs them in three separate processes. It updates its platform’s section in [results.md](results.md) after all three runs pass. A failed run leaves the existing results unchanged.
 
-Set `IOS_DESTINATION_ID` to select an iOS simulator, or `ANDROID_SERIAL` to select an Android device. Android uses the example’s Java and SDK setup and compiles the test APK ahead of time with ART’s `speed` mode. The build uses Node from `PATH`, or the executable specified by `NODE_BINARY`.
+Set `IOS_DESTINATION_ID` to select an iOS simulator or connected physical device by UDID, or `ANDROID_SERIAL` to select an Android device. Xcode selects the iOS SDK from the destination. Physical iOS devices must be unlocked, have Developer Mode enabled, and have signing configured for the example and test targets in Xcode. The test installs the example app on the selected device.
+
+Android uses the example’s Java and SDK setup and compiles the test APK ahead of time with ART’s `speed` mode. The build uses Node from `PATH`, or the executable specified by `NODE_BINARY`.
 
 ## What is measured
 
