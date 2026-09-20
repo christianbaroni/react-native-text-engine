@@ -130,6 +130,42 @@ class RNTextEngineBindingsInstrumentedTest {
     }
 
     @Test
+    fun rootFallbackHeightAndExplicitNaturalRunHeightRemainDistinct() {
+        val density = PixelUtil.getDisplayMetricDensity()
+        for (lineHeight in listOf(Double.NaN, 0.0, 25.0)) {
+            val handle = RNTextEngineBindings.prepareTextView(
+                "", null, null, null, 17.0, null, null, 0.0, lineHeight, false, false, false, null,
+            )
+            try {
+                val prepared = requireNotNull(RNTextEngineBindings.preparedText(handle))
+                val metrics = prepared.style.textPaint.fontMetricsInt
+                val expected = if (lineHeight.isNaN()) (metrics.descent - metrics.ascent) / density.toDouble()
+                    else PixelUtil.toPixelFromDIP(lineHeight) / density.toDouble()
+                assertEquals(expected, RNTextEngineBindings.layout(handle, 180.0, 0, null, false)[1], 0.000001)
+            } finally {
+                RNTextEngineBindings.release(handle)
+            }
+        }
+        val run = RNTextEngineTextRunStyle(
+            color = null, fontFamily = null, fontSize = 23.0, fontStyle = null, fontWeight = null,
+            hasColor = false, hasFontFamily = false, hasFontSize = true, hasFontStyle = false,
+            hasFontWeight = false, hasLetterSpacing = false, hasLineHeight = true, hasTabularNumbers = false,
+            letterSpacing = 0.0, lineHeight = Double.NaN, tabularNumbers = false,
+        )
+        val prepared = RNTextEngineBindings.prepareTextViewContent(
+            "Natural run", null, null, null, 17.0, null, null, 0.0, 25.0, false,
+            tabularNumbers = false, textBreakStrategy = null,
+            runs = listOf(RNTextEngineTextRun(start = 0, end = 11, style = run)),
+        )
+        val styled = prepared.textWithLineHeight as android.text.Spanned
+        assertTrue(styled.getSpans(0, styled.length, RNTextEngineLineHeightSpan::class.java).isEmpty())
+        val paint = TextPaint(prepared.style.textPaint)
+        styled.getSpans(0, styled.length, RNTextEngineTextPaintSpan::class.java).single().updateMeasureState(paint)
+        assertEquals(PixelUtil.toPixelFromDIP(23.0), paint.textSize, 0f)
+        assertEquals(25.0, prepared.style.fallbackLineHeight, 0.000001)
+    }
+
+    @Test
     fun initializationPreservesContentUntilItsEnvironmentChanges() {
         val context = InstrumentedTestReactApplicationContext(application)
         RNTextEngineBindings.initialize(context)

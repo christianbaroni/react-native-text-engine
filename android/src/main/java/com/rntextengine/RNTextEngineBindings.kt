@@ -78,6 +78,8 @@ internal object RNTextEngineBindings {
         val textPaint: TextPaint,
     )
 
+    private class ResolvedRunTextStyle(val textPaint: TextPaint, val lineHeightPx: Float?)
+
     internal data class TextStyleConfig(
         val allowFontScaling: Boolean,
         val fontFamily: String?,
@@ -1939,16 +1941,15 @@ internal object RNTextEngineBindings {
             textPaint.fontFeatureSettings = "'tnum'"
         }
 
-        val fallbackLineHeight = if (lineHeight.isNaN()) {
-            ((-textPaint.fontMetricsInt.ascent) + textPaint.fontMetricsInt.descent).toDouble().toDp()
-        } else {
-            scale(lineHeight, allowFontScaling, defaultValue = lineHeight).toDouble().toDp()
+        val lineHeightPx = if (lineHeight.isNaN()) null else scale(lineHeight, allowFontScaling, defaultValue = lineHeight)
+        val fallbackLineHeight = lineHeightPx?.toDouble()?.toDp() ?: textPaint.fontMetricsInt.let {
+            (it.descent - it.ascent).toDouble().toDp()
         }
 
         return ResolvedTextStyle(
             fallbackLineHeight = fallbackLineHeight,
             includeFontPadding = includeFontPadding,
-            lineHeightPx = if (lineHeight.isNaN()) null else scale(lineHeight, allowFontScaling, defaultValue = lineHeight),
+            lineHeightPx = lineHeightPx,
             textBreakStrategy = resolveTextBreakStrategy(textBreakStrategy),
             textPaint = textPaint,
         )
@@ -1958,7 +1959,7 @@ internal object RNTextEngineBindings {
         baseStyle: ResolvedTextStyle,
         baseConfig: TextStyleConfig,
         runStyle: RNTextEngineTextRunStyle,
-    ): ResolvedTextStyle {
+    ): ResolvedRunTextStyle {
         val fontFamily = if (runStyle.hasFontFamily) runStyle.fontFamily else baseConfig.fontFamily
         val fontSize = if (runStyle.hasFontSize) runStyle.fontSize else baseConfig.fontSize
         val fontWeight = if (runStyle.hasFontWeight) runStyle.fontWeight else baseConfig.fontWeight
@@ -2002,22 +2003,7 @@ internal object RNTextEngineBindings {
             } else {
                 baseStyle.lineHeightPx
             }
-        val fallbackLineHeight =
-            if (!lineHeight.isNaN() && runStyle.hasLineHeight) {
-                scale(lineHeight, baseConfig.allowFontScaling, defaultValue = lineHeight).toDouble().toDp()
-            } else if (lineHeight.isNaN() && (runStyle.hasLineHeight || shouldResolveTypeface || shouldResolveFontSize)) {
-                ((-textPaint.fontMetricsInt.ascent) + textPaint.fontMetricsInt.descent).toDouble().toDp()
-            } else {
-                baseStyle.fallbackLineHeight
-            }
-
-        return ResolvedTextStyle(
-            fallbackLineHeight = fallbackLineHeight,
-            includeFontPadding = baseStyle.includeFontPadding,
-            lineHeightPx = lineHeightPx,
-            textBreakStrategy = baseStyle.textBreakStrategy,
-            textPaint = textPaint,
-        )
+        return ResolvedRunTextStyle(textPaint, lineHeightPx)
     }
 
     private fun buildPreparedText(
@@ -2049,7 +2035,7 @@ internal object RNTextEngineBindings {
         runs: List<RNTextEngineTextRun>,
         source: TextSource? = null,
         environmentVersion: Long = 0,
-        resolveRunStyle: (RNTextEngineTextRunStyle) -> ResolvedTextStyle,
+        resolveRunStyle: (RNTextEngineTextRunStyle) -> ResolvedRunTextStyle,
     ): PreparedText {
         val styledText =
             if (text.isEmpty()) {
@@ -2075,7 +2061,7 @@ internal object RNTextEngineBindings {
         runs: List<RNTextEngineTextRun>,
         source: TextSource? = null,
         environmentVersion: Long = 0,
-        resolveRunStyle: (RNTextEngineTextRunStyle) -> ResolvedTextStyle,
+        resolveRunStyle: (RNTextEngineTextRunStyle) -> ResolvedRunTextStyle,
     ): PreparedText {
         if (runs.isEmpty()) return buildPreparedTextForTextView(text, textTransform, style, source, environmentVersion)
 
@@ -2120,7 +2106,7 @@ internal object RNTextEngineBindings {
         text: String,
         baseStyle: ResolvedTextStyle,
         runs: List<RNTextEngineTextRun>,
-        resolveRunStyle: (RNTextEngineTextRunStyle) -> ResolvedTextStyle,
+        resolveRunStyle: (RNTextEngineTextRunStyle) -> ResolvedRunTextStyle,
     ): CharSequence {
         val styledText = SpannableString(text)
 
