@@ -2372,28 +2372,16 @@ internal object RNTextEngineBindings {
         val paint = TextPaint(prepared.style.textPaint)
         val effectiveMaxLines = if (maxLines > 0) maxLines else Int.MAX_VALUE
 
-        val layout =
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                StaticLayout.Builder.obtain(charSequence, 0, charSequence.length, paint, textWidthPx)
-                    .setAlignment(Layout.Alignment.ALIGN_NORMAL)
-                    .setBreakStrategy(prepared.style.textBreakStrategy)
-                    .setHyphenationFrequency(Layout.HYPHENATION_FREQUENCY_NORMAL)
-                    .setIncludePad(prepared.style.includeFontPadding)
-                    .setMaxLines(effectiveMaxLines)
-                    .setEllipsize(ellipsize)
-                    .build()
-            } else {
-                @Suppress("DEPRECATION")
-                StaticLayout(
-                    charSequence,
-                    paint,
-                    textWidthPx,
-                    Layout.Alignment.ALIGN_NORMAL,
-                    1f,
-                    0f,
-                    prepared.style.includeFontPadding,
-                )
-            }
+        val layout = buildStaticLayoutCompat(
+            text = charSequence,
+            paint = paint,
+            widthPx = textWidthPx,
+            includeFontPadding = prepared.style.includeFontPadding,
+            breakStrategy = prepared.style.textBreakStrategy,
+            hyphenationFrequency = Layout.HYPHENATION_FREQUENCY_NORMAL,
+            maxLines = effectiveMaxLines,
+            ellipsize = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) ellipsize else null,
+        )
 
         val actualLineCount = min(layout.lineCount, effectiveMaxLines)
         val capHeightInsets =
@@ -2531,28 +2519,16 @@ internal object RNTextEngineBindings {
                 }
             }
         val paint = reusablePaint ?: TextPaint(style.textPaint)
-        val layout =
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                StaticLayout.Builder.obtain(charSequence, 0, charSequence.length, paint, context.textWidthPx)
-                    .setAlignment(Layout.Alignment.ALIGN_NORMAL)
-                    .setBreakStrategy(style.textBreakStrategy)
-                    .setHyphenationFrequency(Layout.HYPHENATION_FREQUENCY_NORMAL)
-                    .setIncludePad(style.includeFontPadding)
-                    .setMaxLines(context.effectiveMaxLines)
-                    .setEllipsize(context.ellipsize)
-                    .build()
-            } else {
-                @Suppress("DEPRECATION")
-                StaticLayout(
-                    charSequence,
-                    paint,
-                    context.textWidthPx,
-                    Layout.Alignment.ALIGN_NORMAL,
-                    1f,
-                    0f,
-                    style.includeFontPadding,
-                )
-            }
+        val layout = buildStaticLayoutCompat(
+            text = charSequence,
+            paint = paint,
+            widthPx = context.textWidthPx,
+            includeFontPadding = style.includeFontPadding,
+            breakStrategy = style.textBreakStrategy,
+            hyphenationFrequency = Layout.HYPHENATION_FREQUENCY_NORMAL,
+            maxLines = context.effectiveMaxLines,
+            ellipsize = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) context.ellipsize else null,
+        )
 
         val actualLineCount = min(layout.lineCount, context.effectiveMaxLines)
         val capHeightInsets =

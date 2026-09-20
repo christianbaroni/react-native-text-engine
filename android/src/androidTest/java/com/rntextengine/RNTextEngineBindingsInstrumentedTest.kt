@@ -182,6 +182,54 @@ class RNTextEngineBindingsInstrumentedTest {
     }
 
     @Test
+    fun naturalHeightMeasurementMatchesRenderedFallbackFonts() {
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            for (text in listOf("OK 1", "日本語の短い文章", "বাংলা ভাষা", "Hello 🙂 world")) {
+                val handle = RNTextEngineBindings.prepare(
+                    text, null, null, 16.0, null, null, 0.0, Double.NaN,
+                    false, false, false, null,
+                )
+                try {
+                    val prepared = requireNotNull(RNTextEngineBindings.resolvePreparedTextViewData(handle))
+                    for (width in listOf(80.0, 160.0)) {
+                        for (maxLines in listOf(0, 2)) {
+                            val view = RNTextEngineAttributedTextDisplayView(application).apply {
+                                setPreparedText(prepared)
+                                numberOfLines = maxLines
+                                ellipsizeMode = "tail"
+                            }
+                            val widthPx = PixelUtil.toPixelFromDIP(width.toFloat()).roundToInt()
+                            val layout = requireNotNull(view.resolveLayout(widthPx))
+                            val lastLine = layout.lineCount - 1
+                            for (anchor in listOf(false, true)) {
+                                val expectedPx = if (anchor) {
+                                    layout.getLineBaseline(lastLine) - view.resolveCapHeightInsets(widthPx).top
+                                } else {
+                                    layout.getLineBottom(lastLine).toFloat()
+                                }
+                                val expected = PixelUtil.toDIPFromPixel(expectedPx).toDouble()
+                                val measured = RNTextEngineBindings.measure(
+                                    text, null, null, 16.0, null, null, 0.0, Double.NaN,
+                                    false, false, false, null, width, maxLines, "tail", anchor,
+                                )
+                                val cached = RNTextEngineBindings.layout(handle, width, maxLines, "tail", anchor)
+                                val lines = RNTextEngineBindings.layoutLines(handle, width, maxLines, "tail", anchor)
+                                val tolerance = PixelUtil.toDIPFromPixel(1f).toDouble()
+                                for (result in listOf(measured, cached, lines)) {
+                                    assertEquals("text=$text width=$width maxLines=$maxLines anchor=$anchor", expected, result[1], tolerance)
+                                    assertEquals(layout.lineCount.toDouble(), result[2], 0.0)
+                                }
+                            }
+                        }
+                    }
+                } finally {
+                    RNTextEngineBindings.release(handle)
+                }
+            }
+        }
+    }
+
+    @Test
     fun nativeSizePreservesSignedMetricsAndHandleLifetime() {
         for (text in listOf("", "A")) {
             for (lineHeight in listOf(23.7, -1.0, -0.0)) {
