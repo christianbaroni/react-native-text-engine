@@ -550,48 +550,52 @@ static NSData *TextViewPixels(UIView *component, UIUserInterfaceStyle appearance
 
 static void MountAndDrawTree(const RootShadowNode &root, BOOL textView, CGContextRef validationContext = nullptr)
 {
-  RCTViewComponentView *parent = [RCTViewComponentView new];
-  Class componentClass = textView ? NSClassFromString(@"RNTextEngineTextViewComponentView") : RCTParagraphComponentView.class;
-  for (const auto &child : root.getChildren()) {
-    const auto &node = static_cast<const LayoutableShadowNode &>(*child);
-    UIView<RCTComponentViewProtocol> *view = [componentClass new];
-    view.tag = node.getTag();
-    [view updateProps:node.getProps() oldProps:nullptr];
-    [view updateEventEmitter:node.getEventEmitter()];
-    [view updateState:node.getState() oldState:nullptr];
-    [view updateLayoutMetrics:node.getLayoutMetrics() oldLayoutMetrics:EmptyLayoutMetrics];
-    [view finalizeUpdates:RNComponentViewUpdateMaskAll];
-    [parent mountChildComponentView:view index:0];
-    [view layoutIfNeeded];
-    DisplayLayers(view.layer);
-    if (validationContext != nullptr) {
-      NSString *expectedText = ToNSString(textView
-          ? static_cast<const RNTextEngineTextViewShadowNode &>(node).getConcreteProps().text
-          : static_cast<const ParagraphShadowNode &>(node).getStateData().attributedString.getString());
-      XCTAssertEqual(ValidateDrawingLeaf(view, expectedText), 1u);
-      if (!textView) XCTAssertEqualObjects(((RCTParagraphComponentView *)view).attributedText.string, expectedText);
-      XCTAssertGreaterThan(view.bounds.size.width, 0);
-      XCTAssertGreaterThan(view.bounds.size.height, 0);
-      XCTAssertLessThanOrEqual(view.bounds.size.height, 320);
-      CGContextClearRect(validationContext, CGRectMake(0, 0, 320, 320));
-      [view.layer renderInContext:validationContext];
-      const uint8_t *data = static_cast<const uint8_t *>(CGBitmapContextGetData(validationContext));
-      size_t stride = CGBitmapContextGetBytesPerRow(validationContext);
-      size_t bytes = stride * CGBitmapContextGetHeight(validationContext);
-      CGRect expectedBounds = CGRectInset(CGContextConvertRectToDeviceSpace(validationContext, view.bounds), -1, -1);
-      NSUInteger inkCount = 0;
-      BOOL inkFits = YES;
-      for (size_t index = 3; index < bytes; index += 4) {
-        if (data[index] == 0) continue;
-        inkCount += 1;
-        inkFits &= CGRectContainsPoint(expectedBounds, CGPointMake((index % stride) / 4, index / stride));
+  @autoreleasepool {
+    RCTViewComponentView *parent = [RCTViewComponentView new];
+    Class componentClass = textView ? NSClassFromString(@"RNTextEngineTextViewComponentView") : RCTParagraphComponentView.class;
+    for (const auto &child : root.getChildren()) {
+      const auto &node = static_cast<const LayoutableShadowNode &>(*child);
+      UIView<RCTComponentViewProtocol> *view = [componentClass new];
+      view.tag = node.getTag();
+      [view updateProps:node.getProps() oldProps:nullptr];
+      [view updateEventEmitter:node.getEventEmitter()];
+      [view updateState:node.getState() oldState:nullptr];
+      [view updateLayoutMetrics:node.getLayoutMetrics() oldLayoutMetrics:EmptyLayoutMetrics];
+      [view finalizeUpdates:RNComponentViewUpdateMaskAll];
+      [parent mountChildComponentView:view index:0];
+      [view layoutIfNeeded];
+      DisplayLayers(view.layer);
+      if (validationContext != nullptr) {
+        NSString *expectedText = ToNSString(textView
+            ? static_cast<const RNTextEngineTextViewShadowNode &>(node).getConcreteProps().text
+            : static_cast<const ParagraphShadowNode &>(node).getStateData().attributedString.getString());
+        XCTAssertEqual(ValidateDrawingLeaf(view, expectedText), 1u);
+        if (!textView) XCTAssertEqualObjects(((RCTParagraphComponentView *)view).attributedText.string, expectedText);
+        XCTAssertGreaterThan(view.bounds.size.width, 0);
+        XCTAssertGreaterThan(view.bounds.size.height, 0);
+        XCTAssertLessThanOrEqual(view.bounds.size.height, 320);
+        CGContextClearRect(validationContext, CGRectMake(0, 0, 320, 320));
+        [view.layer renderInContext:validationContext];
+        const uint8_t *data = static_cast<const uint8_t *>(CGBitmapContextGetData(validationContext));
+        size_t stride = CGBitmapContextGetBytesPerRow(validationContext);
+        size_t bytes = stride * CGBitmapContextGetHeight(validationContext);
+        CGRect expectedBounds = CGRectInset(CGContextConvertRectToDeviceSpace(validationContext, view.bounds), -1, -1);
+        NSUInteger inkCount = 0;
+        BOOL inkFits = YES;
+        for (size_t index = 3; index < bytes; index += 4) {
+          if (data[index] == 0) continue;
+          inkCount += 1;
+          inkFits &= CGRectContainsPoint(expectedBounds, CGPointMake((index % stride) / 4, index / stride));
+        }
+        XCTAssertGreaterThan(inkCount, 0u, @"Mounted text did not draw");
+        XCTAssertLessThan(inkCount, CGRectGetWidth(expectedBounds) * CGRectGetHeight(expectedBounds));
+        XCTAssertTrue(inkFits, @"Mounted text exceeds measured bounds");
       }
-      XCTAssertGreaterThan(inkCount, 0u, @"Mounted text did not draw");
-      XCTAssertLessThan(inkCount, CGRectGetWidth(expectedBounds) * CGRectGetHeight(expectedBounds));
-      XCTAssertTrue(inkFits, @"Mounted text exceeds measured bounds");
+      [parent unmountChildComponentView:view index:0];
     }
-    [parent unmountChildComponentView:view index:0];
   }
+  // Offscreen layers retain backing stores until their Core Animation transaction commits.
+  [CATransaction flush];
 }
 
 #endif
