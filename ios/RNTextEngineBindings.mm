@@ -2506,7 +2506,6 @@ void cleanup() {
     std::lock_guard<std::mutex> lock(preparedMutex);
     [preparedTexts removeAllObjects];
     preparedTexts = nil;
-    nextHandle = 1;
   }
   {
     std::lock_guard<std::mutex> lock(preparedQueryMutex);
@@ -2517,7 +2516,6 @@ void cleanup() {
     std::lock_guard<std::mutex> lock(glyphFieldMutex);
     [glyphFields removeAllObjects];
     glyphFields = nil;
-    nextGlyphFieldHandle = 1;
   }
   {
     std::lock_guard<std::mutex> lock(glyphFieldBufferMutex);

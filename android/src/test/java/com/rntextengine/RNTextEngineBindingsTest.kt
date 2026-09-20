@@ -766,6 +766,38 @@ class RNTextEngineBindingsTest {
     }
 
     @Test
+    fun staleTextReleaseCannotRemoveTextCreatedAfterCleanup() {
+        fun prepare(text: String) = RNTextEngineBindings.prepare(
+            text, null, null, 16.0, null, null, 0.0, Double.NaN,
+            false, false, false, null,
+        )
+        val stale = prepare("Before cleanup")
+        RNTextEngineBindings.cleanup()
+        val current = prepare("After cleanup")
+        RNTextEngineBindings.release(stale)
+        assertNull(RNTextEngineBindings.resolvePreparedTextViewData(stale))
+        assertEquals("After cleanup", requireNotNull(RNTextEngineBindings.resolvePreparedTextViewData(current)).text.toString())
+        RNTextEngineBindings.release(current)
+    }
+
+    @Test
+    fun staleGlyphReleaseCannotRemoveFieldCreatedAfterCleanup() {
+        fun create() = RNTextEngineBindings.createGlyphField(
+            1, 1, null, 16.0, "AB", 0.0, 20.0, null,
+            arrayOf("#000000"), arrayOfNulls(1), arrayOfNulls(1),
+        )
+        val stale = create()
+        RNTextEngineBindings.cleanup()
+        val current = create()
+        RNTextEngineBindings.releaseGlyphField(stale)
+        assertThrows(IllegalStateException::class.java) {
+            RNTextEngineBindings.updateGlyphFieldIndices(stale, byteArrayOf(0), byteArrayOf(0))
+        }
+        RNTextEngineBindings.updateGlyphFieldIndices(current, byteArrayOf(1), byteArrayOf(0))
+        RNTextEngineBindings.releaseGlyphField(current)
+    }
+
+    @Test
     fun glyphFieldIndicesAndBuffersValidateTheirContract() {
         val handle =
             RNTextEngineBindings.createGlyphField(

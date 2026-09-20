@@ -1106,6 +1106,37 @@ static void AssertDisplayViewUsesBoundsGeometry(UIView *displayView, UIView *hos
   [self evaluateSource:R"(__RNTextEngineRelease(globalThis.__trailingWhitespaceHandle))"];
 }
 
+- (void)testStaleTextReleaseCannotRemoveTextCreatedAfterCleanup
+{
+  rntextengine::cleanup();
+  uint64_t stale = CreateTextViewMeasurementHandle(@"Before cleanup", 17, 24);
+  rntextengine::cleanup();
+  uint64_t current = CreateTextViewMeasurementHandle(@"After cleanup", 17, 24);
+  releasePreparedTextHandle(stale);
+  XCTAssertNil(preparedAttributedTextForHandle(stale));
+  XCTAssertEqualObjects(preparedAttributedTextForHandle(current).string, @"After cleanup");
+  XCTAssertGreaterThan(measurePreparedTextLayoutForHandle(current, 160, 0, nil, NO).width, 0);
+  releasePreparedTextHandle(current);
+}
+
+- (void)testStaleGlyphReleaseCannotRemoveFieldCreatedAfterCleanup
+{
+  rntextengine::cleanup();
+  const std::string create = R"(__RNTextEngineCreateGlyphField({
+    columns:1, rows:1, fontSize:16, lineHeight:20, glyphPalette:"AB", variants:[{color:"#000000"}]
+  }))";
+  uint64_t stale = static_cast<uint64_t>([self evaluateNumber:create]);
+  rntextengine::cleanup();
+  uint64_t current = static_cast<uint64_t>([self evaluateNumber:create]);
+  [self evaluateSource:"__RNTextEngineReleaseGlyphField(" + std::to_string(stale) + ")"];
+  [self assertJSErrorContains:@"invalid glyph field handle" source:
+      "__RNTextEngineUpdateGlyphFieldIndices(" + std::to_string(stale) + ", new Uint8Array([0]), new Uint8Array([0]))"];
+  double currentIsValid = [self evaluateNumber:"(() => { try { __RNTextEngineUpdateGlyphFieldIndices(" +
+      std::to_string(current) + ", new Uint8Array([1]), new Uint8Array([0])); return 1; } catch { return 0; } })()"];
+  XCTAssertEqual(currentIsValid, 1);
+  [self evaluateSource:"__RNTextEngineReleaseGlyphField(" + std::to_string(current) + ")"];
+}
+
 - (void)testGlyphFieldIndicesAndBuffersValidateAndCommit
 {
   [self evaluateSource:R"(

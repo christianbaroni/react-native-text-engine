@@ -199,8 +199,6 @@ internal object RNTextEngineBindings {
     fun cleanup() {
         preparedTexts.clear()
         glyphFields.clear()
-        nextHandle.set(1)
-        nextGlyphFieldHandle.set(1)
     }
 
     @JvmStatic
