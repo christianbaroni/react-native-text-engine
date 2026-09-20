@@ -25,6 +25,7 @@
 
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstring>
@@ -35,6 +36,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 using namespace facebook;
@@ -328,6 +330,74 @@ static std::shared_ptr<RootShadowNode> BuildTextViewTree(
   }
   return BuildBenchmarkShadowNode(registry, Element<RootShadowNode>()
       .surfaceId(0).tag(1).props(BuildRootProps(320, density)).children(std::move(children)));
+}
+
+void CheckConcurrentMeasurement(float density) {
+  auto contextContainer = std::make_shared<ContextContainer>();
+  ComponentDescriptorProviderRegistry providers;
+  providers.add(concreteComponentDescriptorProvider<RNTextEngineTextViewComponentDescriptor>());
+  auto registry = providers.createComponentDescriptorRegistry(ComponentDescriptorParameters{
+      .eventDispatcher = {}, .contextContainer = contextContainer, .flavor = nullptr});
+  const auto context = BuildFabricLayoutContext(density);
+  const TextStyleFixture style{.fontSize = 17, .lineHeight = 24};
+  const auto buildNode = [&](bool nested) {
+    auto element = Element<RNTextEngineTextViewShadowNode>().surfaceId(0)
+        .props(BuildTextViewProps("Concurrent text measurements must preserve wrapping, font metrics, and prepared handle lifetime across revisions.", style, 260));
+    if (nested) {
+      element.children({Element<RNTextEngineTextViewShadowNode>().surfaceId(0)
+          .props(BuildTextViewProps(" Nested emphasis with more wrapping.",
+              {.fontSize = 23, .lineHeight = 29, .fontWeight = "700"}, 260))});
+    }
+    return BuildBenchmarkShadowNode(registry, element);
+  };
+  for (bool nested : {false, true}) {
+    auto reference = buildNode(nested);
+    std::vector<LayoutConstraints> constraints;
+    std::vector<Size> expected;
+    for (int index = 0; index < 32; ++index) {
+      constraints.push_back(BuildLayoutConstraints(80 + index * 7));
+      expected.push_back(reference->measureContent(context, constraints.back()));
+    }
+    for (bool warm : {false, true}) {
+      auto source = buildNode(nested);
+      if (warm) source->measureContent(context, constraints.front());
+      source->sealRecursive();
+      std::atomic<bool> start{false};
+      std::atomic<bool> matches{true};
+      std::vector<std::thread> workers;
+      for (int worker = 0; worker < 6; ++worker) {
+        workers.emplace_back([&, worker] {
+          jni::ThreadScope attached;
+          while (!start.load()) std::this_thread::yield();
+          for (int iteration = 0; iteration < 128; ++iteration) {
+            auto clone = std::static_pointer_cast<RNTextEngineTextViewShadowNode>(source->clone({}));
+            const auto &node = worker == 0 ? source : clone;
+            const auto index = (iteration * 7 + worker * 11) % constraints.size();
+            if (node->measureContent(context, constraints[index]) != expected[index]) {
+              matches.store(false);
+            }
+          }
+        });
+      }
+      start.store(true);
+      for (auto &worker : workers) worker.join();
+      Require(matches.load(), "Concurrent geometry differs: nested=" + std::to_string(nested) +
+          " warm=" + std::to_string(warm));
+    }
+  }
+  auto nested = buildNode(true);
+  nested->layout(context);
+  Require(nested->getStateData().hasNested, "Nested payload was not published");
+  const auto nestedState = nested->getState();
+  auto unchanged = std::static_pointer_cast<RNTextEngineTextViewShadowNode>(
+      nested->clone({.props = nested->getProps()}));
+  unchanged->layout(context);
+  Require(unchanged->getState() == nestedState, "Unchanged nested payload was published again");
+  auto flat = std::static_pointer_cast<RNTextEngineTextViewShadowNode>(nested->clone({
+      .children = std::make_shared<const std::vector<std::shared_ptr<const ShadowNode>>>()}));
+  flat->layout(context);
+  Require(!flat->getStateData().hasNested, "Removing nested text retained stale state");
+
 }
 
 std::vector<std::string> ChatTexts() {
@@ -745,5 +815,15 @@ Java_com_rntextengine_RNTextEngineTextComparisonBenchmark_runNativeComparison(
   } catch (const std::exception &error) {
     env->ThrowNew(env->FindClass("java/lang/RuntimeException"), error.what());
     return nullptr;
+  }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_rntextengine_RNTextEngineTextComparisonBenchmark_checkConcurrentMeasurement(
+    JNIEnv *env, jobject, jfloat density) {
+  try {
+    CheckConcurrentMeasurement(density);
+  } catch (const std::exception &error) {
+    env->ThrowNew(env->FindClass("java/lang/RuntimeException"), error.what());
   }
 }

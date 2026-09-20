@@ -432,10 +432,7 @@ RNTextEngineTextViewShadowNode::RNTextEngineTextViewShadowNode(
 {
   const auto &source = static_cast<const RNTextEngineTextViewShadowNode &>(sourceShadowNode);
   if (!fragmentHasProps(fragment) && !fragmentHasChildren(fragment)) {
-    measurementCache_ = source.measurementCache_;
-    resolvedPayload_ = source.resolvedPayload_;
-    hasPublishedNestedPayload_ = source.hasPublishedNestedPayload_;
-    lastPublishedNestedHash_ = source.lastPublishedNestedHash_;
+    measurementCache_ = std::atomic_load(&source.measurementCache_);
   }
 }
 
@@ -460,13 +457,15 @@ Size RNTextEngineTextViewShadowNode::measureContent(
   }
 
   const auto &props = getConcreteProps();
-  auto cache = ensureMeasurementCache();
+  auto &cache = ensureMeasurementCache();
+  std::lock_guard<std::mutex> lock(cache.mutex);
+  prepareMeasurementHandle(cache);
 
   const auto resolvePreferredWidth = [&]() -> Float {
-    if (cache->preferredWidth < 0) {
-      cache->preferredWidth = measurePreparedTextWidthForHandle(cache->handle);
+    if (cache.preferredWidth < 0) {
+      cache.preferredWidth = measurePreparedTextWidthForHandle(cache.handle);
     }
-    return static_cast<Float>(cache->preferredWidth);
+    return static_cast<Float>(cache.preferredWidth);
   };
 
   const auto hasBoundedWidth =
@@ -483,8 +482,8 @@ Size RNTextEngineTextViewShadowNode::measureContent(
   const auto ellipsizeMode = props.ellipsizeMode;
 
   auto layoutIterator = std::find_if(
-      cache->layouts.begin(),
-      cache->layouts.end(),
+      cache.layouts.begin(),
+      cache.layouts.end(),
       [&](const CachedLayout &layout) {
         return layout.anchorToCapHeight == props.anchorToCapHeight &&
             layout.ellipsizeMode == ellipsizeMode &&
@@ -492,20 +491,20 @@ Size RNTextEngineTextViewShadowNode::measureContent(
             floatEquality(static_cast<Float>(layout.width), layoutWidth);
       });
 
-  if (layoutIterator == cache->layouts.end()) {
-    cache->layouts.push_back({
+  if (layoutIterator == cache.layouts.end()) {
+    cache.layouts.push_back({
         .anchorToCapHeight = props.anchorToCapHeight,
         .ellipsizeMode = ellipsizeMode,
         .maxLines = maxLines,
         .width = layoutWidth,
         .measurement = measurePreparedTextLayoutForHandle(
-            cache->handle,
+            cache.handle,
             layoutWidth,
             maxLines,
             toNSString(ellipsizeMode),
             props.anchorToCapHeight),
     });
-    layoutIterator = std::prev(cache->layouts.end());
+    layoutIterator = std::prev(cache.layouts.end());
   }
 
   auto measuredWidth = static_cast<Float>(layoutIterator->measurement.width);
@@ -527,7 +526,13 @@ Size RNTextEngineTextViewShadowNode::measureContent(
 void RNTextEngineTextViewShadowNode::layout(LayoutContext layoutContext)
 {
   BaseShadowNode::layout(layoutContext);
-  publishStateIfNeeded(resolvePayload());
+  if (getChildren().empty()) {
+    if (getStateData().hasNested) setStateData(RNTextEngineTextViewStateData::empty());
+    return;
+  }
+  auto &cache = ensureMeasurementCache();
+  std::lock_guard<std::mutex> lock(cache.mutex);
+  publishStateIfNeeded(resolvePayload(cache));
 }
 
 bool RNTextEngineTextViewShadowNode::shouldNewRevisionDirtyMeasurement(
@@ -537,20 +542,28 @@ bool RNTextEngineTextViewShadowNode::shouldNewRevisionDirtyMeasurement(
   return fragmentHasProps(fragment) || fragmentHasChildren(fragment);
 }
 
-std::shared_ptr<RNTextEngineTextViewShadowNode::MeasurementCache>
+RNTextEngineTextViewShadowNode::MeasurementCache &
 RNTextEngineTextViewShadowNode::ensureMeasurementCache() const
 {
-  if (measurementCache_ != nullptr) return measurementCache_;
+  std::call_once(measurementCacheInitialization_, [this] {
+    if (measurementCache_ == nullptr) {
+      std::atomic_store(&measurementCache_, std::make_shared<MeasurementCache>());
+    }
+  });
+  return *measurementCache_;
+}
+
+void RNTextEngineTextViewShadowNode::prepareMeasurementHandle(MeasurementCache &cache) const
+{
+  if (cache.handle != 0) return;
 
   const auto &props = getConcreteProps();
-  const auto payload = resolvePayload();
+  const auto &payload = resolvePayload(cache);
   const bool useNestedPayload = payload.hasNested;
   const int runCount = resolveRunCount(props);
 
-  measurementCache_ = std::make_shared<MeasurementCache>();
-
   if (!useNestedPayload) {
-    measurementCache_->handle = createPreparedTextHandleForTextView(
+    cache.handle = createPreparedTextHandleForTextView(
         toNSString(props.text) ?: @"",
         props.allowFontScaling,
         toNSStringNilIfEmpty(props.fontFamily),
@@ -571,11 +584,11 @@ RNTextEngineTextViewShadowNode::ensureMeasurementCache() const
         toDoubleArray(props.runLetterSpacings, runCount),
         toDoubleArray(props.runLineHeights, runCount),
         toBoolArray(props.runTabularNumbers, runCount));
-    return measurementCache_;
+    return;
   }
 
   const auto rootStyle = normalizePreparedStyle(resolveNodeStyle(props, nullptr));
-  measurementCache_->handle = createPreparedTextHandleForTextView(
+  cache.handle = createPreparedTextHandleForTextView(
       toNSString(payload.text) ?: @"",
       NO,
       toNSStringNilIfEmpty(rootStyle.fontFamily),
@@ -596,24 +609,18 @@ RNTextEngineTextViewShadowNode::ensureMeasurementCache() const
       toDoubleArray(payload.runLetterSpacings),
       toDoubleArray(payload.runLineHeights),
       toBoolArray(payload.runTabularNumbers));
-  return measurementCache_;
 }
 
-RNTextEngineTextViewShadowNode::ResolvedPayload
-RNTextEngineTextViewShadowNode::resolvePayload() const
+const RNTextEngineTextViewShadowNode::ResolvedPayload &
+RNTextEngineTextViewShadowNode::resolvePayload(MeasurementCache &cache) const
 {
-  if (resolvedPayload_.has_value()) {
-    return *resolvedPayload_;
+  if (cache.payload.has_value()) {
+    return *cache.payload;
   }
 
   if (getChildren().empty()) {
-    resolvedPayload_ = ResolvedPayload{};
-    return *resolvedPayload_;
-  }
-
-  if (!hasValidatedNestedTextChildren(*this)) {
-    resolvedPayload_ = ResolvedPayload{};
-    return *resolvedPayload_;
+    cache.payload = ResolvedPayload{};
+    return *cache.payload;
   }
 
   const auto rootStyle = resolveNodeStyle(getConcreteProps(), nullptr);
@@ -621,24 +628,9 @@ RNTextEngineTextViewShadowNode::resolvePayload() const
   std::vector<ResolvedSegment> segments;
   segments.reserve(8);
   const bool hasNested = appendNodePayload(*this, rootStyle, textBuilder, segments);
-  resolvedPayload_ =
+  cache.payload =
       buildPayloadFromSegments(textBuilder, segments, rootStyle, hasNested);
-  return *resolvedPayload_;
-}
-
-bool RNTextEngineTextViewShadowNode::hasValidatedNestedTextChildren(
-    const RNTextEngineTextViewShadowNode &node) const
-{
-  bool hasNested = false;
-  for (const auto &child : node.getChildren()) {
-    const auto *textChild =
-        dynamic_cast<const RNTextEngineTextViewShadowNode *>(child.get());
-    if (textChild == nullptr) {
-      throwInvalidTextChild(*child);
-    }
-    hasNested = true;
-  }
-  return hasNested;
+  return *cache.payload;
 }
 
 bool RNTextEngineTextViewShadowNode::appendNodePayload(
@@ -985,17 +977,7 @@ RNTextEngineTextViewShadowNode::buildPayloadFromSegments(
 
 void RNTextEngineTextViewShadowNode::publishStateIfNeeded(const ResolvedPayload &payload)
 {
-  if (!payload.hasNested) {
-    if (!hasPublishedNestedPayload_) {
-      return;
-    }
-
-    setStateData(RNTextEngineTextViewStateData::empty());
-    hasPublishedNestedPayload_ = false;
-    return;
-  }
-
-  if (hasPublishedNestedPayload_ && lastPublishedNestedHash_ == payload.hash) {
+  if (getStateData().hasNested && getStateData().hash == payload.hash) {
     return;
   }
 
@@ -1016,13 +998,11 @@ void RNTextEngineTextViewShadowNode::publishStateIfNeeded(const ResolvedPayload 
   state.runTabularNumbers = payload.runTabularNumbers;
 
   setStateData(std::move(state));
-  hasPublishedNestedPayload_ = true;
-  lastPublishedNestedHash_ = payload.hash;
 }
 
 RNTextEngineTextViewShadowNode::MeasurementCache::~MeasurementCache()
 {
-  releasePreparedTextHandle(handle);
+  if (handle != 0) releasePreparedTextHandle(handle);
 }
 
 } // namespace facebook::react

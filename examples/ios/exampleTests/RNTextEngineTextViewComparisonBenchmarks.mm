@@ -26,11 +26,13 @@
 #import <react/utils/ContextContainer.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <limits>
 #include <optional>
 #include <string>
 #include <sys/utsname.h>
+#include <thread>
 #include <vector>
 
 using namespace facebook;
@@ -754,6 +756,73 @@ static std::shared_ptr<RootShadowNode> BuildTextViewTree(
 }
 
 #endif
+
+- (void)testConcurrentTextViewMeasurements
+{
+#ifdef RCT_NEW_ARCH_ENABLED
+  auto registry = BuildBenchmarkComponentDescriptorRegistry();
+  const auto context = BuildFabricLayoutContext();
+  const TextStyleFixture style{.fontSize = 17, .lineHeight = 24};
+  const auto buildNode = [&](bool nested) {
+    auto element = Element<RNTextEngineTextViewShadowNode>()
+        .props(BuildTextViewProps(_chatStdTexts.front(), style, 260));
+    if (nested) {
+      element.children({Element<RNTextEngineTextViewShadowNode>()
+          .props(BuildTextViewProps(" Nested emphasis with more wrapping.",
+              {.fontSize = 23, .lineHeight = 29, .fontWeight = "700"}, 260))});
+    }
+    return BuildBenchmarkShadowNode(registry, element);
+  };
+
+  for (bool nested : {false, true}) {
+    auto reference = buildNode(nested);
+    std::vector<LayoutConstraints> constraints;
+    std::vector<facebook::react::Size> expected;
+    for (int index = 0; index < 32; ++index) {
+      constraints.push_back(BuildLayoutConstraints(80 + index * 7));
+      expected.push_back(reference->measureContent(context, constraints.back()));
+    }
+    for (bool warm : {false, true}) {
+      auto source = buildNode(nested);
+      if (warm) source->measureContent(context, constraints.front());
+      source->sealRecursive();
+      std::atomic<bool> start{false};
+      std::atomic<bool> matches{true};
+      std::vector<std::thread> workers;
+      for (int worker = 0; worker < 6; ++worker) {
+        workers.emplace_back([&, worker] {
+          @autoreleasepool {
+            while (!start.load()) std::this_thread::yield();
+            for (int iteration = 0; iteration < 128; ++iteration) {
+              auto clone = std::static_pointer_cast<RNTextEngineTextViewShadowNode>(source->clone({}));
+              const auto &node = worker == 0 ? source : clone;
+              const auto index = (iteration * 7 + worker * 11) % constraints.size();
+              if (node->measureContent(context, constraints[index]) != expected[index]) {
+                matches.store(false);
+              }
+            }
+          }
+        });
+      }
+      start.store(true);
+      for (auto &worker : workers) worker.join();
+      XCTAssertTrue(matches.load(), @"Concurrent geometry differs: nested=%d warm=%d", nested, warm);
+    }
+  }
+  auto nested = buildNode(true);
+  nested->layout(context);
+  XCTAssertTrue(nested->getStateData().hasNested);
+  const auto nestedState = nested->getState();
+  auto unchanged = std::static_pointer_cast<RNTextEngineTextViewShadowNode>(
+      nested->clone({.props = nested->getProps()}));
+  unchanged->layout(context);
+  XCTAssertTrue(unchanged->getState() == nestedState);
+  auto flat = std::static_pointer_cast<RNTextEngineTextViewShadowNode>(nested->clone({
+      .children = std::make_shared<const std::vector<std::shared_ptr<const ShadowNode>>>()}));
+  flat->layout(context);
+  XCTAssertFalse(flat->getStateData().hasNested);
+#endif
+}
 
 - (void)testTextViewComparisonBenchmarks
 {

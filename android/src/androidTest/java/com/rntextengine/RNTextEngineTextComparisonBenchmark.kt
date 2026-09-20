@@ -29,7 +29,24 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class RNTextEngineTextComparisonBenchmark {
     private external fun checkNativeMeasurement(): String
+    private external fun checkConcurrentMeasurement(density: Float)
     private external fun runNativeComparison(manager: FabricUIManager, density: Float, run: Int, prepared: Boolean): String
+
+    @Test
+    fun concurrentTextViewMeasurements() {
+        assumeTrue(InstrumentationRegistry.getArguments().getString("rnteConcurrency") == "true")
+        val application = ApplicationProvider.getApplicationContext<Application>()
+        SoLoader.init(application, OpenSourceMergedSoMapping)
+        SoLoader.loadLibrary("fabricjni")
+        System.loadLibrary("rnte-text-comparison")
+        DisplayMetricsHolder.initDisplayMetricsIfNotInitialized(application)
+        RNTextEngineBindings.initialize(BenchmarkReactApplicationContext(application))
+        try {
+            checkConcurrentMeasurement(application.resources.displayMetrics.density)
+        } finally {
+            RNTextEngineBindings.cleanup()
+        }
+    }
 
     @Test
     fun compareTextLayout() {

@@ -14,6 +14,8 @@
 
 #include <cstdint>
 #include <limits>
+#include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -135,14 +137,6 @@ class RNTextEngineTextViewShadowNode final : public ConcreteViewShadowNode<
     Size measurement{};
   };
 
-  struct MeasurementCache {
-    ~MeasurementCache();
-
-    uint64_t handle{0};
-    double preferredWidth{-1};
-    std::vector<CachedLayout> layouts{};
-  };
-
   struct ResolvedStyle {
     std::string color{};
     std::string fontFamily{};
@@ -185,13 +179,22 @@ class RNTextEngineTextViewShadowNode final : public ConcreteViewShadowNode<
     std::vector<bool> runTabularNumbers{};
   };
 
-  std::shared_ptr<MeasurementCache> ensureMeasurementCache() const;
+  struct MeasurementCache {
+    ~MeasurementCache();
+
+    std::mutex mutex;
+    std::optional<ResolvedPayload> payload;
+    uint64_t handle{0};
+    double preferredWidth{-1};
+    std::vector<CachedLayout> layouts{};
+  };
+
+  MeasurementCache& ensureMeasurementCache() const;
+  void prepareMeasurementHandle(MeasurementCache& cache) const;
   rntextengine::TextViewMeasurementRuns buildRuns() const;
   rntextengine::TextViewMeasurementRuns buildRuns(const ResolvedPayload& payload) const;
 
-  ResolvedPayload resolvePayload() const;
-  bool hasValidatedNestedTextChildren(
-      const RNTextEngineTextViewShadowNode& node) const;
+  const ResolvedPayload& resolvePayload(MeasurementCache& cache) const;
   bool appendNodePayload(
       const RNTextEngineTextViewShadowNode& node,
       const ResolvedStyle& parentStyle,
@@ -229,9 +232,7 @@ class RNTextEngineTextViewShadowNode final : public ConcreteViewShadowNode<
   void publishStateIfNeeded(const ResolvedPayload& payload);
 
   mutable std::shared_ptr<MeasurementCache> measurementCache_{};
-  mutable std::optional<ResolvedPayload> resolvedPayload_{};
-  bool hasPublishedNestedPayload_{false};
-  int64_t lastPublishedNestedHash_{0};
+  mutable std::once_flag measurementCacheInitialization_;
 };
 
 } // namespace facebook::react

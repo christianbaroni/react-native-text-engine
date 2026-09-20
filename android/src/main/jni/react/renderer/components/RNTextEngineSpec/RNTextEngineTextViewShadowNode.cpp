@@ -20,24 +20,66 @@ namespace rntextengine {
 
 namespace {
 
-JavaVM* javaVm_ = nullptr;
-jclass bindingsClass_ = nullptr;
-jclass stringClass_ = nullptr;
-
-jmethodID currentFontScaleMultiplierMethod_ = nullptr;
-jmethodID prepareTextViewMethod_ = nullptr;
-jmethodID prepareTextViewWithRunsMethod_ = nullptr;
-jmethodID releaseMethod_ = nullptr;
-jmethodID measurePreparedWidthMethod_ = nullptr;
-jmethodID measureTextViewMethod_ = nullptr;
-jmethodID transformTextWithBoundariesMethod_ = nullptr;
-
 constexpr auto kPrepareTextViewSignature =
     "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;DLjava/lang/String;Ljava/lang/String;DDZZZLjava/lang/String;)J";
 constexpr auto kPrepareTextViewWithRunsSignature =
     "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;DLjava/lang/String;Ljava/lang/String;DDZZZLjava/lang/String;[I[I[I[Ljava/lang/String;[Ljava/lang/String;[D[Ljava/lang/String;[Ljava/lang/String;[D[D[Z)J";
 constexpr auto kTransformTextWithBoundariesSignature =
     "(Ljava/lang/String;Ljava/lang/String;[I)[Ljava/lang/Object;";
+
+struct JavaBindings {
+  jclass bindingsClass = nullptr;
+  jclass stringClass = nullptr;
+  jmethodID currentFontScaleMultiplierMethod = nullptr;
+  jmethodID prepareTextViewMethod = nullptr;
+  jmethodID prepareTextViewWithRunsMethod = nullptr;
+  jmethodID releaseMethod = nullptr;
+  jmethodID measurePreparedWidthMethod = nullptr;
+  jmethodID measureTextViewMethod = nullptr;
+  jmethodID transformTextWithBoundariesMethod = nullptr;
+
+  explicit JavaBindings(JNIEnv* env) {
+    jclass localBindingsClass = env->FindClass("com/rntextengine/RNTextEngineBindings");
+    bindingsClass = reinterpret_cast<jclass>(env->NewGlobalRef(localBindingsClass));
+    env->DeleteLocalRef(localBindingsClass);
+
+    jclass localStringClass = env->FindClass("java/lang/String");
+    stringClass = reinterpret_cast<jclass>(env->NewGlobalRef(localStringClass));
+    env->DeleteLocalRef(localStringClass);
+
+    currentFontScaleMultiplierMethod =
+        env->GetStaticMethodID(bindingsClass, "currentFontScaleMultiplier", "()D");
+    prepareTextViewMethod = env->GetStaticMethodID(
+        bindingsClass,
+        "prepareTextView",
+        kPrepareTextViewSignature);
+    prepareTextViewWithRunsMethod = env->GetStaticMethodID(
+        bindingsClass,
+        "prepareTextViewWithRuns",
+        kPrepareTextViewWithRunsSignature);
+    releaseMethod = env->GetStaticMethodID(bindingsClass, "release", "(J)V");
+    measurePreparedWidthMethod = env->GetStaticMethodID(bindingsClass, "measurePreparedWidth", "(J)D");
+    measureTextViewMethod = env->GetStaticMethodID(bindingsClass, "measureTextView", "(JDIIZ)J");
+    transformTextWithBoundariesMethod = env->GetStaticMethodID(
+        bindingsClass,
+        "transformTextWithBoundaries",
+        kTransformTextWithBoundariesSignature);
+  }
+};
+
+const JavaBindings& getBindings(JNIEnv* env) {
+  static const JavaBindings bindings(env);
+  return bindings;
+}
+
+JavaVM* javaVm() {
+  static JavaVM* const vm = [] {
+    JavaVM* value = nullptr;
+    facebook::jni::Environment::current()->GetJavaVM(&value);
+    return value;
+  }();
+  return vm;
+}
 
 bool clearPendingException(JNIEnv* env, const char* fallback) {
   if (!env->ExceptionCheck()) return false;
@@ -90,7 +132,7 @@ jbooleanArray toBooleanArray(JNIEnv* env, const std::vector<bool>& values) {
 jobjectArray toStringArray(JNIEnv* env, const std::vector<std::string>& values) {
   if (values.empty()) return nullptr;
 
-  auto array = env->NewObjectArray(static_cast<jsize>(values.size()), stringClass_, nullptr);
+  auto array = env->NewObjectArray(static_cast<jsize>(values.size()), getBindings(env).stringClass, nullptr);
   for (size_t index = 0; index < values.size(); index += 1) {
     auto value = toJString(env, values[index]);
     env->SetObjectArrayElement(array, static_cast<jsize>(index), value);
@@ -116,52 +158,14 @@ JNIEnv* getEnv(bool& needsDetach) {
   JNIEnv* env = nullptr;
   needsDetach = false;
 
-  if (javaVm_ == nullptr) {
-    env = facebook::jni::Environment::current();
-    env->GetJavaVM(&javaVm_);
-    return env;
-  }
-
-  jint result = javaVm_->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6);
+  jint result = javaVm()->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6);
   if (result == JNI_EDETACHED) {
-    if (javaVm_->AttachCurrentThread(&env, nullptr) != JNI_OK) return nullptr;
+    if (javaVm()->AttachCurrentThread(&env, nullptr) != JNI_OK) return nullptr;
     needsDetach = true;
     return env;
   }
 
   return result == JNI_OK ? env : nullptr;
-}
-
-void initializeIfNeeded(JNIEnv* env) {
-  if (bindingsClass_ != nullptr) return;
-
-  env->GetJavaVM(&javaVm_);
-
-  jclass localBindingsClass = env->FindClass("com/rntextengine/RNTextEngineBindings");
-  bindingsClass_ = reinterpret_cast<jclass>(env->NewGlobalRef(localBindingsClass));
-  env->DeleteLocalRef(localBindingsClass);
-
-  jclass localStringClass = env->FindClass("java/lang/String");
-  stringClass_ = reinterpret_cast<jclass>(env->NewGlobalRef(localStringClass));
-  env->DeleteLocalRef(localStringClass);
-
-  currentFontScaleMultiplierMethod_ =
-      env->GetStaticMethodID(bindingsClass_, "currentFontScaleMultiplier", "()D");
-  prepareTextViewMethod_ = env->GetStaticMethodID(
-      bindingsClass_,
-      "prepareTextView",
-      kPrepareTextViewSignature);
-  prepareTextViewWithRunsMethod_ = env->GetStaticMethodID(
-      bindingsClass_,
-      "prepareTextViewWithRuns",
-      kPrepareTextViewWithRunsSignature);
-  releaseMethod_ = env->GetStaticMethodID(bindingsClass_, "release", "(J)V");
-  measurePreparedWidthMethod_ = env->GetStaticMethodID(bindingsClass_, "measurePreparedWidth", "(J)D");
-  measureTextViewMethod_ = env->GetStaticMethodID(bindingsClass_, "measureTextView", "(JDIIZ)J");
-  transformTextWithBoundariesMethod_ = env->GetStaticMethodID(
-      bindingsClass_,
-      "transformTextWithBoundaries",
-      kTransformTextWithBoundariesSignature);
 }
 
 } // namespace
@@ -172,14 +176,14 @@ static double currentFontScaleMultiplier() {
   if (env == nullptr) {
     throw std::runtime_error("Unable to retrieve jni environment. Is the thread attached?");
   }
-  initializeIfNeeded(env);
+  const auto& bindings = getBindings(env);
   const auto multiplier = env->CallStaticDoubleMethod(
-      bindingsClass_,
-      currentFontScaleMultiplierMethod_);
+      bindings.bindingsClass,
+      bindings.currentFontScaleMultiplierMethod);
   clearPendingException(
       env,
       "RNTextEngine: native font-scale multiplier lookup failed.");
-  if (needsDetach) javaVm_->DetachCurrentThread();
+  if (needsDetach) javaVm()->DetachCurrentThread();
   return static_cast<double>(multiplier);
 }
 
@@ -200,7 +204,7 @@ uint64_t prepareTextViewMeasurementHandle(
   if (env == nullptr) {
     throw std::runtime_error("Unable to retrieve jni environment. Is the thread attached?");
   }
-  initializeIfNeeded(env);
+  const auto& bindings = getBindings(env);
 
   auto textValue = toJString(env, text);
   auto textTransformValue = toJString(env, textTransform);
@@ -211,8 +215,8 @@ uint64_t prepareTextViewMeasurementHandle(
   jlong handle = 0;
   if (runs.starts.empty()) {
     handle = env->CallStaticLongMethod(
-        bindingsClass_,
-        prepareTextViewMethod_,
+        bindings.bindingsClass,
+        bindings.prepareTextViewMethod,
         textValue,
         textTransformValue,
         nullptr,
@@ -240,8 +244,8 @@ uint64_t prepareTextViewMeasurementHandle(
     auto runTabularNumbers = toBooleanArray(env, runs.tabularNumbers);
 
     handle = env->CallStaticLongMethod(
-        bindingsClass_,
-        prepareTextViewWithRunsMethod_,
+        bindings.bindingsClass,
+        bindings.prepareTextViewWithRunsMethod,
         textValue,
         textTransformValue,
         nullptr,
@@ -287,7 +291,7 @@ uint64_t prepareTextViewMeasurementHandle(
   cleanupLocalRef(env, fontFamilyValue);
   cleanupLocalRef(env, fontWeightValue);
   cleanupLocalRef(env, fontStyleValue);
-  if (needsDetach) javaVm_->DetachCurrentThread();
+  if (needsDetach) javaVm()->DetachCurrentThread();
 
   return static_cast<uint64_t>(handle);
 }
@@ -298,10 +302,10 @@ double measurePreparedTextMeasurementWidth(uint64_t handle) {
   if (env == nullptr) {
     throw std::runtime_error("Unable to retrieve jni environment. Is the thread attached?");
   }
-  initializeIfNeeded(env);
-  auto width = env->CallStaticDoubleMethod(bindingsClass_, measurePreparedWidthMethod_, static_cast<jlong>(handle));
+  const auto& bindings = getBindings(env);
+  auto width = env->CallStaticDoubleMethod(bindings.bindingsClass, bindings.measurePreparedWidthMethod, static_cast<jlong>(handle));
   clearPendingException(env, "RNTextEngine: native measurePreparedWidth() failed.");
-  if (needsDetach) javaVm_->DetachCurrentThread();
+  if (needsDetach) javaVm()->DetachCurrentThread();
   return width;
 }
 
@@ -316,15 +320,15 @@ facebook::react::Size measurePreparedTextMeasurementLayout(
   if (env == nullptr) {
     throw std::runtime_error("Unable to retrieve jni environment. Is the thread attached?");
   }
-  initializeIfNeeded(env);
+  const auto& bindings = getBindings(env);
   jint truncation = 3;
   if (ellipsizeMode == "clip") truncation = 0;
   else if (ellipsizeMode == "head") truncation = 1;
   else if (ellipsizeMode == "middle") truncation = 2;
 
   const auto packed = env->CallStaticLongMethod(
-      bindingsClass_,
-      measureTextViewMethod_,
+      bindings.bindingsClass,
+      bindings.measureTextViewMethod,
       static_cast<jlong>(handle),
       width,
       static_cast<jint>(maxLines),
@@ -332,7 +336,7 @@ facebook::react::Size measurePreparedTextMeasurementLayout(
       anchorToCapHeight);
 
   const bool failed = clearPendingException(env, "RNTextEngine: native TextView measurement failed.");
-  if (needsDetach) javaVm_->DetachCurrentThread();
+  if (needsDetach) javaVm()->DetachCurrentThread();
   return failed ? facebook::react::Size{} : facebook::react::yogaMeassureToSize(packed);
 }
 
@@ -349,15 +353,15 @@ std::pair<std::string, std::vector<int>> transformTextWithBoundaries(
   if (env == nullptr) {
     throw std::runtime_error("Unable to retrieve jni environment. Is the thread attached?");
   }
-  initializeIfNeeded(env);
+  const auto& bindings = getBindings(env);
 
   auto textValue = toJString(env, text);
   auto transformValue = toJString(env, textTransform);
   auto boundariesValue = toIntArray(env, boundaries);
 
   auto result = reinterpret_cast<jobjectArray>(env->CallStaticObjectMethod(
-      bindingsClass_,
-      transformTextWithBoundariesMethod_,
+      bindings.bindingsClass,
+      bindings.transformTextWithBoundariesMethod,
       textValue,
       transformValue,
       boundariesValue));
@@ -369,7 +373,7 @@ std::pair<std::string, std::vector<int>> transformTextWithBoundaries(
 
   if (hasException || result == nullptr) {
     cleanupLocalRef(env, result);
-    if (needsDetach) javaVm_->DetachCurrentThread();
+    if (needsDetach) javaVm()->DetachCurrentThread();
     return {text, boundaries};
   }
 
@@ -393,7 +397,7 @@ std::pair<std::string, std::vector<int>> transformTextWithBoundaries(
   cleanupLocalRef(env, transformedTextValue);
   cleanupLocalRef(env, mappedBoundariesValue);
   cleanupLocalRef(env, result);
-  if (needsDetach) javaVm_->DetachCurrentThread();
+  if (needsDetach) javaVm()->DetachCurrentThread();
 
   return {transformedText, mappedBoundaries};
 }
@@ -409,10 +413,10 @@ void releasePreparedTextMeasurementHandle(uint64_t handle) {
         stderr);
     return;
   }
-  initializeIfNeeded(env);
-  env->CallStaticVoidMethod(bindingsClass_, releaseMethod_, static_cast<jlong>(handle));
+  const auto& bindings = getBindings(env);
+  env->CallStaticVoidMethod(bindings.bindingsClass, bindings.releaseMethod, static_cast<jlong>(handle));
   clearPendingException(env, "RNTextEngine: native TextView measurement release() failed.");
-  if (needsDetach) javaVm_->DetachCurrentThread();
+  if (needsDetach) javaVm()->DetachCurrentThread();
 }
 
 } // namespace rntextengine
@@ -856,10 +860,7 @@ RNTextEngineTextViewShadowNode::RNTextEngineTextViewShadowNode(
     : BaseShadowNode(sourceShadowNode, fragment) {
   const auto& source = static_cast<const RNTextEngineTextViewShadowNode&>(sourceShadowNode);
   if (!fragmentHasProps(fragment) && !fragmentHasChildren(fragment)) {
-    measurementCache_ = source.measurementCache_;
-    resolvedPayload_ = source.resolvedPayload_;
-    hasPublishedNestedPayload_ = source.hasPublishedNestedPayload_;
-    lastPublishedNestedHash_ = source.lastPublishedNestedHash_;
+    measurementCache_ = std::atomic_load(&source.measurementCache_);
   }
 }
 
@@ -882,13 +883,15 @@ Size RNTextEngineTextViewShadowNode::measureContent(
   }
 
   const auto& props = getConcreteProps();
-  auto cache = ensureMeasurementCache();
+  auto& cache = ensureMeasurementCache();
+  std::lock_guard<std::mutex> lock(cache.mutex);
+  prepareMeasurementHandle(cache);
   const auto resolvePreferredWidth = [&]() -> Float {
-    if (cache->preferredWidth < 0) {
-      cache->preferredWidth =
-          rntextengine::measurePreparedTextMeasurementWidth(cache->handle);
+    if (cache.preferredWidth < 0) {
+      cache.preferredWidth =
+          rntextengine::measurePreparedTextMeasurementWidth(cache.handle);
     }
-    return static_cast<Float>(cache->preferredWidth);
+    return static_cast<Float>(cache.preferredWidth);
   };
 
   const auto hasBoundedWidth =
@@ -904,8 +907,8 @@ Size RNTextEngineTextViewShadowNode::measureContent(
 
   const auto ellipsizeMode = resolveOptionalString(props.ellipsizeMode);
   auto layoutIterator = std::find_if(
-      cache->layouts.begin(),
-      cache->layouts.end(),
+      cache.layouts.begin(),
+      cache.layouts.end(),
       [&](const CachedLayout& layout) {
         return layout.anchorToCapHeight == props.anchorToCapHeight &&
             layout.ellipsizeMode == ellipsizeMode &&
@@ -913,21 +916,21 @@ Size RNTextEngineTextViewShadowNode::measureContent(
             floatEquality(static_cast<Float>(layout.width), layoutWidth);
       });
 
-  if (layoutIterator == cache->layouts.end()) {
-    cache->layouts.push_back({
+  if (layoutIterator == cache.layouts.end()) {
+    cache.layouts.push_back({
         .anchorToCapHeight = props.anchorToCapHeight,
         .ellipsizeMode = ellipsizeMode,
         .maxLines = maxLines,
         .width = layoutWidth,
         .measurement =
             rntextengine::measurePreparedTextMeasurementLayout(
-                cache->handle,
+                cache.handle,
                 layoutWidth,
                 maxLines,
                 ellipsizeMode,
                 props.anchorToCapHeight),
     });
-    layoutIterator = std::prev(cache->layouts.end());
+    layoutIterator = std::prev(cache.layouts.end());
   }
 
   auto measuredWidth = layoutIterator->measurement.width;
@@ -950,7 +953,13 @@ Size RNTextEngineTextViewShadowNode::measureContent(
 
 void RNTextEngineTextViewShadowNode::layout(LayoutContext layoutContext) {
   BaseShadowNode::layout(layoutContext);
-  publishStateIfNeeded(resolvePayload());
+  if (getChildren().empty()) {
+    if (getStateData().hasNested) setStateData(RNTextEngineTextViewStateData::empty());
+    return;
+  }
+  auto& cache = ensureMeasurementCache();
+  std::lock_guard<std::mutex> lock(cache.mutex);
+  publishStateIfNeeded(resolvePayload(cache));
 }
 
 bool RNTextEngineTextViewShadowNode::shouldNewRevisionDirtyMeasurement(
@@ -959,17 +968,25 @@ bool RNTextEngineTextViewShadowNode::shouldNewRevisionDirtyMeasurement(
   return fragmentHasProps(fragment) || fragmentHasChildren(fragment);
 }
 
-std::shared_ptr<RNTextEngineTextViewShadowNode::MeasurementCache>
+RNTextEngineTextViewShadowNode::MeasurementCache&
 RNTextEngineTextViewShadowNode::ensureMeasurementCache() const {
-  if (measurementCache_ != nullptr) return measurementCache_;
+  std::call_once(measurementCacheInitialization_, [this] {
+    if (measurementCache_ == nullptr) {
+      std::atomic_store(&measurementCache_, std::make_shared<MeasurementCache>());
+    }
+  });
+  return *measurementCache_;
+}
+
+void RNTextEngineTextViewShadowNode::prepareMeasurementHandle(MeasurementCache& cache) const {
+  if (cache.handle != 0) return;
 
   const auto& props = getConcreteProps();
-  const auto payload = resolvePayload();
+  const auto& payload = resolvePayload(cache);
   const bool useNestedPayload = payload.hasNested;
 
-  measurementCache_ = std::make_shared<MeasurementCache>();
   if (!useNestedPayload) {
-    measurementCache_->handle = rntextengine::prepareTextViewMeasurementHandle(
+    cache.handle = rntextengine::prepareTextViewMeasurementHandle(
         props.text,
         resolveOptionalString(props.textTransform),
         props.allowFontScaling,
@@ -981,11 +998,11 @@ RNTextEngineTextViewShadowNode::ensureMeasurementCache() const {
         resolveLineHeight(props.lineHeight),
         props.tabularNumbers,
         buildRuns());
-    return measurementCache_;
+    return;
   }
 
   const auto rootStyle = normalizePreparedStyle(resolveNodeStyle(props, nullptr));
-  measurementCache_->handle = rntextengine::prepareTextViewMeasurementHandle(
+  cache.handle = rntextengine::prepareTextViewMeasurementHandle(
       payload.text,
       std::string{},
       false,
@@ -997,7 +1014,6 @@ RNTextEngineTextViewShadowNode::ensureMeasurementCache() const {
       rootStyle.lineHeight,
       rootStyle.tabularNumbers,
       buildRuns(payload));
-  return measurementCache_;
 }
 
 rntextengine::TextViewMeasurementRuns
@@ -1061,20 +1077,15 @@ RNTextEngineTextViewShadowNode::buildRuns(const ResolvedPayload& payload) const 
   return runs;
 }
 
-RNTextEngineTextViewShadowNode::ResolvedPayload
-RNTextEngineTextViewShadowNode::resolvePayload() const {
-  if (resolvedPayload_.has_value()) {
-    return *resolvedPayload_;
+const RNTextEngineTextViewShadowNode::ResolvedPayload&
+RNTextEngineTextViewShadowNode::resolvePayload(MeasurementCache& cache) const {
+  if (cache.payload.has_value()) {
+    return *cache.payload;
   }
 
   if (getChildren().empty()) {
-    resolvedPayload_ = ResolvedPayload{};
-    return *resolvedPayload_;
-  }
-
-  if (!hasValidatedNestedTextChildren(*this)) {
-    resolvedPayload_ = ResolvedPayload{};
-    return *resolvedPayload_;
+    cache.payload = ResolvedPayload{};
+    return *cache.payload;
   }
 
   const auto rootStyle = resolveNodeStyle(getConcreteProps(), nullptr);
@@ -1083,21 +1094,8 @@ RNTextEngineTextViewShadowNode::resolvePayload() const {
   segments.reserve(8);
 
   const bool hasNested = appendNodePayload(*this, rootStyle, textBuilder, segments);
-  resolvedPayload_ = buildPayloadFromSegments(textBuilder, segments, rootStyle, hasNested);
-  return *resolvedPayload_;
-}
-
-bool RNTextEngineTextViewShadowNode::hasValidatedNestedTextChildren(
-    const RNTextEngineTextViewShadowNode& node) const {
-  bool hasNested = false;
-  for (const auto& child : node.getChildren()) {
-    const auto* textChild = dynamic_cast<const RNTextEngineTextViewShadowNode*>(child.get());
-    if (textChild == nullptr) {
-      throwInvalidTextChild(*child);
-    }
-    hasNested = true;
-  }
-  return hasNested;
+  cache.payload = buildPayloadFromSegments(textBuilder, segments, rootStyle, hasNested);
+  return *cache.payload;
 }
 
 bool RNTextEngineTextViewShadowNode::appendNodePayload(
@@ -1430,17 +1428,7 @@ RNTextEngineTextViewShadowNode::buildPayloadFromSegments(
 }
 
 void RNTextEngineTextViewShadowNode::publishStateIfNeeded(const ResolvedPayload& payload) {
-  if (!payload.hasNested) {
-    if (!hasPublishedNestedPayload_) {
-      return;
-    }
-
-    setStateData(RNTextEngineTextViewStateData::empty());
-    hasPublishedNestedPayload_ = false;
-    return;
-  }
-
-  if (hasPublishedNestedPayload_ && lastPublishedNestedHash_ == payload.hash) {
+  if (getStateData().hasNested && getStateData().hash == payload.hash) {
     return;
   }
 
@@ -1461,12 +1449,10 @@ void RNTextEngineTextViewShadowNode::publishStateIfNeeded(const ResolvedPayload&
   state.runTabularNumbers = payload.runTabularNumbers;
 
   setStateData(std::move(state));
-  hasPublishedNestedPayload_ = true;
-  lastPublishedNestedHash_ = payload.hash;
 }
 
 RNTextEngineTextViewShadowNode::MeasurementCache::~MeasurementCache() {
-  rntextengine::releasePreparedTextMeasurementHandle(handle);
+  if (handle != 0) rntextengine::releasePreparedTextMeasurementHandle(handle);
 }
 
 } // namespace facebook::react
