@@ -675,6 +675,78 @@ class RNTextEngineBindingsInstrumentedTest {
     }
 
     @Test
+    fun explicitTextAlignmentUsesPhysicalEdgesAcrossSelectionChanges() {
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            val manager = RNTextEngineTextViewManager()
+            val view = RNTextEngineTextViewManager.RNTextEngineTextView(application)
+            manager.setFontSize(view, 14.0)
+            manager.setColor(view, Color.BLACK)
+            manager.setPadding(view, 17, 9, 23, 11)
+            val bitmap = Bitmap.createBitmap(420, 240, Bitmap.Config.ARGB_8888)
+            val pixels = IntArray(bitmap.width * bitmap.height)
+            val fixtures = listOf(
+                "שלום" to listOf(-1),
+                "مرحبا" to listOf(-1),
+                "Hello" to listOf(1),
+                "שלום abc" to listOf(-1),
+                "abc שלום" to listOf(1),
+                "שלום\nHello" to listOf(-1, 1),
+                "Hello\nمرحبا" to listOf(1, -1),
+            )
+            try {
+                for (direction in listOf(View.LAYOUT_DIRECTION_LTR, View.LAYOUT_DIRECTION_RTL)) {
+                    view.layoutDirection = direction
+                    for ((text, paragraphDirections) in fixtures) {
+                        manager.setText(view, text)
+                        for (alignment in listOf("left", "right", "center", null, "auto", "justify")) {
+                            manager.setTextAlign(view, alignment)
+                            for (selectable in listOf(true, false, true)) {
+                                view.setSelectable(selectable)
+                                measureAndLayout(view, bitmap.width, bitmap.height)
+                                val layout = if (selectable) requireNotNull(view.selectionView?.layout)
+                                    else requireNotNull(view.displayView.resolveLayout(bitmap.width))
+                                val case = "$text align=$alignment direction=$direction selectable=$selectable"
+                                assertEquals(case, paragraphDirections.size, layout.lineCount)
+                                assertEquals(case, bitmap.width - 17 - 23, layout.width)
+                                bitmap.eraseColor(Color.TRANSPARENT)
+                                view.draw(Canvas(bitmap))
+                                bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+                                for ((line, paragraphDirection) in paragraphDirections.withIndex()) {
+                                    assertEquals(case, paragraphDirection, layout.getParagraphDirection(line))
+                                    val left = layout.getLineLeft(line)
+                                    val right = layout.getLineRight(line)
+                                    when (alignment) {
+                                        "left" -> assertEquals(case, 0f, left, 0.01f)
+                                        "right" -> assertEquals(case, layout.width.toFloat(), right, 0.01f)
+                                        "center" -> assertEquals(case, layout.width.toFloat(), left + right, 1f)
+                                        else -> if (paragraphDirection == 1) assertEquals(case, 0f, left, 0.01f)
+                                            else assertEquals(case, layout.width.toFloat(), right, 0.01f)
+                                    }
+                                    var inkLeft = bitmap.width
+                                    var inkRight = -1
+                                    for (y in 9 + layout.getLineTop(line) until 9 + layout.getLineBottom(line)) {
+                                        for (x in 0 until bitmap.width) {
+                                            if (Color.alpha(pixels[y * bitmap.width + x]) != 0) {
+                                                inkLeft = minOf(inkLeft, x)
+                                                inkRight = maxOf(inkRight, x)
+                                            }
+                                        }
+                                    }
+                                    assertTrue("$case line=$line drew no text", inkRight >= inkLeft)
+                                    assertTrue("$case line=$line ink starts at $inkLeft before ${17 + left}", inkLeft >= 17 + left - 2)
+                                    assertTrue("$case line=$line ink ends at $inkRight after ${17 + right}", inkRight <= 17 + right + 2)
+                                }
+                            }
+                        }
+                    }
+                }
+            } finally {
+                bitmap.recycle()
+            }
+        }
+    }
+
+    @Test
     fun selectionPreservesPreparedGeometryUnderWidgetThemes() {
         InstrumentationRegistry.getInstrumentation().runOnMainSync {
             fun render(view: View) = Bitmap.createBitmap(360, 640, Bitmap.Config.ARGB_8888).also {
@@ -826,6 +898,33 @@ class RNTextEngineBindingsInstrumentedTest {
     }
 
     @Test
+    fun relativeLayoutsMatchPhysicalAlignmentOnlyForUniformDirection() {
+        for ((text, physicalAlignment) in listOf(
+            "Hello\nWorld" to "left",
+            "שלום\nمرحبا" to "right",
+            "Hello\nשלום" to null,
+            "שלום\nHello" to null,
+        )) {
+            val layout = buildStaticLayoutCompat(
+                text = text,
+                paint = TextPaint().apply { textSize = 32f },
+                widthPx = 360,
+                includeFontPadding = false,
+                breakStrategy = Layout.BREAK_STRATEGY_HIGH_QUALITY,
+                hyphenationFrequency = Layout.HYPHENATION_FREQUENCY_NORMAL,
+                maxLines = Int.MAX_VALUE,
+                ellipsize = null,
+            )
+            assertEquals(2, layout.lineCount)
+            assertTrue(layout.matchesAlignment(Layout.Alignment.ALIGN_NORMAL))
+            for (alignment in listOf("left", "right", "center")) {
+                assertEquals("$text align=$alignment", alignment == physicalAlignment,
+                    layout.matchesAlignment(resolveLayoutAlignment(alignment)))
+            }
+        }
+    }
+
+    @Test
     fun measuredLayoutsTransferExclusivelyAndMatchFreshDrawing() {
         InstrumentationRegistry.getInstrumentation().runOnMainSync {
             val text = "Shared layout 😀 বাংলা 日本語 wraps through a measured paragraph. ".repeat(3)
@@ -839,7 +938,7 @@ class RNTextEngineBindingsInstrumentedTest {
                 for (lineHeight in doubleArrayOf(Double.NaN, 24.0)) {
                     for (anchor in listOf(false, true)) {
                         for (maxLines in intArrayOf(0, 2)) {
-                            for (align in listOf(null, "center", "right", "justify")) {
+                            for (align in listOf(null, "left", "center", "right", "justify")) {
                                 fun prepare(forMount: Boolean): Long = if (!styled) {
                                     RNTextEngineBindings.prepareTextView(text, null, null, null, 17.0, null, null,
                                         0.0, lineHeight, false, false, false, null, environmentVersion = if (forMount) RNTextEngineBindings.textEnvironmentVersion() else 0)
@@ -861,7 +960,7 @@ class RNTextEngineBindingsInstrumentedTest {
                                     org.junit.Assert.assertArrayEquals(expected, actual, 0.0001)
                                     val prepared = requireNotNull(RNTextEngineBindings.preparedText(handle))
                                     val measured = pending(prepared)
-                                    val eligible = (styled || lineHeight.isNaN() || !anchor) && align == null
+                                    val eligible = (styled || lineHeight.isNaN() || !anchor) && (align == null || align == "left")
                                     if (eligible) assertTrue(measured != null)
                                     fun view(content: RNTextEngineBindings.PreparedText) =
                                         RNTextEngineAttributedTextDisplayView(application, true).apply {

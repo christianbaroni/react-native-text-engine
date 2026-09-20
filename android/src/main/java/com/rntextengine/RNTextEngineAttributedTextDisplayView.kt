@@ -110,8 +110,9 @@ internal class RNTextEngineAttributedTextDisplayView(context: Context, private v
         view.ellipsize = resolveEllipsize(view.maxLines, ellipsizeMode)
         view.textAlignment = View.TEXT_ALIGNMENT_GRAVITY
         view.gravity = Gravity.TOP or when (textAlign) {
+            "left" -> Gravity.LEFT
             "center" -> Gravity.CENTER_HORIZONTAL
-            "right" -> Gravity.END
+            "right" -> Gravity.RIGHT
             else -> Gravity.START
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -174,7 +175,7 @@ internal class RNTextEngineAttributedTextDisplayView(context: Context, private v
 
         val maxLines = if (numberOfLines > 0) numberOfLines else Int.MAX_VALUE
         val ellipsize = resolveEllipsize(maxLines, ellipsizeMode)
-        val alignment = resolveAlignment(textAlign)
+        val alignment = resolveLayoutAlignment(textAlign)
         val justificationMode = resolveJustificationMode(textAlign)
         cachedLayout = prepared.takeMeasuredLayout(max(1, contentWidth), maxLines, ellipsize,
             alignment, justificationMode, nativeLineSpacing)?.also { applyDrawingStyle(it.paint) }
@@ -212,14 +213,6 @@ internal class RNTextEngineAttributedTextDisplayView(context: Context, private v
         textColor?.let { paint.color = it }
         paint.flags = (paint.flags and Paint.UNDERLINE_TEXT_FLAG.inv() and Paint.STRIKE_THRU_TEXT_FLAG.inv()) or decorationFlags
         paint.setShadowLayer(textShadowRadiusPx, textShadowOffsetWidthPx, textShadowOffsetHeightPx, textShadowColor ?: Color.TRANSPARENT)
-    }
-
-    private fun resolveAlignment(value: String?): Layout.Alignment {
-        return when (value) {
-            "center" -> Layout.Alignment.ALIGN_CENTER
-            "right" -> Layout.Alignment.ALIGN_OPPOSITE
-            else -> Layout.Alignment.ALIGN_NORMAL
-        }
     }
 
     private fun resolveJustificationMode(value: String?): Int {

@@ -124,7 +124,7 @@ internal object RNTextEngineBindings {
             measuredLayout = null
             measured?.layout?.takeIf {
                 it.width == width && measured.maxLines == maxLines && measured.ellipsize == ellipsize &&
-                    it.alignment == alignment && justificationMode == 0 &&
+                    it.matchesAlignment(alignment) && justificationMode == 0 &&
                     (nativeLineSpacing || hasInlineStyleRuns || style.lineHeightPx == null)
             }
         }

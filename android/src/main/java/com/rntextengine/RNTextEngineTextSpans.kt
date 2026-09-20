@@ -26,6 +26,10 @@ internal const val RN_TEXT_ENGINE_SHAPING_FLAGS = TextPaint.SUBPIXEL_TEXT_FLAG o
 private val capHeightPathThreadLocal = ThreadLocal<Path>()
 private val capHeightBoundsThreadLocal = ThreadLocal<RectF>()
 
+// TextView uses these physical alignments, but the SDK omits their enum fields.
+private val leftAlignment = Layout.Alignment.valueOf("ALIGN_LEFT")
+private val rightAlignment = Layout.Alignment.valueOf("ALIGN_RIGHT")
+
 internal data class RNTextEngineCapHeightInsetsPx(
     val bottom: Float,
     val top: Float,
@@ -76,6 +80,27 @@ internal fun resolveUniformCapHeightPx(text: CharSequence, defaultCapHeightPx: F
 
 internal fun roundMeasuredTextWidthPx(width: Float): Float {
     return if (Build.VERSION.SDK_INT > Build.VERSION_CODES.Q) ceil(width.toDouble()).toFloat() else width
+}
+
+internal fun resolveLayoutAlignment(value: String?): Layout.Alignment = when (value) {
+    "left" -> leftAlignment
+    "right" -> rightAlignment
+    "center" -> Layout.Alignment.ALIGN_CENTER
+    else -> Layout.Alignment.ALIGN_NORMAL
+}
+
+internal fun Layout.matchesAlignment(requested: Layout.Alignment): Boolean {
+    if (alignment == requested) return true
+    if (alignment != Layout.Alignment.ALIGN_NORMAL) return false
+    val direction = when (requested) {
+        leftAlignment -> Layout.DIR_LEFT_TO_RIGHT
+        rightAlignment -> Layout.DIR_RIGHT_TO_LEFT
+        else -> return false
+    }
+    for (line in 0 until lineCount) {
+        if (getParagraphDirection(line) != direction) return false
+    }
+    return true
 }
 
 @SuppressLint("ObsoleteSdkInt", "WrongConstant")
@@ -150,7 +175,7 @@ internal fun buildStaticLayoutCompat(
             end,
             paint,
             max(1, widthPx),
-            Layout.Alignment.ALIGN_NORMAL,
+            alignment,
             lineSpacingMultiplier,
             lineSpacingAdd,
             includeFontPadding,
