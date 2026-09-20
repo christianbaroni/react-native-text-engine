@@ -165,65 +165,78 @@ static void RNTextEngineApplyTextDecorationAttributes(
   }
 }
 
-static NSMutableDictionary<NSAttributedStringKey, id> *BuildRunAttributes(
-    const RNTextEngineTextAttributes &base,
-    const RNTextEngineTextRunStyle &style,
-    BOOL preScaledTypography)
+static NSParagraphStyle *BuildParagraphStyle(CGFloat lineHeight, NSTextAlignment alignment)
 {
-  BOOL usesTabularNumbers = style.tabularNumbers.value_or(base.tabularNumbers);
-  CGFloat scale = base.allowFontScaling ? base.fontScale : 1;
-  CGFloat runScale = preScaledTypography ? 1 : scale;
-  NSNumber *resolvedFontSize = @(style.fontSize ? *style.fontSize * runScale : base.fontSize * scale);
-  UIFont *font = ResolveFont(style.fontFamily ?: base.fontFamily, resolvedFontSize,
-      style.fontWeight ?: base.fontWeight, style.fontStyle ?: base.fontStyle, usesTabularNumbers);
+  if (!(lineHeight > 0) && alignment == NSTextAlignmentLeft) return nil;
+  NSMutableParagraphStyle *paragraphStyle = [NSMutableParagraphStyle new];
+  if (lineHeight > 0) {
+    paragraphStyle.minimumLineHeight = lineHeight;
+    paragraphStyle.maximumLineHeight = lineHeight;
+  }
+  paragraphStyle.alignment = alignment;
+  return paragraphStyle;
+}
 
+static NSMutableDictionary<NSAttributedStringKey, id> *BuildBaseAttributes(
+    const RNTextEngineTextAttributes &base)
+{
+  CGFloat scale = base.allowFontScaling ? base.fontScale : 1;
+  UIFont *font = ResolveFont(base.fontFamily, @(base.fontSize * scale),
+      base.fontWeight, base.fontStyle, base.tabularNumbers);
   NSMutableDictionary<NSAttributedStringKey, id> *attributes =
       [NSMutableDictionary dictionaryWithObject:font forKey:NSFontAttributeName];
+  if (base.color != nil) attributes[NSForegroundColorAttributeName] = base.color;
 
-  UIColor *color = style.color ?: base.color;
-  if (color != nil) {
-    attributes[NSForegroundColorAttributeName] = color;
-  }
-
-  RNTextEngineApplyTextDecorationAttributes(
-      attributes,
-      base.textDecorationLine,
-      base.textDecorationStyle,
-      base.textDecorationColor,
-      color);
-
-  NSShadow *shadow = nil;
+  RNTextEngineApplyTextDecorationAttributes(attributes, base.textDecorationLine,
+      base.textDecorationStyle, base.textDecorationColor, base.color);
   if (base.textShadowColor != nil) {
-    shadow = [NSShadow new];
+    NSShadow *shadow = [NSShadow new];
     shadow.shadowBlurRadius = base.textShadowRadius;
     shadow.shadowColor = base.textShadowColor;
     shadow.shadowOffset = base.textShadowOffset;
-  }
-  if (shadow != nil) {
     attributes[NSShadowAttributeName] = shadow;
   }
+  if (base.letterSpacing != 0) attributes[NSKernAttributeName] = @(base.letterSpacing * scale);
 
-  auto letterSpacing = style.letterSpacing;
-  if (letterSpacing) {
-    attributes[NSKernAttributeName] =
-        @(*letterSpacing * runScale);
-  } else if (base.letterSpacing != 0) {
-    attributes[NSKernAttributeName] = @(base.letterSpacing * scale);
+  NSParagraphStyle *paragraphStyle = BuildParagraphStyle(
+      base.lineHeight * scale, RNTextEngineTextResolveAlignment(base.textAlign));
+  if (paragraphStyle != nil) attributes[NSParagraphStyleAttributeName] = paragraphStyle;
+  return attributes;
+}
+
+static NSDictionary<NSAttributedStringKey, id> *BuildRunOverrides(
+    const RNTextEngineTextAttributes &base,
+    NSDictionary<NSAttributedStringKey, id> *baseAttributes,
+    const RNTextEngineTextRunStyle &style,
+    BOOL preScaledTypography)
+{
+  CGFloat scale = base.allowFontScaling ? base.fontScale : 1;
+  CGFloat runScale = preScaledTypography ? 1 : scale;
+  CGFloat fontSize = style.fontSize ? *style.fontSize * runScale : base.fontSize * scale;
+  BOOL tabularNumbers = style.tabularNumbers.value_or(base.tabularNumbers);
+  BOOL changesFont = (style.fontFamily != nil && ![style.fontFamily isEqual:base.fontFamily]) ||
+      fontSize != base.fontSize * scale ||
+      (style.fontWeight != nil && ![style.fontWeight isEqual:base.fontWeight]) ||
+      (style.fontStyle != nil && ![style.fontStyle isEqual:base.fontStyle]) ||
+      tabularNumbers != base.tabularNumbers;
+  NSMutableDictionary<NSAttributedStringKey, id> *attributes = [NSMutableDictionary new];
+  if (changesFont) {
+    attributes[NSFontAttributeName] = ResolveFont(style.fontFamily ?: base.fontFamily, @(fontSize),
+        style.fontWeight ?: base.fontWeight, style.fontStyle ?: base.fontStyle, tabularNumbers);
   }
-
-  auto lineHeight = style.lineHeight;
-  CGFloat resolvedLineHeight = lineHeight ? *lineHeight * runScale : base.lineHeight * scale;
-  NSTextAlignment alignment = RNTextEngineTextResolveAlignment(base.textAlign);
-  if (resolvedLineHeight > 0 || alignment != NSTextAlignmentLeft) {
-    NSMutableParagraphStyle *paragraphStyle = [[NSMutableParagraphStyle alloc] init];
-    if (resolvedLineHeight > 0) {
-      paragraphStyle.minimumLineHeight = resolvedLineHeight;
-      paragraphStyle.maximumLineHeight = resolvedLineHeight;
+  if (style.color != nil) {
+    attributes[NSForegroundColorAttributeName] = style.color;
+    if (base.textDecorationColor == nil && baseAttributes[NSUnderlineColorAttributeName] != nil) {
+      attributes[NSUnderlineColorAttributeName] = style.color;
+      attributes[NSStrikethroughColorAttributeName] = style.color;
     }
-    paragraphStyle.alignment = alignment;
-    attributes[NSParagraphStyleAttributeName] = paragraphStyle;
   }
-
+  if (style.letterSpacing) attributes[NSKernAttributeName] = @(*style.letterSpacing * runScale);
+  if (style.lineHeight && *style.lineHeight * runScale != base.lineHeight * scale) {
+    NSParagraphStyle *baseParagraph = baseAttributes[NSParagraphStyleAttributeName];
+    NSParagraphStyle *paragraphStyle = BuildParagraphStyle(*style.lineHeight * runScale, baseParagraph.alignment);
+    if (paragraphStyle != nil) attributes[NSParagraphStyleAttributeName] = paragraphStyle;
+  }
   return attributes;
 }
 
@@ -236,7 +249,7 @@ NSAttributedString *RNTextEngineBuildAttributedText(
     CGFloat *emptyLineHeight)
 {
   NSMutableDictionary<NSAttributedStringKey, id> *baseAttributes =
-      BuildRunAttributes(attributes, {}, preScaledTypography);
+      BuildBaseAttributes(attributes);
   if (emptyLineHeight != nullptr) {
     *emptyLineHeight = attributes.lineHeight > 0
         ? attributes.lineHeight * (attributes.allowFontScaling ? attributes.fontScale : 1)
@@ -278,9 +291,10 @@ NSAttributedString *RNTextEngineBuildAttributedText(
     NSInteger end = index < transformedText.runEnds.count ? transformedText.runEnds[index].integerValue : run.end;
     if (start < previousEnd || start < 0 || end > resolvedText.length || end <= start) continue;
 
-    auto runAttributes = BuildRunAttributes(attributes, run.style, preScaledTypography);
+    auto runAttributes = BuildRunOverrides(attributes, baseAttributes, run.style, preScaledTypography);
     if (start > previousEnd) includeCapHeight(baseCapHeight);
-    includeCapHeight(((UIFont *)runAttributes[NSFontAttributeName]).capHeight);
+    UIFont *runFont = runAttributes[NSFontAttributeName] ?: baseAttributes[NSFontAttributeName];
+    includeCapHeight(runFont.capHeight);
     [attributedText addAttributes:runAttributes range:NSMakeRange(start, end - start)];
     previousEnd = end;
   }

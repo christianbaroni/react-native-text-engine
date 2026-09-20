@@ -1,6 +1,7 @@
 #import <XCTest/XCTest.h>
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
+#import "../../../ios/RNTextEngineTextLayoutMetrics.h"
 
 #ifdef RCT_NEW_ARCH_ENABLED
 #import "../../../ios/RNTextEngineBindings.h"
@@ -1322,6 +1323,52 @@ static void MountAndDrawTree(const RootShadowNode &root, BOOL textView, CGContex
       .children = std::make_shared<const std::vector<std::shared_ptr<const ShadowNode>>>()}));
   flat->layout(context);
   XCTAssertFalse(flat->getStateData().content->nestedText != nil);
+#endif
+}
+
+- (void)testInlineAttributesInheritParagraphStyleAndOverrideTypography
+{
+#ifdef RCT_NEW_ARCH_ENABLED
+  NSString *text = @"0123456789 0123456789";
+  for (BOOL scaled : {NO, YES}) for (BOOL preScaled : {NO, YES}) {
+    RNTextEngineTextAttributes base{
+        .allowFontScaling = scaled, .fontScale = 1.4, .color = UIColor.blackColor,
+        .fontSize = 17, .letterSpacing = 0.2, .lineHeight = 25, .tabularNumbers = YES,
+        .textAlign = @"right", .textDecorationLine = @"underline line-through",
+        .textDecorationStyle = @"dotted", .textShadowColor = UIColor.blueColor,
+        .textShadowOffset = CGSizeMake(1, -2), .textShadowRadius = 2,
+    };
+    for (BOOL explicitDecoration : {NO, YES}) {
+      base.textDecorationColor = explicitDecoration ? UIColor.greenColor : nil;
+      auto colored = RNTextEngineBuildAttributedText(text, base,
+          {{.start = 0, .end = 5, .style = {.color = UIColor.redColor}}}, nil, preScaled);
+      auto root = [colored attributesAtIndex:10 effectiveRange:nil];
+      auto run = [colored attributesAtIndex:0 effectiveRange:nil];
+      for (NSAttributedStringKey key in @[NSFontAttributeName, NSParagraphStyleAttributeName,
+          NSShadowAttributeName, NSKernAttributeName, NSUnderlineStyleAttributeName, NSStrikethroughStyleAttributeName]) {
+        XCTAssertEqualObjects(run[key], root[key]);
+      }
+      XCTAssertEqualObjects(run[NSForegroundColorAttributeName], UIColor.redColor);
+      XCTAssertEqualObjects(run[NSUnderlineColorAttributeName], base.textDecorationColor ?: UIColor.redColor);
+      XCTAssertEqualObjects(run[NSStrikethroughColorAttributeName], base.textDecorationColor ?: UIColor.redColor);
+      XCTAssertEqualObjects(run[RNTextEngineUniformCapHeightAttributeName], @(((UIFont *)root[NSFontAttributeName]).capHeight));
+
+      RNTextEngineTextRunStyle override{.fontSize = 23, .lineHeight = 31, .tabularNumbers = false};
+      auto mixed = RNTextEngineBuildAttributedText(text, base, {{.start = 0, .end = 5, .style = override}}, nil, preScaled);
+      auto expectedBase = base;
+      expectedBase.allowFontScaling = NO;
+      CGFloat scale = scaled && !preScaled ? 1.4 : 1;
+      expectedBase.fontSize = 23 * scale;
+      expectedBase.lineHeight = 31 * scale;
+      expectedBase.tabularNumbers = NO;
+      auto expected = RNTextEngineBuildAttributedText(text, expectedBase, {}, nil, NO);
+      XCTAssertEqualObjects([mixed attribute:NSFontAttributeName atIndex:0 effectiveRange:nil],
+          [expected attribute:NSFontAttributeName atIndex:0 effectiveRange:nil]);
+      XCTAssertEqualObjects([mixed attribute:NSParagraphStyleAttributeName atIndex:0 effectiveRange:nil],
+          [expected attribute:NSParagraphStyleAttributeName atIndex:0 effectiveRange:nil]);
+      XCTAssertNil([mixed attribute:RNTextEngineUniformCapHeightAttributeName atIndex:0 effectiveRange:nil]);
+    }
+  }
 #endif
 }
 
