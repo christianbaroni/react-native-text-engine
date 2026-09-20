@@ -748,6 +748,66 @@ class RNTextEngineBindingsInstrumentedTest {
     }
 
     @Test
+    fun drawingOriginsPreservePhysicalEdgesAndRtlOverflow() {
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            val manager = RNTextEngineTextViewManager()
+            val view = RNTextEngineTextViewManager.RNTextEngineTextView(application)
+            manager.setFontSize(view, 24.0)
+            manager.setLineHeight(view, 16.25)
+            manager.setColor(view, Color.BLACK)
+            val actual = Bitmap.createBitmap(480, 1000, Bitmap.Config.ARGB_8888)
+            val expected = Bitmap.createBitmap(480, 1000, Bitmap.Config.ARGB_8888)
+            var sawRtlOverflow = false
+            try {
+                for (text in listOf("שָׁ", "مرحبا abc\nLatin שלום", "שָׁ\t🙂\nLatin\tمرحبا", "Words wrapping across multiple lines for truncation")) {
+                    manager.setText(view, text)
+                    for (alignment in listOf(null, "auto", "justify", "left", "right", "center")) {
+                        manager.setTextAlign(view, alignment)
+                        for ((maxLines, ellipsize) in listOf(0 to "clip", 2 to "tail", 1 to "middle")) {
+                            view.setNumberOfLines(maxLines)
+                            view.setEllipsizeMode(ellipsize)
+                            for (padding in listOf(3, 17)) {
+                                manager.setPadding(view, padding, 7, padding + 2, 9)
+                                for (contentWidth in listOf(0, 1, 31, 240)) {
+                                    val width = contentWidth + 2 * padding + 2
+                                    measureAndLayout(view, width, actual.height)
+                                    val layout = requireNotNull(view.displayView.resolveLayout(width))
+                                    var minLeft = 0f
+                                    var maxRight = 0f
+                                    for (line in 0 until layout.lineCount) {
+                                        minLeft = minOf(minLeft, layout.getLineLeft(line))
+                                        maxRight = maxOf(maxRight, layout.getLineRight(line))
+                                    }
+                                    sawRtlOverflow = sawRtlOverflow || minLeft < 0f
+                                    val origin = when (alignment) {
+                                        "center" -> 0f
+                                        "right" -> -ceil(max(0f, maxRight - contentWidth).toDouble()).toFloat()
+                                        else -> ceil(max(0f, -minLeft).toDouble()).toFloat()
+                                    }
+                                    if (alignment == "left") assertEquals(0f, origin, 0f)
+                                    if (alignment == "right" && contentWidth == 0) assertEquals(-1f, origin, 0f)
+                                    actual.eraseColor(Color.TRANSPARENT)
+                                    expected.eraseColor(Color.TRANSPARENT)
+                                    view.displayView.draw(Canvas(actual))
+                                    val canvas = Canvas(expected)
+                                    canvas.translate(padding + origin, 7f)
+                                    layout.draw(canvas)
+                                    assertTrue("text=$text align=$alignment width=$contentWidth padding=$padding lines=$maxLines mode=$ellipsize",
+                                        actual.sameAs(expected))
+                                }
+                            }
+                        }
+                    }
+                }
+                assertTrue("The fixtures must exercise negative RTL extents", sawRtlOverflow)
+            } finally {
+                actual.recycle()
+                expected.recycle()
+            }
+        }
+    }
+
+    @Test
     fun emptyBackgroundsPreserveTransparencyAndRequestedColors() {
         InstrumentationRegistry.getInstrumentation().runOnMainSync {
             val testContext = InstrumentationRegistry.getInstrumentation().context

@@ -231,21 +231,15 @@ internal class RNTextEngineAttributedTextDisplayView(context: Context, private v
     }
 
     private fun resolveHorizontalDrawOrigin(layout: Layout, contentWidth: Int, textAlign: String?): Float {
-        if (layout.lineCount == 0 || textAlign == "center") return 0f
+        if (layout.lineCount == 0 || textAlign == "left" || textAlign == "center") return 0f
+        if (textAlign == "right") return min(0, contentWidth - layout.width).toFloat()
 
         var minLeft = 0f
-        var maxRight = 0f
         for (index in 0 until layout.lineCount) {
-            minLeft = min(minLeft, layout.getLineLeft(index))
-            maxRight = max(maxRight, layout.getLineRight(index))
+            if (layout.getParagraphDirection(index) == Layout.DIR_RIGHT_TO_LEFT) {
+                minLeft = min(minLeft, layout.getLineLeft(index))
+            }
         }
-
-        val leftInset = max(0f, -minLeft)
-        val rightOverflow = max(0f, maxRight - contentWidth)
-        return if (textAlign == "right") {
-            -ceil(rightOverflow.toDouble()).toFloat()
-        } else {
-            ceil(leftInset.toDouble()).toFloat()
-        }
+        return ceil(-minLeft.toDouble()).toFloat()
     }
 }
