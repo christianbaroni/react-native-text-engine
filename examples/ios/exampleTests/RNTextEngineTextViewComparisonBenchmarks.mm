@@ -1,9 +1,14 @@
 #import <XCTest/XCTest.h>
 #import <UIKit/UIKit.h>
+#import <objc/runtime.h>
 
 #ifdef RCT_NEW_ARCH_ENABLED
 #import "../../../ios/RNTextEngineBindings.h"
 #import "../../../ios/RNTextEngineTextViewShadowNode.h"
+#import <React/RCTParagraphComponentView.h>
+#import <React/RCTConversions.h>
+#import <React/RCTUtils.h>
+#import "../../../ios/RNTextEngineAttributedTextDisplayView.h"
 
 #import <react/renderer/attributedstring/AttributedString.h>
 #import <react/renderer/attributedstring/AttributedStringBox.h>
@@ -296,27 +301,15 @@ static uint64_t CreateTextViewHandle(
     NSArray<NSNumber *> *runLineHeights,
     NSArray<NSNumber *> *runTabularNumbers)
 {
-  return rntextengine::createPreparedTextHandleForTextView(
-      text,
-      NO,
-      nil,
-      style.fontSize,
-      ToNSString(style.fontWeight),
-      ToNSString(style.fontStyle),
-      style.letterSpacing,
-      style.lineHeight,
-      style.tabularNumbers,
-      nil,
-      runStarts,
-      runEnds,
-      runStyleMasks,
-      nil,
-      runFontSizes,
-      runFontStyles,
-      runFontWeights,
-      runLetterSpacings,
-      runLineHeights,
-      runTabularNumbers);
+  return rntextengine::createPreparedTextHandleForTextView(text, {
+      .fontSize = style.fontSize,
+      .fontStyle = ToNSString(style.fontStyle),
+      .fontWeight = ToNSString(style.fontWeight),
+      .letterSpacing = style.letterSpacing,
+      .lineHeight = style.lineHeight,
+      .tabularNumbers = style.tabularNumbers,
+  }, RNTextEngineTextRunsFromArrays(runStarts, runEnds, runStyleMasks,
+      nil, nil, runFontSizes, runFontStyles, runFontWeights, runLetterSpacings, runLineHeights, runTabularNumbers));
 }
 
 static CGSize MeasureRNTextLayout(
@@ -484,6 +477,53 @@ static std::shared_ptr<RootShadowNode> BuildTextViewTree(
   return BuildBenchmarkShadowNode(registry, Element<RootShadowNode>()
       .surfaceId(1).tag(1).props(BuildRootProps(320)).children(std::move(children)));
 }
+
+static void WithMethodImplementation(Class owner, SEL selector, id implementation, dispatch_block_t body)
+{
+  Method method = class_getInstanceMethod(owner, selector);
+  IMP replacement = imp_implementationWithBlock(implementation);
+  IMP previous = method_setImplementation(method, replacement);
+  @try {
+    body();
+  } @finally {
+    method_setImplementation(method, previous);
+    imp_removeBlock(replacement);
+  }
+}
+
+static UIView<RCTComponentViewProtocol> *MountTextViewNode(const RNTextEngineTextViewShadowNode &node)
+{
+  UIView<RCTComponentViewProtocol> *view = [NSClassFromString(@"RNTextEngineTextViewComponentView") new];
+  [view updateProps:node.getProps() oldProps:nullptr];
+  [view updateEventEmitter:node.getEventEmitter()];
+  [view updateState:node.getState() oldState:nullptr];
+  auto metrics = node.getLayoutMetrics();
+  metrics.frame.size = {.width = 260, .height = 640};
+  [view updateLayoutMetrics:metrics oldLayoutMetrics:EmptyLayoutMetrics];
+  [view finalizeUpdates:RNComponentViewUpdateMaskAll];
+  [view layoutIfNeeded];
+  return view;
+}
+
+static RNTextEngineAttributedTextDisplayView *TextViewDisplay(UIView *component)
+{
+  return [[component valueForKey:@"textView"] valueForKey:@"displayView"];
+}
+
+static NSData *TextViewPixels(UIView *component, UIUserInterfaceStyle appearance)
+{
+  RNTextEngineAttributedTextDisplayView *view = TextViewDisplay(component);
+  view.overrideUserInterfaceStyle = appearance;
+  UIGraphicsImageRendererFormat *format = [UIGraphicsImageRendererFormat defaultFormat];
+  format.scale = UIScreen.mainScreen.scale;
+  format.opaque = NO;
+  UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc] initWithBounds:view.bounds format:format];
+  UIImage *image = [renderer imageWithActions:^(UIGraphicsImageRendererContext *context) {
+    [view.layer renderInContext:context.CGContext];
+  }];
+  return UIImagePNGRepresentation(image);
+}
+
 
 #endif
 
@@ -757,6 +797,337 @@ static std::shared_ptr<RootShadowNode> BuildTextViewTree(
 
 #endif
 
+- (void)testPreparedContentPreservesFabricPropsAndStateOrdering
+{
+#ifdef RCT_NEW_ARCH_ENABLED
+  auto registry = BuildBenchmarkComponentDescriptorRegistry();
+  auto context = BuildFabricLayoutContext();
+  auto props = BuildTextViewProps("Prepared typography survives unrelated updates.", {.fontSize = 17, .lineHeight = 24}, 260);
+  auto node = BuildBenchmarkShadowNode(registry, Element<RNTextEngineTextViewShadowNode>().props(props));
+  const auto initialSize = node->measureContent(context, BuildLayoutConstraints(260));
+  node->layout(context);
+  auto content = node->getStateData().content;
+  XCTAssertTrue(content != nullptr);
+  XCTAssertFalse([content->attributedText isKindOfClass:NSMutableAttributedString.class]);
+
+  UIView<RCTComponentViewProtocol> *view = MountTextViewNode(*node);
+  UIView<RCTComponentViewProtocol> *secondView = MountTextViewNode(*node);
+  XCTAssertTrue(TextViewDisplay(view).attributedText == content->attributedText);
+  XCTAssertTrue(TextViewDisplay(secondView).attributedText == content->attributedText);
+  XCTAssertFalse([TextViewDisplay(view) valueForKey:@"layoutManager"] ==
+                 [TextViewDisplay(secondView) valueForKey:@"layoutManager"]);
+
+  auto unrelatedProps = std::make_shared<RNTextEngineTextViewProps>(*props);
+  unrelatedProps->opacity = 0.4;
+  auto unrelated = std::static_pointer_cast<RNTextEngineTextViewShadowNode>(node->clone({.props = unrelatedProps}));
+  unrelated->layout(context);
+  XCTAssertTrue(unrelated->getStateData().content == content);
+  [view updateProps:unrelatedProps oldProps:props];
+  [view finalizeUpdates:RNComponentViewUpdateMaskProps];
+  [view layoutIfNeeded];
+  XCTAssertTrue(TextViewDisplay(view).attributedText == content->attributedText);
+
+  auto animatedProps = std::make_shared<RNTextEngineTextViewProps>(*unrelatedProps);
+  animatedProps->fontSize = 31;
+  [view updateProps:animatedProps oldProps:unrelatedProps];
+  [view finalizeUpdates:RNComponentViewUpdateMaskProps];
+  [view layoutIfNeeded];
+  NSAttributedString *animatedText = TextViewDisplay(view).attributedText;
+  XCTAssertEqualWithAccuracy(((UIFont *)[animatedText attribute:NSFontAttributeName atIndex:0 effectiveRange:nil]).pointSize, 31, 0.001);
+  [view updateState:node->getState() oldState:unrelated->getState()];
+  [view finalizeUpdates:RNComponentViewUpdateMaskState];
+  [view layoutIfNeeded];
+  XCTAssertTrue(TextViewDisplay(view).attributedText == animatedText);
+  XCTAssertTrue(TextViewDisplay(secondView).attributedText == content->attributedText);
+
+  [view updateProps:unrelatedProps oldProps:props];
+  [view finalizeUpdates:RNComponentViewUpdateMaskProps];
+  [view layoutIfNeeded];
+  XCTAssertTrue(TextViewDisplay(view).attributedText == content->attributedText);
+
+  auto queryProps = std::make_shared<RNTextEngineTextViewProps>(*props);
+  queryProps->numberOfLines = 1;
+  queryProps->ellipsizeMode = "tail";
+  auto query = std::static_pointer_cast<RNTextEngineTextViewShadowNode>(node->clone({.props = queryProps}));
+  auto fresh = BuildBenchmarkShadowNode(registry, Element<RNTextEngineTextViewShadowNode>().props(queryProps));
+  XCTAssertTrue(query->measureContent(context, BuildLayoutConstraints(80)) == fresh->measureContent(context, BuildLayoutConstraints(80)));
+  query->layout(context);
+  XCTAssertTrue(query->getStateData().content == content);
+
+  rntextengine::cleanup();
+  XCTAssertTrue(node->measureContent(context, BuildLayoutConstraints(260)) == initialSize);
+  XCTAssertGreaterThan(node->measureContent(context, BuildLayoutConstraints(160)).height, 0);
+  [view prepareForRecycle];
+  [view layoutIfNeeded];
+  XCTAssertEqual(TextViewDisplay(view).attributedText.length, 0u);
+#endif
+}
+
+- (void)testNestedDrawingOnlyUpdatesPreserveSelectionAndContentLifetime
+{
+#ifdef RCT_NEW_ARCH_ENABLED
+  std::weak_ptr<const RNTextEngineTextContent> releasedContent;
+  @autoreleasepool {
+    auto registry = BuildBenchmarkComponentDescriptorRegistry();
+    auto context = BuildFabricLayoutContext();
+    auto props = BuildTextViewProps("Parent ", {.fontSize = 17, .lineHeight = 24}, 260);
+    props->selectable = true;
+    auto childProps = BuildTextViewProps("selected child text", {.fontSize = 17, .lineHeight = 24}, 260);
+    auto node = BuildBenchmarkShadowNode(registry, Element<RNTextEngineTextViewShadowNode>().props(props)
+        .children({Element<RNTextEngineTextViewShadowNode>().props(childProps)}));
+    node->measureContent(context, BuildLayoutConstraints(260));
+    node->layout(context);
+    auto content = node->getStateData().content;
+    releasedContent = content;
+    auto view = MountTextViewNode(*node);
+    UITextView *selection = [[view valueForKey:@"textView"] valueForKey:@"interactionTextView"];
+    XCTAssertNotNil(selection);
+    selection.selectedRange = NSMakeRange(2, 7);
+    NSTextStorage *selectedStorage = selection.textStorage;
+    auto changedChildProps = std::make_shared<RNTextEngineTextViewProps>(*childProps);
+    changedChildProps->textDecorationLine = "underline";
+    changedChildProps->textShadowColor = colorFromRGBA(255, 0, 0, 255);
+    changedChildProps->textAlign = "right";
+    auto changedChild = node->getChildren().front()->clone({.props = changedChildProps});
+    auto changed = std::static_pointer_cast<RNTextEngineTextViewShadowNode>(node->clone({
+        .children = std::make_shared<const std::vector<std::shared_ptr<const ShadowNode>>>(
+            std::vector<std::shared_ptr<const ShadowNode>>{changedChild})}));
+    changed->layout(context);
+    XCTAssertTrue(changed->getStateData().content == content);
+    [view updateState:changed->getState() oldState:node->getState()];
+    [view finalizeUpdates:RNComponentViewUpdateMaskState];
+    [view layoutIfNeeded];
+    XCTAssertTrue(selection.textStorage == selectedStorage);
+    XCTAssertTrue(NSEqualRanges(selection.selectedRange, NSMakeRange(2, 7)));
+
+    changedChildProps = std::make_shared<RNTextEngineTextViewProps>(*changedChildProps);
+    changedChildProps->color = colorFromRGBA(0, 0, 255, 255);
+    changedChild = changedChild->clone({.props = changedChildProps});
+    auto recolored = std::static_pointer_cast<RNTextEngineTextViewShadowNode>(changed->clone({
+        .children = std::make_shared<const std::vector<std::shared_ptr<const ShadowNode>>>(
+            std::vector<std::shared_ptr<const ShadowNode>>{changedChild})}));
+    recolored->layout(context);
+    XCTAssertTrue(recolored->getStateData().content != content);
+    [view updateState:recolored->getState() oldState:changed->getState()];
+    [view finalizeUpdates:RNComponentViewUpdateMaskState];
+    [view layoutIfNeeded];
+    XCTAssertEqualObjects([selection.attributedText attribute:NSForegroundColorAttributeName atIndex:7 effectiveRange:nil], UIColor.blueColor);
+    [view prepareForRecycle];
+  }
+  XCTAssertTrue(releasedContent.expired());
+#endif
+}
+
+- (void)testPreparedContentUsesLayoutFontScaleAndRenderedRunHeights
+{
+#ifdef RCT_NEW_ARCH_ENABLED
+  auto registry = BuildBenchmarkComponentDescriptorRegistry();
+  for (bool nested : {false, true}) {
+    for (double size : {0., 17.}) {
+      auto props = BuildTextViewProps("Parent child words wrap onto several lines.", {.fontSize = size, .lineHeight = 24}, 120);
+      props->allowFontScaling = true;
+      props->runStarts = {0};
+      props->runEnds = {6};
+      props->runStyleMasks = {64};
+      props->runLineHeights = {0};
+      auto element = Element<RNTextEngineTextViewShadowNode>().props(props);
+      if (nested) {
+        auto child = std::make_shared<RNTextEngineTextViewProps>();
+        child->text = " inherited";
+        element.children({Element<RNTextEngineTextViewShadowNode>().props(child)});
+      }
+      auto node = BuildBenchmarkShadowNode(registry, element);
+      auto context = BuildFabricLayoutContext();
+      for (Float scale : {1., 1.3, 2.}) {
+        context.fontSizeMultiplier = scale;
+        auto previous = node->getStateData().content;
+        auto measured = node->measureContent(context, BuildLayoutConstraints(120));
+        node->layout(context);
+        auto content = node->getStateData().content;
+        XCTAssertTrue(content != previous);
+        UIFont *font = [content->attributedText attribute:NSFontAttributeName atIndex:0 effectiveRange:nil];
+        XCTAssertEqualWithAccuracy(font.pointSize, (size > 0 ? size : 14) * scale, 0.001);
+        NSTextStorage *storage = [[NSTextStorage alloc] initWithAttributedString:content->attributedText];
+        NSLayoutManager *manager = [NSLayoutManager new];
+        NSTextContainer *container = [[NSTextContainer alloc] initWithSize:CGSizeMake(120, CGFLOAT_MAX)];
+        container.lineFragmentPadding = 0;
+        [manager addTextContainer:container];
+        [storage addLayoutManager:manager];
+        [manager ensureLayoutForTextContainer:container];
+        XCTAssertEqualWithAccuracy(measured.height, [manager usedRectForTextContainer:container].size.height,
+            1.0 / UIScreen.mainScreen.scale, @"nested=%d size=%g scale=%g", nested, size, scale);
+      }
+    }
+  }
+#endif
+}
+
+- (void)testTextViewHandlesMatchRenderedScaledTypography
+{
+#ifdef RCT_NEW_ARCH_ENABLED
+  WithMethodImplementation(UIApplication.class, @selector(preferredContentSizeCategory),
+      ^NSString *(id) { return UIContentSizeCategoryExtraExtraLarge; }, ^{
+    for (NSString *alignment in @[@"left", @"center", @"right", @"justify"]) {
+      for (double size : {14., 17.}) {
+        NSString *text = @"Inline font overrides should preserve the measured line heights while wrapping.";
+        NSArray *starts = @[@0];
+        NSArray *ends = @[@6];
+        NSArray *masks = @[@(4 | 64)];
+        NSArray *sizes = @[@22];
+        NSArray *heights = @[@0];
+        RNTextEngineTextAttributes attributes{
+            .allowFontScaling = YES,
+            .fontScale = RCTFontSizeMultiplier(),
+            .fontSize = size,
+            .lineHeight = 24,
+            .textAlign = alignment,
+        };
+        auto handle = rntextengine::createPreparedTextHandleForTextView(text, attributes,
+            RNTextEngineTextRunsFromArrays(starts, ends, masks, nil, nil, sizes, nil, nil, nil, heights, nil));
+        UIView *view = [[NSClassFromString(@"RNTextEngineTextView") alloc] initWithFrame:CGRectMake(0, 0, 120, 640)];
+        [view setValue:text forKey:@"text"];
+        [view setValue:@YES forKey:@"allowFontScaling"];
+        [view setValue:@(size) forKey:@"fontSize"];
+        [view setValue:@24 forKey:@"lineHeight"];
+        [view setValue:alignment forKey:@"textAlign"];
+        [view setValue:starts forKey:@"runStarts"];
+        [view setValue:ends forKey:@"runEnds"];
+        [view setValue:masks forKey:@"runStyleMasks"];
+        [view setValue:sizes forKey:@"runFontSizes"];
+        [view setValue:heights forKey:@"runLineHeights"];
+        [view layoutIfNeeded];
+        RNTextEngineAttributedTextDisplayView *display = [view valueForKey:@"displayView"];
+        NSAttributedString *prepared = rntextengine::preparedAttributedTextForHandle(handle);
+        for (NSUInteger index : {0u, 7u}) {
+          UIFont *measuredFont = [prepared attribute:NSFontAttributeName atIndex:index effectiveRange:nil];
+          UIFont *renderedFont = [display.attributedText attribute:NSFontAttributeName atIndex:index effectiveRange:nil];
+          XCTAssertEqualObjects(measuredFont, renderedFont);
+        }
+        for (NSInteger lines : {0, 2}) {
+          NSTextStorage *storage = [[NSTextStorage alloc] initWithAttributedString:display.attributedText];
+          NSLayoutManager *manager = [NSLayoutManager new];
+          NSTextContainer *container = [[NSTextContainer alloc] initWithSize:CGSizeMake(120, CGFLOAT_MAX)];
+          container.lineFragmentPadding = 0;
+          container.maximumNumberOfLines = lines;
+          container.lineBreakMode = RNTextEngineResolveLineBreakMode(lines, @"tail");
+          [manager addTextContainer:container];
+          [storage addLayoutManager:manager];
+          [manager ensureLayoutForTextContainer:container];
+          CGSize measured = rntextengine::measurePreparedTextLayoutForHandle(handle, 120, lines, @"tail", NO);
+          XCTAssertEqualWithAccuracy(measured.height, [manager usedRectForTextContainer:container].size.height,
+              1.0 / UIScreen.mainScreen.scale, @"alignment=%@ size=%g lines=%ld", alignment, size, (long)lines);
+        }
+        rntextengine::releasePreparedTextHandle(handle);
+      }
+    }
+  });
+#endif
+}
+
+- (void)testPropsOnlyUpdatesUseCurrentUIKitFontScaleAndLocale
+{
+#ifdef RCT_NEW_ARCH_ENABLED
+  auto registry = BuildBenchmarkComponentDescriptorRegistry();
+  WithMethodImplementation(UIApplication.class, @selector(preferredContentSizeCategory),
+      ^NSString *(id) { return UIContentSizeCategoryLarge; }, ^{
+    for (double size : {0., 17.}) {
+      auto props = BuildTextViewProps("Scaled content", {.fontSize = size}, 260);
+      props->allowFontScaling = true;
+      auto context = BuildFabricLayoutContext();
+      context.fontSizeMultiplier = RCTFontSizeMultiplier();
+      auto node = BuildBenchmarkShadowNode(registry, Element<RNTextEngineTextViewShadowNode>().props(props));
+      node->measureContent(context, BuildLayoutConstraints(260));
+      node->layout(context);
+      auto view = MountTextViewNode(*node);
+      WithMethodImplementation(UIApplication.class, @selector(preferredContentSizeCategory),
+          ^NSString *(id) { return UIContentSizeCategoryExtraExtraLarge; }, ^{
+        for (bool colorOnly : {false, true}) {
+          auto changed = std::make_shared<RNTextEngineTextViewProps>(*props);
+          if (colorOnly) changed->color = colorFromRGBA(0, 0, 255, 255);
+          else changed->fontSize = 31;
+          [view updateProps:changed oldProps:props];
+          [view finalizeUpdates:RNComponentViewUpdateMaskProps];
+          [view layoutIfNeeded];
+          UIFont *font = [TextViewDisplay(view).attributedText attribute:NSFontAttributeName atIndex:0 effectiveRange:nil];
+          CGFloat expectedSize = colorOnly ? (size > 0 ? size : 14) : 31;
+          XCTAssertEqualWithAccuracy(font.pointSize, expectedSize * RCTFontSizeMultiplier(), 0.001);
+        }
+      });
+    }
+  });
+
+  NSLocale *english = [[NSLocale alloc] initWithLocaleIdentifier:@"en_US"];
+  NSLocale *turkish = [[NSLocale alloc] initWithLocaleIdentifier:@"tr_TR"];
+  WithMethodImplementation(object_getClass(NSLocale.class), @selector(currentLocale), ^NSLocale *(id) { return english; }, ^{
+    auto props = BuildTextViewProps("istanbul izmir", {.fontSize = 17}, 260);
+    props->textTransform = "capitalize";
+    auto context = BuildFabricLayoutContext();
+    auto node = BuildBenchmarkShadowNode(registry, Element<RNTextEngineTextViewShadowNode>().props(props));
+    node->measureContent(context, BuildLayoutConstraints(260));
+    node->layout(context);
+    auto content = node->getStateData().content;
+    auto view = MountTextViewNode(*node);
+    XCTAssertEqualObjects(TextViewDisplay(view).attributedText.string, @"Istanbul Izmir");
+    WithMethodImplementation(object_getClass(NSLocale.class), @selector(currentLocale), ^NSLocale *(id) { return turkish; }, ^{
+      auto changed = std::make_shared<RNTextEngineTextViewProps>(*props);
+      changed->color = colorFromRGBA(0, 0, 255, 255);
+      [view updateProps:changed oldProps:props];
+      [view finalizeUpdates:RNComponentViewUpdateMaskProps];
+      [view layoutIfNeeded];
+      XCTAssertEqualObjects(TextViewDisplay(view).attributedText.string, @"İstanbul İzmir");
+      node->measureContent(context, BuildLayoutConstraints(260));
+      node->layout(context);
+      XCTAssertTrue(node->getStateData().content != content);
+      XCTAssertEqualObjects(node->getStateData().content->attributedText.string, @"İstanbul İzmir");
+    });
+  });
+#endif
+}
+
+- (void)testPreparedContentPreservesDynamicColorsAcrossWorkerAndViewTraits
+{
+#ifdef RCT_NEW_ARCH_ENABLED
+  auto registry = BuildBenchmarkComponentDescriptorRegistry();
+  auto context = BuildFabricLayoutContext();
+  auto props = BuildTextViewProps("Parent ", {.fontSize = 24, .lineHeight = 32}, 260);
+  props->textShadowColor = SharedColor(Color(DynamicColor{.lightColor = 0x00000000, .darkColor = static_cast<int32_t>(0xFFFF0000)}));
+  props->textShadowOffset = {.width = 3, .height = 2};
+  props->textDecorationLine = "underline line-through";
+  props->textDecorationStyle = "double";
+  auto child = BuildTextViewProps("Child 👩‍💻 測試", {.fontSize = 24, .lineHeight = 32}, 260);
+  child->color = SharedColor(Color(DynamicColor{.lightColor = static_cast<int32_t>(0xFF00FF00), .darkColor = static_cast<int32_t>(0xFF0000FF)}));
+  const auto makeNode = [&] {
+    return BuildBenchmarkShadowNode(registry, Element<RNTextEngineTextViewShadowNode>().props(props)
+        .children({Element<RNTextEngineTextViewShadowNode>().props(child)}));
+  };
+  for (UIUserInterfaceStyle preparedStyle : {UIUserInterfaceStyleLight, UIUserInterfaceStyleDark}) {
+    auto node = makeNode();
+    UITraitCollection *traits = [UITraitCollection traitCollectionWithUserInterfaceStyle:preparedStyle];
+    dispatch_sync(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+      [traits performAsCurrentTraitCollection:^{
+        node->measureContent(context, BuildLayoutConstraints(260));
+        node->layout(context);
+      }];
+    });
+    NSAttributedString *text = node->getStateData().content->attributedText;
+    XCTAssertNotNil([text attribute:NSShadowAttributeName atIndex:0 effectiveRange:nil]);
+    UIColor *runColor = [text attribute:NSForegroundColorAttributeName atIndex:7 effectiveRange:nil];
+    for (UIUserInterfaceStyle drawnStyle : {UIUserInterfaceStyleLight, UIUserInterfaceStyleDark}) {
+      UITraitCollection *drawTraits = [UITraitCollection traitCollectionWithUserInterfaceStyle:drawnStyle];
+      XCTAssertEqualObjects([runColor resolvedColorWithTraitCollection:drawTraits],
+          [RCTUIColorFromSharedColor(child->color) resolvedColorWithTraitCollection:drawTraits]);
+      [drawTraits performAsCurrentTraitCollection:^{
+        auto reference = makeNode();
+        reference->measureContent(context, BuildLayoutConstraints(260));
+        reference->layout(context);
+        XCTAssertEqualObjects(TextViewPixels(MountTextViewNode(*node), drawnStyle),
+                              TextViewPixels(MountTextViewNode(*reference), drawnStyle));
+      }];
+    }
+  }
+#endif
+}
+
 - (void)testTextViewMeasurementCacheDistinguishesAdjacentWidths
 {
 #ifdef RCT_NEW_ARCH_ENABLED
@@ -845,7 +1216,7 @@ static std::shared_ptr<RootShadowNode> BuildTextViewTree(
   }
   auto nested = buildNode(true);
   nested->layout(context);
-  XCTAssertTrue(nested->getStateData().hasNested);
+  XCTAssertTrue(nested->getStateData().content->nestedText != nil);
   const auto nestedState = nested->getState();
   auto unchanged = std::static_pointer_cast<RNTextEngineTextViewShadowNode>(
       nested->clone({.props = nested->getProps()}));
@@ -854,7 +1225,7 @@ static std::shared_ptr<RootShadowNode> BuildTextViewTree(
   auto flat = std::static_pointer_cast<RNTextEngineTextViewShadowNode>(nested->clone({
       .children = std::make_shared<const std::vector<std::shared_ptr<const ShadowNode>>>()}));
   flat->layout(context);
-  XCTAssertFalse(flat->getStateData().hasNested);
+  XCTAssertFalse(flat->getStateData().content->nestedText != nil);
 #endif
 }
 

@@ -557,53 +557,29 @@ static void RNTextEngineApplyResolvedPayloadToView(
   if (_preparedHandle != 0) return _preparedHandle;
 
   RNTextEngineResolvedPayload *payload = [self resolvePayload];
-  if (payload.hasNested) {
-    RNTextEngineResolvedStyle *rootStyle = RNTextEngineNormalizePreparedStyle([self resolveNodeStyleWithParent:nil]);
-    _preparedHandle = createPreparedTextHandleForTextView(
-        payload.text ?: @"",
-        NO,
-        rootStyle.fontFamily,
-        rootStyle.fontSize,
-        rootStyle.fontWeight,
-        rootStyle.fontStyle,
-        rootStyle.letterSpacing,
-        rootStyle.lineHeight,
-        rootStyle.tabularNumbers,
-        nil,
-        payload.runStarts,
-        payload.runEnds,
-        payload.runStyleMasks,
-        payload.runFontFamilies,
-        payload.runFontSizes,
-        payload.runFontStyles,
-        payload.runFontWeights,
-        payload.runLetterSpacings,
-        payload.runLineHeights,
-        payload.runTabularNumbers);
-    return _preparedHandle;
-  }
-
+  RNTextEngineResolvedStyle *style = [self resolveNodeStyleWithParent:nil];
+  if (payload.hasNested) style = RNTextEngineNormalizePreparedStyle(style);
+  RNTextEngineTextAttributes attributes{
+      .allowFontScaling = payload.hasNested ? NO : _allowFontScaling,
+      .fontScale = _allowFontScaling && !payload.hasNested ? RCTFontSizeMultiplier() : 1,
+      .fontFamily = style.fontFamily,
+      .fontSize = RNTextEngineResolveFontSize(style.fontSize),
+      .fontStyle = style.fontStyle,
+      .fontWeight = style.fontWeight,
+      .letterSpacing = style.letterSpacing,
+      .lineHeight = style.lineHeight,
+      .tabularNumbers = style.tabularNumbers,
+      .textAlign = _textAlign,
+  };
+  std::vector<RNTextEngineTextRun> runs = payload.hasNested
+      ? RNTextEngineTextRunsFromArrays(payload.runStarts, payload.runEnds, payload.runStyleMasks,
+          nil, payload.runFontFamilies, payload.runFontSizes, payload.runFontStyles,
+          payload.runFontWeights, payload.runLetterSpacings, payload.runLineHeights, payload.runTabularNumbers)
+      : RNTextEngineTextRunsFromArrays(_runStarts, _runEnds, _runStyleMasks,
+          nil, _runFontFamilies, _runFontSizes, _runFontStyles,
+          _runFontWeights, _runLetterSpacings, _runLineHeights, _runTabularNumbers, _runCount);
   _preparedHandle = createPreparedTextHandleForTextView(
-      _text ?: @"",
-      _allowFontScaling,
-      _fontFamily,
-      RNTextEngineResolveFontSize(_fontSize),
-      _fontWeight,
-      _fontStyle,
-      _letterSpacing,
-      _lineHeight,
-      _tabularNumbers,
-      _textTransform,
-      _runStarts,
-      _runEnds,
-      _runStyleMasks,
-      _runFontFamilies,
-      _runFontSizes,
-      _runFontStyles,
-      _runFontWeights,
-      _runLetterSpacings,
-      _runLineHeights,
-      _runTabularNumbers);
+      (payload.hasNested ? payload.text : _text) ?: @"", attributes, runs, payload.hasNested ? nil : _textTransform);
   return _preparedHandle;
 }
 
@@ -1047,6 +1023,13 @@ static void RNTextEngineApplyResolvedPayloadToView(
 {
   if (_lineHeight == lineHeight) return;
   _lineHeight = lineHeight;
+  [self invalidatePreparedHandle];
+}
+
+- (void)setTextAlign:(NSString *)textAlign
+{
+  if ((_textAlign == textAlign) || [_textAlign isEqualToString:textAlign]) return;
+  _textAlign = [textAlign copy];
   [self invalidatePreparedHandle];
 }
 

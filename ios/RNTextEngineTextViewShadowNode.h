@@ -2,6 +2,8 @@
 
 #ifdef RCT_NEW_ARCH_ENABLED
 
+#import "RNTextEngineTextAttributes.h"
+
 #import <react/renderer/components/RNTextEngineSpec/EventEmitters.h>
 #import <react/renderer/components/RNTextEngineSpec/Props.h>
 #import <react/renderer/components/view/ConcreteViewShadowNode.h>
@@ -15,11 +17,8 @@
 #include <react/renderer/mapbuffer/MapBufferBuilder.h>
 #endif
 
-#include <cstdint>
-#include <limits>
 #include <memory>
 #include <mutex>
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -28,20 +27,7 @@ namespace facebook::react {
 extern const char RNTextEngineTextViewComponentName[];
 
 struct RNTextEngineTextViewStateData final {
-  bool hasNested{false};
-  int64_t hash{0};
-  std::string text{};
-  std::vector<int> runStarts{};
-  std::vector<int> runEnds{};
-  std::vector<int> runStyleMasks{};
-  std::vector<std::string> runColors{};
-  std::vector<std::string> runFontFamilies{};
-  std::vector<double> runFontSizes{};
-  std::vector<std::string> runFontWeights{};
-  std::vector<std::string> runFontStyles{};
-  std::vector<double> runLetterSpacings{};
-  std::vector<double> runLineHeights{};
-  std::vector<bool> runTabularNumbers{};
+  std::shared_ptr<const RNTextEngineTextContent> content;
 
   static RNTextEngineTextViewStateData empty();
 
@@ -102,7 +88,7 @@ class RNTextEngineTextViewShadowNode final : public ConcreteViewShadowNode<
   };
 
   struct ResolvedStyle {
-    std::string color{};
+    UIColor *color{nil};
     std::string fontFamily{};
     double fontSize{14.0};
     std::string fontStyle{};
@@ -127,53 +113,36 @@ class RNTextEngineTextViewShadowNode final : public ConcreteViewShadowNode<
   };
 
   struct ResolvedPayload {
-    bool hasNested{false};
-    int64_t hash{0};
-    std::string text{};
-    std::vector<int> runStarts{};
-    std::vector<int> runEnds{};
-    std::vector<int> runStyleMasks{};
-    std::vector<std::string> runColors{};
-    std::vector<std::string> runFontFamilies{};
-    std::vector<double> runFontSizes{};
-    std::vector<std::string> runFontWeights{};
-    std::vector<std::string> runFontStyles{};
-    std::vector<double> runLetterSpacings{};
-    std::vector<double> runLineHeights{};
-    std::vector<bool> runTabularNumbers{};
+    NSString *text{nil};
+    std::vector<RNTextEngineTextRun> runs;
+    bool localized{false};
   };
 
-  struct MeasurementCache {
-    ~MeasurementCache();
-
-    std::mutex mutex;
-    std::optional<ResolvedPayload> payload;
-    uint64_t handle{0};
-    double preferredWidth{-1};
-    std::vector<CachedLayout> layouts{};
-  };
-
+  struct MeasurementCache;
   MeasurementCache &ensureMeasurementCache() const;
-  void prepareMeasurementHandle(MeasurementCache &cache) const;
-
-  const ResolvedPayload &resolvePayload(MeasurementCache &cache) const;
+  void prepareMeasurementContent(MeasurementCache &cache, CGFloat fontScale) const;
+  bool hasSameTextContent(const RNTextEngineTextViewShadowNode &other, bool inherited = false) const;
+  ResolvedPayload resolvePayload(CGFloat fontScale) const;
   bool appendNodePayload(
       const RNTextEngineTextViewShadowNode &node,
       const ResolvedStyle &parentStyle,
       std::u16string &text,
-      std::vector<ResolvedSegment> &segments) const;
+      std::vector<ResolvedSegment> &segments,
+      CGFloat fontScale) const;
   void emitStyledText(
       const std::u16string &text,
       const ResolvedStyle &baseStyle,
       const std::vector<ResolvedRun> &runs,
       std::u16string &textBuilder,
-      std::vector<ResolvedSegment> &segments) const;
+      std::vector<ResolvedSegment> &segments,
+      CGFloat fontScale) const;
   void appendSegment(
       std::u16string &textBuilder,
       std::vector<ResolvedSegment> &segments,
       const std::u16string &text,
-      const ResolvedStyle &style) const;
-  static ResolvedStyle normalizePreparedStyle(const ResolvedStyle &style);
+      const ResolvedStyle &style,
+      CGFloat fontScale) const;
+  static ResolvedStyle normalizePreparedStyle(const ResolvedStyle &style, CGFloat fontScale);
   ResolvedStyle resolveNodeStyle(
       const RNTextEngineTextViewProps &props,
       const ResolvedStyle *parentStyle) const;
@@ -190,8 +159,8 @@ class RNTextEngineTextViewShadowNode final : public ConcreteViewShadowNode<
       const std::u16string &text,
       const std::vector<ResolvedSegment> &segments,
       const ResolvedStyle &rootStyle,
-      bool hasNested) const;
-  void publishStateIfNeeded(const ResolvedPayload &payload);
+      bool localized,
+      CGFloat fontScale) const;
 
   mutable std::shared_ptr<MeasurementCache> measurementCache_{};
   mutable std::once_flag measurementCacheInitialization_;

@@ -1,5 +1,6 @@
 #import "RNTextEngineBindings.h"
 #import "RNTextEngineAttributedTextDisplayView.h"
+#import "RNTextEngineTextAttributes.h"
 #import "RNTextEngineColorUtils.h"
 #import "RNTextEngineTextLayoutMetrics.h"
 #import "RNTextEngineTextTransform.h"
@@ -328,13 +329,6 @@ static std::unordered_map<Handle, std::shared_ptr<PreparedQueryOwner>> preparedQ
 static std::atomic<bool> preparedQueryOwnersActive = false;
 static Handle nextHandle = 1;
 
-static NSInteger RNTextEngineRunStyleHasFontFamily = 1 << 1;
-static NSInteger RNTextEngineRunStyleHasFontSize = 1 << 2;
-static NSInteger RNTextEngineRunStyleHasFontStyle = 1 << 3;
-static NSInteger RNTextEngineRunStyleHasFontWeight = 1 << 4;
-static NSInteger RNTextEngineRunStyleHasLetterSpacing = 1 << 5;
-static NSInteger RNTextEngineRunStyleHasLineHeight = 1 << 6;
-static NSInteger RNTextEngineRunStyleHasTabularNumbers = 1 << 7;
 static std::mutex glyphFieldMutex;
 static NSMutableDictionary<NSNumber *, RNTextEngineGlyphField *> *glyphFields;
 static Handle nextGlyphFieldHandle = 1;
@@ -481,105 +475,6 @@ std::vector<TextMeasureRun> parseRuns(Runtime& runtime, const Value& value, NSIn
     TextMeasureRun run;
     run.end = end;
     run.start = start;
-    run.style = style;
-    runs.push_back(run);
-    previousEnd = end;
-  }
-
-  return runs;
-}
-
-std::vector<TextMeasureRun> buildTextViewRuns(
-    NSInteger textLength,
-    NSArray<NSNumber *> *runStarts,
-    NSArray<NSNumber *> *runEnds,
-    NSArray<NSNumber *> *runStyleMasks,
-    NSArray<NSString *> *runFontFamilies,
-    NSArray<NSNumber *> *runFontSizes,
-    NSArray<NSString *> *runFontStyles,
-    NSArray<NSString *> *runFontWeights,
-    NSArray<NSNumber *> *runLetterSpacings,
-    NSArray<NSNumber *> *runLineHeights,
-    NSArray<NSNumber *> *runTabularNumbers) {
-  if (runStarts.count == 0 || runEnds.count == 0 || runStyleMasks.count == 0) return {};
-
-  NSInteger runCount = MIN(runStarts.count, MIN(runEnds.count, runStyleMasks.count));
-  std::vector<TextMeasureRun> runs;
-  runs.reserve(runCount);
-  NSInteger previousEnd = 0;
-
-  for (NSInteger index = 0; index < runCount; index += 1) {
-    NSNumber *startValue = [runStarts[index] isKindOfClass:[NSNumber class]] ? runStarts[index] : nil;
-    NSNumber *endValue = [runEnds[index] isKindOfClass:[NSNumber class]] ? runEnds[index] : nil;
-    NSNumber *styleMaskValue = [runStyleMasks[index] isKindOfClass:[NSNumber class]] ? runStyleMasks[index] : nil;
-    if (startValue == nil || endValue == nil || styleMaskValue == nil) continue;
-
-    NSInteger start = startValue.integerValue;
-    NSInteger end = endValue.integerValue;
-    NSInteger styleMask = styleMaskValue.integerValue;
-    if (styleMask == 0 || start < previousEnd || start < 0 || end > textLength || end <= start) continue;
-
-    TextMeasureRunStyle style;
-
-    if ((styleMask & RNTextEngineRunStyleHasFontFamily) != 0 && index < runFontFamilies.count) {
-      NSString *fontFamily = [runFontFamilies[index] isKindOfClass:[NSString class]] ? runFontFamilies[index] : nil;
-      if (fontFamily.length > 0) {
-        style.hasFontFamily = true;
-        style.fontFamily = fromNSString(fontFamily);
-      }
-    }
-
-    if ((styleMask & RNTextEngineRunStyleHasFontSize) != 0 && index < runFontSizes.count) {
-      NSNumber *fontSize = [runFontSizes[index] isKindOfClass:[NSNumber class]] ? runFontSizes[index] : nil;
-      if (fontSize != nil) {
-        style.hasFontSize = true;
-        style.fontSize = fontSize.doubleValue;
-      }
-    }
-
-    if ((styleMask & RNTextEngineRunStyleHasFontStyle) != 0 && index < runFontStyles.count) {
-      NSString *fontStyle = [runFontStyles[index] isKindOfClass:[NSString class]] ? runFontStyles[index] : nil;
-      if (fontStyle.length > 0) {
-        style.hasFontStyle = true;
-        style.fontStyle = fromNSString(fontStyle);
-      }
-    }
-
-    if ((styleMask & RNTextEngineRunStyleHasFontWeight) != 0 && index < runFontWeights.count) {
-      NSString *fontWeight = [runFontWeights[index] isKindOfClass:[NSString class]] ? runFontWeights[index] : nil;
-      if (fontWeight.length > 0) {
-        style.hasFontWeight = true;
-        style.fontWeight = fromNSString(fontWeight);
-      }
-    }
-
-    if ((styleMask & RNTextEngineRunStyleHasLetterSpacing) != 0 && index < runLetterSpacings.count) {
-      NSNumber *letterSpacing = [runLetterSpacings[index] isKindOfClass:[NSNumber class]] ? runLetterSpacings[index] : nil;
-      if (letterSpacing != nil) {
-        style.hasLetterSpacing = true;
-        style.letterSpacing = letterSpacing.doubleValue;
-      }
-    }
-
-    if ((styleMask & RNTextEngineRunStyleHasLineHeight) != 0 && index < runLineHeights.count) {
-      NSNumber *lineHeight = [runLineHeights[index] isKindOfClass:[NSNumber class]] ? runLineHeights[index] : nil;
-      if (lineHeight != nil) {
-        style.hasLineHeight = true;
-        style.lineHeight = lineHeight.doubleValue;
-      }
-    }
-
-    if ((styleMask & RNTextEngineRunStyleHasTabularNumbers) != 0 && index < runTabularNumbers.count) {
-      NSNumber *tabularNumbers = [runTabularNumbers[index] isKindOfClass:[NSNumber class]] ? runTabularNumbers[index] : nil;
-      if (tabularNumbers != nil) {
-        style.hasTabularNumbers = true;
-        style.tabularNumbers = tabularNumbers.boolValue;
-      }
-    }
-
-    TextMeasureRun run;
-    run.start = start;
-    run.end = end;
     run.style = style;
     runs.push_back(run);
     previousEnd = end;
@@ -1930,6 +1825,15 @@ TextLayoutMeasurement measurePreparedTextLayoutWithCoreText(
       options);
 }
 
+TextLayoutMeasurement measurePreparedLayout(
+    RNTextEnginePreparedText *prepared,
+    const LayoutOptions& options) {
+  return canUsePreparedCoreTextLayout(options, false)
+      ? measurePreparedTextLayoutWithCoreText(prepared, options)
+      : measureAttributedTextLayout(prepared.text, prepared.attributedText,
+            prepared.fallbackLineHeight, prepared.uniformCapHeight, options);
+}
+
 TextLayoutMeasurement resolvePreparedLayoutMeasurement(
     Handle handle,
     RNTextEnginePreparedText *prepared,
@@ -1942,15 +1846,7 @@ TextLayoutMeasurement resolvePreparedLayoutMeasurement(
     if (cached != queryOwner->layoutsByKey.end()) return cached->second;
   }
 
-  TextLayoutMeasurement measurement =
-      canUsePreparedCoreTextLayout(options, false)
-          ? measurePreparedTextLayoutWithCoreText(prepared, options)
-          : measureAttributedTextLayout(
-                prepared.text,
-                prepared.attributedText,
-                prepared.fallbackLineHeight,
-                prepared.uniformCapHeight,
-                options);
+  TextLayoutMeasurement measurement = measurePreparedLayout(prepared, options);
 
   {
     std::lock_guard<std::mutex> lock(queryOwner->mutex);
@@ -2283,65 +2179,6 @@ Array buildHandleArray(Runtime& runtime, const std::vector<Handle>& handles) {
   return array;
 }
 
-uint64_t createPreparedTextHandleForTextViewInternal(
-    NSString *text,
-    BOOL allowFontScaling,
-    NSString *fontFamily,
-    CGFloat fontSize,
-    NSString *fontWeight,
-    NSString *fontStyle,
-    CGFloat letterSpacing,
-    CGFloat lineHeight,
-    BOOL tabularNumbers,
-    NSString *textTransform,
-    NSArray<NSNumber *> *runStarts,
-    NSArray<NSNumber *> *runEnds,
-    NSArray<NSNumber *> *runStyleMasks,
-    NSArray<NSString *> *runFontFamilies,
-    NSArray<NSNumber *> *runFontSizes,
-    NSArray<NSString *> *runFontStyles,
-    NSArray<NSString *> *runFontWeights,
-    NSArray<NSNumber *> *runLetterSpacings,
-    NSArray<NSNumber *> *runLineHeights,
-    NSArray<NSNumber *> *runTabularNumbers) {
-  TextMeasureStyle style;
-  style.allowFontScaling = allowFontScaling;
-  style.hasFontFamily = fontFamily.length > 0;
-  style.hasFontSize = fontSize > 0;
-  style.hasFontStyle = fontStyle.length > 0;
-  style.hasFontWeight = fontWeight.length > 0;
-  style.hasLetterSpacing = letterSpacing != 0;
-  style.hasLineHeight = lineHeight > 0;
-  if (style.hasFontFamily) style.fontFamily = fromNSString(fontFamily);
-  if (style.hasFontSize) style.fontSize = fontSize;
-  if (style.hasFontStyle) style.fontStyle = fromNSString(fontStyle);
-  if (style.hasFontWeight) style.fontWeight = fromNSString(fontWeight);
-  if (style.hasLetterSpacing) style.letterSpacing = letterSpacing;
-  if (style.hasLineHeight) style.lineHeight = lineHeight;
-  style.tabularNumbers = tabularNumbers;
-
-  RNTextEngineTextTransformResult *transformedText = RNTextEngineTransformText(
-      text ?: @"",
-      textTransform,
-      runStarts ?: @[],
-      runEnds ?: @[]);
-
-  std::vector<TextMeasureRun> runs = buildTextViewRuns(
-      transformedText.text.length,
-      transformedText.runStarts ?: @[],
-      transformedText.runEnds ?: @[],
-      runStyleMasks ?: @[],
-      runFontFamilies ?: @[],
-      runFontSizes ?: @[],
-      runFontStyles ?: @[],
-      runFontWeights ?: @[],
-      runLetterSpacings ?: @[],
-      runLineHeights ?: @[],
-      runTabularNumbers ?: @[]);
-  ResolvedTextStyle resolvedStyle = resolveTextStyle(style);
-  return storePreparedText(buildPreparedText(transformedText.text ?: @"", style, resolvedStyle, runs));
-}
-
 CGFloat measurePreparedTextWidthForHandleInternal(uint64_t handle) {
   RNTextEnginePreparedText *prepared = nil;
   {
@@ -2381,48 +2218,51 @@ void releasePreparedTextHandleInternal(uint64_t handle) {
 
 } // namespace
 
+RNTextEnginePreparedText *prepareAttributedText(NSAttributedString *text, CGFloat emptyLineHeight, NSTextAlignment alignment) {
+  RNTextEnginePreparedText *prepared = [RNTextEnginePreparedText new];
+  __block NSMutableAttributedString *measurementText = nil;
+  if (alignment != NSTextAlignmentLeft) {
+    [text enumerateAttribute:NSParagraphStyleAttributeName inRange:NSMakeRange(0, text.length) options:0
+                 usingBlock:^(NSParagraphStyle *paragraph, NSRange range, BOOL *) {
+      if (paragraph == nil || paragraph.alignment == NSTextAlignmentLeft) return;
+      if (measurementText == nil) measurementText = [text mutableCopy];
+      NSMutableParagraphStyle *unaligned = [paragraph mutableCopy];
+      unaligned.alignment = NSTextAlignmentLeft;
+      [measurementText addAttribute:NSParagraphStyleAttributeName value:unaligned range:range];
+    }];
+  }
+  prepared.attributedText = measurementText ?: text;
+  prepared.text = text.string;
+  prepared.fallbackLineHeight = emptyLineHeight;
+  prepared.uniformCapHeight = RNTextEngineUniformCapHeightForAttributedText(text);
+  return prepared;
+}
+
+CGFloat measurePreparedTextWidth(RNTextEnginePreparedText *prepared) {
+  return measureAttributedWidth(prepared.attributedText);
+}
+
+CGSize measurePreparedTextLayout(RNTextEnginePreparedText *prepared, CGFloat width,
+                                NSInteger maxLines, NSString *ellipsizeMode, BOOL anchorToCapHeight) {
+  LayoutOptions options;
+  options.width = width;
+  options.anchorToCapHeight = anchorToCapHeight;
+  if (maxLines > 0) options.maxLines = static_cast<int>(maxLines);
+  if (ellipsizeMode.length > 0) options.ellipsizeMode = fromNSString(ellipsizeMode);
+  auto measurement = measurePreparedLayout(prepared, options);
+  return CGSizeMake(measurement.width, measurement.height);
+}
+
 uint64_t createPreparedTextHandleForTextView(
     NSString *text,
-    BOOL allowFontScaling,
-    NSString *fontFamily,
-    CGFloat fontSize,
-    NSString *fontWeight,
-    NSString *fontStyle,
-    CGFloat letterSpacing,
-    CGFloat lineHeight,
-    BOOL tabularNumbers,
-    NSString *textTransform,
-    NSArray<NSNumber *> *runStarts,
-    NSArray<NSNumber *> *runEnds,
-    NSArray<NSNumber *> *runStyleMasks,
-    NSArray<NSString *> *runFontFamilies,
-    NSArray<NSNumber *> *runFontSizes,
-    NSArray<NSString *> *runFontStyles,
-    NSArray<NSString *> *runFontWeights,
-    NSArray<NSNumber *> *runLetterSpacings,
-    NSArray<NSNumber *> *runLineHeights,
-    NSArray<NSNumber *> *runTabularNumbers) {
-  return createPreparedTextHandleForTextViewInternal(
-      text,
-      allowFontScaling,
-      fontFamily,
-      fontSize,
-      fontWeight,
-      fontStyle,
-      letterSpacing,
-      lineHeight,
-      tabularNumbers,
-      textTransform,
-      runStarts,
-      runEnds,
-      runStyleMasks,
-      runFontFamilies,
-      runFontSizes,
-      runFontStyles,
-      runFontWeights,
-      runLetterSpacings,
-      runLineHeights,
-      runTabularNumbers);
+    const RNTextEngineTextAttributes &attributes,
+    const std::vector<RNTextEngineTextRun> &runs,
+    NSString *textTransform) {
+  CGFloat emptyLineHeight = 0;
+  NSAttributedString *attributedText = RNTextEngineBuildAttributedText(
+      text, attributes, runs, textTransform, NO, &emptyLineHeight);
+  return storePreparedText(prepareAttributedText(
+      attributedText, emptyLineHeight, RNTextEngineTextResolveAlignment(attributes.textAlign)));
 }
 
 CGFloat measurePreparedTextWidthForHandle(uint64_t handle) {

@@ -6,35 +6,29 @@
 #import <Foundation/Foundation.h>
 #import <CoreGraphics/CoreGraphics.h>
 #import <UIKit/UIKit.h>
+#import "RNTextEngineTextAttributes.h"
+@class RNTextEnginePreparedText;
 #endif
 
 namespace rntextengine {
 void cleanup();
 void install(facebook::jsi::Runtime& runtime);
 #ifdef __OBJC__
+RNTextEnginePreparedText * _Nonnull prepareAttributedText(NSAttributedString * _Nonnull text, CGFloat emptyLineHeight, NSTextAlignment alignment);
+CGFloat measurePreparedTextWidth(RNTextEnginePreparedText * _Nonnull prepared);
+CGSize measurePreparedTextLayout(
+    RNTextEnginePreparedText * _Nonnull prepared,
+    CGFloat width,
+    NSInteger maxLines,
+    NSString * _Nullable ellipsizeMode,
+    BOOL anchorToCapHeight);
 NSAttributedString * _Nullable preparedAttributedTextForHandle(uint64_t handle);
 CGFloat preparedUniformCapHeightForHandle(uint64_t handle);
 uint64_t createPreparedTextHandleForTextView(
     NSString * _Nonnull text,
-    BOOL allowFontScaling,
-    NSString * _Nullable fontFamily,
-    CGFloat fontSize,
-    NSString * _Nullable fontWeight,
-    NSString * _Nullable fontStyle,
-    CGFloat letterSpacing,
-    CGFloat lineHeight,
-    BOOL tabularNumbers,
-    NSString * _Nullable textTransform,
-    NSArray<NSNumber *> * _Nullable runStarts,
-    NSArray<NSNumber *> * _Nullable runEnds,
-    NSArray<NSNumber *> * _Nullable runStyleMasks,
-    NSArray<NSString *> * _Nullable runFontFamilies,
-    NSArray<NSNumber *> * _Nullable runFontSizes,
-    NSArray<NSString *> * _Nullable runFontStyles,
-    NSArray<NSString *> * _Nullable runFontWeights,
-    NSArray<NSNumber *> * _Nullable runLetterSpacings,
-    NSArray<NSNumber *> * _Nullable runLineHeights,
-    NSArray<NSNumber *> * _Nullable runTabularNumbers);
+    const RNTextEngineTextAttributes &attributes,
+    const std::vector<RNTextEngineTextRun> &runs = {},
+    NSString * _Nullable textTransform = nil);
 CGFloat measurePreparedTextWidthForHandle(uint64_t handle);
 CGSize measurePreparedTextLayoutForHandle(
     uint64_t handle,

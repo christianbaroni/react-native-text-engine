@@ -4,7 +4,6 @@ NS_ASSUME_NONNULL_BEGIN
 
 FOUNDATION_EXTERN NSAttributedStringKey const RNTextEngineUniformCapHeightAttributeName;
 FOUNDATION_EXTERN void RNTextEngineSetUniformCapHeight(NSMutableAttributedString *attributedText, CGFloat capHeight);
-FOUNDATION_EXTERN void RNTextEngineAnnotateUniformCapHeight(NSMutableAttributedString *attributedText);
 FOUNDATION_EXTERN CGFloat RNTextEngineUniformCapHeightForAttributedText(NSAttributedString *attributedText);
 FOUNDATION_EXTERN CGFloat RNTextEngineLineBaselineForGlyphIndex(
     NSLayoutManager *layoutManager,

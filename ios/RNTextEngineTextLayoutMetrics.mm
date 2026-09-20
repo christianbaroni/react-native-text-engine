@@ -2,48 +2,12 @@
 
 NSAttributedStringKey const RNTextEngineUniformCapHeightAttributeName = @"RNTextEngineUniformCapHeight";
 
-static CGFloat RNTextEngineCapHeightEpsilon = 0.001;
-
 void RNTextEngineSetUniformCapHeight(NSMutableAttributedString *attributedText, CGFloat capHeight)
 {
   if (attributedText.length == 0) return;
   [attributedText addAttribute:RNTextEngineUniformCapHeightAttributeName
                          value:@(capHeight)
                          range:NSMakeRange(0, attributedText.length)];
-}
-
-void RNTextEngineAnnotateUniformCapHeight(NSMutableAttributedString *attributedText)
-{
-  if (attributedText.length == 0) return;
-
-  __block CGFloat uniformCapHeight = -1;
-  __block BOOL isUniform = YES;
-
-  [attributedText enumerateAttribute:NSFontAttributeName
-                             inRange:NSMakeRange(0, attributedText.length)
-                             options:0
-                          usingBlock:^(id value, NSRange, BOOL *stop) {
-    UIFont *font = [value isKindOfClass:[UIFont class]] ? (UIFont *)value : nil;
-    if (font == nil) return;
-
-    CGFloat capHeight = font.capHeight;
-    if (uniformCapHeight < 0) {
-      uniformCapHeight = capHeight;
-      return;
-    }
-
-    if (fabs(uniformCapHeight - capHeight) <= RNTextEngineCapHeightEpsilon) return;
-    isUniform = NO;
-    *stop = YES;
-  }];
-
-  if (!isUniform || uniformCapHeight < 0) {
-    [attributedText removeAttribute:RNTextEngineUniformCapHeightAttributeName
-                              range:NSMakeRange(0, attributedText.length)];
-    return;
-  }
-
-  RNTextEngineSetUniformCapHeight(attributedText, uniformCapHeight);
 }
 
 CGFloat RNTextEngineUniformCapHeightForAttributedText(NSAttributedString *attributedText)

@@ -39,6 +39,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, copy, nullable) NSArray<NSNumber *> *runTabularNumbers;
 @property (nonatomic, copy, nullable) NSString *text;
 @property (nonatomic, copy, nullable) NSString *textTransform;
+@property (nonatomic, copy, nullable) NSString *textAlign;
 
 @end
 

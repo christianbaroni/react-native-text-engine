@@ -6,6 +6,7 @@
 
 #import "../../../ios/RNTextEngineBindings.h"
 #import "../../../ios/RNTextEngineModule.h"
+#import "../../../ios/RNTextEngineTextLayoutMetrics.h"
 #import "../../../ios/RNTextEngineAttributedTextDisplayView.h"
 #import "RNTextEngineTestRuntimeHelpers.h"
 
@@ -342,27 +343,14 @@ static uint64_t CreateTextViewMeasurementHandle(
     CGFloat letterSpacing = 0,
     NSString *textTransform = nil)
 {
-  return createPreparedTextHandleForTextView(
-      text,
-      NO,
-      fontFamily,
-      fontSize,
-      fontWeight,
-      fontStyle,
-      letterSpacing,
-      lineHeight,
-      NO,
-      textTransform,
-      nil,
-      nil,
-      nil,
-      nil,
-      nil,
-      nil,
-      nil,
-      nil,
-      nil,
-      nil);
+  return createPreparedTextHandleForTextView(text, {
+      .fontFamily = fontFamily,
+      .fontSize = fontSize,
+      .fontStyle = fontStyle,
+      .fontWeight = fontWeight,
+      .letterSpacing = letterSpacing,
+      .lineHeight = lineHeight,
+  }, {}, textTransform);
 }
 
 static uint64_t CreateTextViewMeasurementHandleWithRunFontSizes(
@@ -375,27 +363,9 @@ static uint64_t CreateTextViewMeasurementHandleWithRunFontSizes(
     NSArray<NSNumber *> *runFontSizes,
     NSString *textTransform = nil)
 {
-  return createPreparedTextHandleForTextView(
-      text,
-      NO,
-      nil,
-      fontSize,
-      nil,
-      nil,
-      0,
-      lineHeight,
-      NO,
-      textTransform,
-      runStarts,
-      runEnds,
-      runStyleMasks,
-      nil,
-      runFontSizes,
-      nil,
-      nil,
-      nil,
-      nil,
-      nil);
+  return createPreparedTextHandleForTextView(text, {.fontSize = fontSize, .lineHeight = lineHeight},
+      RNTextEngineTextRunsFromArrays(runStarts, runEnds, runStyleMasks,
+          nil, nil, runFontSizes, nil, nil, nil, nil, nil), textTransform);
 }
 
 static NSTextContainer *DisplayTextContainer(UIView *displayView)
@@ -839,27 +809,9 @@ static void AssertDisplayViewUsesBoundsGeometry(UIView *displayView, UIView *hos
 
 - (void)testTextViewMeasurementHandleRemapsRunsAfterTextExpansion
 {
-  uint64_t handle = createPreparedTextHandleForTextView(
-      @"ßb",
-      NO,
-      nil,
-      16,
-      nil,
-      nil,
-      0,
-      20,
-      NO,
-      @"uppercase",
-      @[ @1 ],
-      @[ @2 ],
-      @[ @(1 << 4) ],
-      nil,
-      nil,
-      nil,
-      @[ @"700" ],
-      nil,
-      nil,
-      nil);
+  uint64_t handle = createPreparedTextHandleForTextView(@"ßb", {.fontSize = 16, .lineHeight = 20},
+      RNTextEngineTextRunsFromArrays(@[@1], @[@2], @[@(1 << 4)],
+          nil, nil, nil, nil, @[@"700"], nil, nil, nil), @"uppercase");
   NSAttributedString *attributedText = preparedAttributedTextForHandle(handle);
   XCTAssertEqualObjects(attributedText.string, @"SSB");
 
@@ -973,6 +925,32 @@ static void AssertDisplayViewUsesBoundsGeometry(UIView *displayView, UIView *hos
   XCTAssertEqualObjects(secondNextLine[@"end"], lines[1][@"end"]);
   XCTAssertEqualWithAccuracy([secondNextLine[@"width"] doubleValue], [lines[1][@"width"] doubleValue], 0.001);
   XCTAssertGreaterThan([secondNextLine[@"bottom"] doubleValue], 0.0);
+}
+
+- (void)testTextViewCapHeightMetadataMatchesAcceptedRunCoverage
+{
+  RNTextEngineTextAttributes attributes{.fontSize = 17};
+  for (const auto &runs : std::vector<std::vector<RNTextEngineTextRun>>{
+      {},
+      {{0, 6, {.fontSize = 23}}},
+      {{0, 3, {.fontSize = 23}}, {3, 6, {.fontSize = 23}}},
+      {{1, 5, {.fontSize = 23}}},
+      {{0, 3, {.fontSize = 23}}},
+      {{3, 6, {.fontSize = 23}}},
+      {{0, 6, {.fontSize = 23}}, {2, 4, {.fontSize = 40}}},
+      {{-1, 4, {.fontSize = 23}}, {0, 7, {.fontSize = 23}}},
+  }) {
+    NSAttributedString *text = RNTextEngineBuildAttributedText(@"ABCDEF", attributes, runs, nil, NO);
+    __block CGFloat firstCapHeight = -1;
+    __block BOOL uniform = YES;
+    [text enumerateAttribute:NSFontAttributeName inRange:NSMakeRange(0, text.length) options:0
+                  usingBlock:^(UIFont *font, NSRange, BOOL *) {
+      if (firstCapHeight < 0) firstCapHeight = font.capHeight;
+      else if (fabs(firstCapHeight - font.capHeight) > 0.001) uniform = NO;
+    }];
+    XCTAssertEqualWithAccuracy(RNTextEngineUniformCapHeightForAttributedText(text),
+        uniform ? firstCapHeight : 0, 0.001);
+  }
 }
 
 - (void)testInlineRunsValidationRejectsEmptyAndUnsortedRuns
