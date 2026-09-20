@@ -51,7 +51,6 @@ The primary text input is the `text` prop. `TextView` also accepts text props, i
 - `fontSize`
 - `fontWeight`
 - `fontStyle`
-- `includeFontPadding`
 - `letterSpacing`
 - `lineHeight`
 - `numberOfLines`
