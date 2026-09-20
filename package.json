@@ -1,6 +1,6 @@
 {
   "name": "react-native-text-engine",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "packageManager": "yarn@4.13.0",
   "description": "Fast, worklet-compatible text primitives for React Native",
   "main": "lib/commonjs/index",
