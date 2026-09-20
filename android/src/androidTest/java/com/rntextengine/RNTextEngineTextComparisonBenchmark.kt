@@ -5,6 +5,7 @@ import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.PorterDuff
 import android.os.Build
 import android.os.Bundle
 import android.os.Process
@@ -27,9 +28,11 @@ import com.facebook.react.uimanager.PixelUtil
 import com.facebook.react.uimanager.ReactStylesDiffMap
 import com.facebook.react.uimanager.StateWrapper
 import com.facebook.react.uimanager.ThemedReactContext
+import com.facebook.react.uimanager.ViewManager
 import com.facebook.react.uimanager.ViewManagerRegistry
 import com.facebook.react.views.text.ReactTextViewManager
 import com.facebook.soloader.SoLoader
+import kotlin.math.roundToInt
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertTrue
@@ -41,14 +44,64 @@ import org.junit.runner.RunWith
 class RNTextEngineTextComparisonBenchmark {
     private external fun checkNativeMeasurement(): String
     private external fun checkPreparedContentState(density: Float)
-    private external fun checkTextEnvironment()
     private external fun checkNestedFontScaling(density: Float, fontSize: Double, lineHeight: Double, letterSpacing: Double)
     private external fun checkConcurrentMeasurement(density: Float)
     private external fun checkMeasurementBoundaries(density: Float)
-    private external fun runNativeComparison(manager: FabricUIManager, density: Float, run: Int, prepared: Boolean): String
+    private external fun checkTextEnvironment()
+    private external fun runNativeComparison(manager: FabricUIManager, density: Float, prepared: Boolean, engine: Boolean): String
+    private external fun runNativeFirstDraw(manager: FabricUIManager, density: Float, engine: Boolean): String
 
+    private lateinit var textManager: ViewManager<*, *>
     private val engineManager = RNTextEngineTextViewManager()
     private lateinit var themedContext: ThemedReactContext
+    private lateinit var bitmap: Bitmap
+    private lateinit var canvas: Canvas
+
+    private fun mountAndDraw(engine: Boolean, props: ReadableNativeMap, state: StateWrapper, width: Int, height: Int, expectedText: String?) {
+        drawMounted(if (engine) engineManager else textManager, props, state, width, height, expectedText)
+    }
+
+    private fun <T : View> drawMounted(manager: ViewManager<T, *>, props: ReadableNativeMap, state: StateWrapper, width: Int, height: Int, expectedText: String?) {
+        val view = manager.createView(2, themedContext, ReactStylesDiffMap(props), state, null)
+        try {
+            view.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY))
+            view.layout(0, 0, width, height)
+            canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+            val saveCount = canvas.save()
+            try {
+                view.draw(canvas)
+            } finally {
+                canvas.restoreToCount(saveCount)
+            }
+            if (expectedText != null) {
+                val actualText = if (view is RNTextEngineTextViewManager.RNTextEngineTextView) {
+                    requireNotNull(view.displayView.resolveLayout(width)).text
+                } else {
+                    view.javaClass.getMethod("getText").invoke(view) as CharSequence
+                }
+                check(actualText.toString() == expectedText) { "Mounted text differs from the measured input" }
+                check(width > 0 && height > 0 && width <= bitmap.width && height <= bitmap.height)
+                val pixels = IntArray(bitmap.width * bitmap.height)
+                bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+                var inkCount = 0
+                var right = 0
+                var bottom = 0
+                pixels.forEachIndexed { index, pixel ->
+                    if (Color.alpha(pixel) != 0) {
+                        inkCount++
+                        right = maxOf(right, index % bitmap.width)
+                        bottom = maxOf(bottom, index / bitmap.width)
+                    }
+                }
+                check(inkCount in 1 until width * height) { "Mounted ${manager.name} did not draw transparent text" }
+                check(right <= width && bottom <= height) { "Mounted text exceeds measured bounds: $right,$bottom vs $width,$height" }
+            }
+        } finally {
+            state.destroyState()
+            manager.onDropViewInstance(view)
+        }
+    }
 
     private var preparedStateView: RNTextEngineTextViewManager.RNTextEngineTextView? = null
 
@@ -255,6 +308,11 @@ class RNTextEngineTextComparisonBenchmark {
         val run = requireNotNull(arguments.getString("rnteRun")).toInt()
         val prepared = requireNotNull(arguments.getString("rntePreparedTextLayout")).toBooleanStrict()
         require(run in 1..3)
+        val engine = when (arguments.getString("rnteImplementation")) {
+            "rn" -> false
+            "textview" -> true
+            else -> error("Choose rnteImplementation=rn or textview")
+        }
         val application = ApplicationProvider.getApplicationContext<Application>()
         SoLoader.init(application, OpenSourceMergedSoMapping)
         System.loadLibrary("rnte-text-comparison")
@@ -274,17 +332,30 @@ class RNTextEngineTextComparisonBenchmark {
                     override fun removeFrameCallback(callback: Choreographer.FrameCallback) = choreographer.removeFrameCallback(callback)
                 }
             })
-            val textManager = requireNotNull(MainReactPackage().createViewManager(context, ReactTextViewManager.REACT_CLASS))
+            textManager = requireNotNull(MainReactPackage().createViewManager(context, ReactTextViewManager.REACT_CLASS))
             manager = FabricUIManager(context, ViewManagerRegistry(listOf(textManager))) {}
+            themedContext = ThemedReactContext(context, application, "TextComparison", 1)
         }
         try {
             val density = application.resources.displayMetrics.density
             // Native validation precedes all timing; an exception prevents result emission.
             val measurementChecksum = checkNativeMeasurement()
-            val results = JSONArray(runNativeComparison(manager, density, run, prepared))
-            assertTrue(results.length() == 10)
+            val results = JSONArray(runNativeComparison(manager, density, prepared, engine))
+            instrumentation.runOnMainSync {
+                val pixels = (320 * density).roundToInt()
+                bitmap = Bitmap.createBitmap(pixels, pixels, Bitmap.Config.ARGB_8888)
+                canvas = Canvas(bitmap)
+                try {
+                    val drawResults = JSONArray(runNativeFirstDraw(manager, density, engine))
+                    for (index in 0 until drawResults.length()) results.put(drawResults.getJSONObject(index))
+                } finally {
+                    bitmap.recycle()
+                }
+            }
+            assertTrue(results.length() == 8)
             val meta = JSONObject()
                 .put("platform", "android")
+                .put("implementation", if (engine) "TextView" else "RN Text")
                 .put("deviceName", Build.MODEL)
                 .put("osVersion", Build.VERSION.RELEASE)
                 .put("apiLevel", Build.VERSION.SDK_INT)

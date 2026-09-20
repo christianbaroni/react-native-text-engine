@@ -42,14 +42,19 @@ for run in 1 2 3; do
   for mode in "${MODES[@]}"; do
     PREPARED=false
     if [[ "${mode}" == prepared ]]; then PREPARED=true; fi
-    adb shell am force-stop com.rntextengine.test
-    adb shell am instrument -w -r \
-      -e class com.rntextengine.RNTextEngineTextComparisonBenchmark#compareTextLayout \
-      -e rnteComparison true -e rnteRun "${run}" -e rntePreparedTextLayout "${PREPARED}" \
-      com.rntextengine.test/androidx.test.runner.AndroidJUnitRunner \
-      2>&1 | tee "${RESULT_DIR}/run-${run}-${mode}.log"
-    grep -qx 'OK (1 test)' "${RESULT_DIR}/run-${run}-${mode}.log"
-    grep -qx 'INSTRUMENTATION_CODE: -1' "${RESULT_DIR}/run-${run}-${mode}.log"
+    IMPLEMENTATIONS=(rn textview)
+    if [[ ${run} -eq 2 ]]; then IMPLEMENTATIONS=(textview rn); fi
+    for implementation in "${IMPLEMENTATIONS[@]}"; do
+      adb shell am force-stop com.rntextengine.test
+      adb shell am instrument -w -r \
+        -e class com.rntextengine.RNTextEngineTextComparisonBenchmark#compareTextLayout \
+        -e rnteComparison true -e rnteRun "${run}" -e rntePreparedTextLayout "${PREPARED}" \
+        -e rnteImplementation "${implementation}" \
+        com.rntextengine.test/androidx.test.runner.AndroidJUnitRunner \
+        2>&1 | tee "${RESULT_DIR}/run-${run}-${mode}-${implementation}.log"
+      grep -qx 'OK (1 test)' "${RESULT_DIR}/run-${run}-${mode}-${implementation}.log"
+      grep -qx 'INSTRUMENTATION_CODE: -1' "${RESULT_DIR}/run-${run}-${mode}-${implementation}.log"
+    done
   done
 done
 "${NODE_BINARY}" benchmarks/report.mjs write "${RESULT_DIR}"

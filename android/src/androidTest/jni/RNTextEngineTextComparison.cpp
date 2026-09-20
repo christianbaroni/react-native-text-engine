@@ -756,6 +756,13 @@ void CheckLines(const TextLayoutManager &manager, const AttributedStringBox &inp
         "Line count mismatch at width " + std::to_string(width));
     if (width == 10000) Require(count == 1, "Unconstrained text must fit on one line: " + text);
   };
+  auto sourceText = jni::make_jstring(text);
+  static auto stringLength = jni::JString::javaClassStatic()->getMethod<jint()>("length");
+  static auto substring = jni::JString::javaClassStatic()->getMethod<jstring(jint, jint)>("substring");
+  auto slice = [&](int start, int end) {
+    Require(start >= 0 && end >= start && end <= stringLength(sourceText.get()), "Invalid UTF-16 line range");
+    return substring(sourceText.get(), start, end)->toStdString();
+  };
   auto trim = [](std::string value) {
     while (!value.empty() && value.back() == ' ') value.pop_back();
     return value;
@@ -763,8 +770,7 @@ void CheckLines(const TextLayoutManager &manager, const AttributedStringBox &inp
   auto checkLine = [&](size_t index, const std::string &rnText, double rnWidth) {
     int start = static_cast<int>(values[4 + index * 4]);
     int end = static_cast<int>(values[5 + index * 4]);
-    Require(start >= 0 && end >= start && end <= text.size(), "Invalid line range");
-    Require(trim(rnText) == trim(text.substr(start, end - start)),
+    Require(trim(rnText) == trim(slice(start, end)),
         "Line break mismatch at width " + std::to_string(width) + ": " + text);
     if (width == 10000) {
       Require(std::abs(rnWidth - values[6]) <= 1.0 / density,
@@ -789,8 +795,7 @@ void CheckLines(const TextLayoutManager &manager, const AttributedStringBox &inp
     for (int index = 0; index < count; ++index) {
       const int start = getLineStart(layout.get(), index);
       const int end = getLineEnd(layout.get(), index);
-      Require(start >= 0 && end >= start && end <= text.size(), "Invalid prepared line range");
-      checkLine(index, text.substr(start, end - start), getLineWidth(layout.get(), index) / density);
+      checkLine(index, slice(start, end), getLineWidth(layout.get(), index) / density);
     }
   } else {
     auto lines = manager.measureLines(input, BuildParagraphAttributes(0),
@@ -807,35 +812,227 @@ void CheckLines(const TextLayoutManager &manager, const AttributedStringBox &inp
   Require(header[2] == std::min<size_t>(2, lineCount), "Invalid two-line limit");
 }
 
-struct Samples {
-  std::vector<double> rn;
-  std::vector<double> textView;
-};
-
-Samples MeasurePair(const std::function<void()> &rn, const std::function<void()> &textView,
-    int repetitions, int run) {
-  auto measure = [&](const auto &work) {
-    auto start = std::chrono::steady_clock::now();
-    for (int i = 0; i < repetitions; ++i) work();
-    return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
-  };
-  Samples samples;
-  constexpr int warmups = 10;
-  for (int index = -warmups; index < 9; ++index) {
-    double rnMs, textViewMs;
-    if ((index + warmups + run - 1) % 2 == 0) {
-      rnMs = measure(rn);
-      textViewMs = measure(textView);
-    } else {
-      textViewMs = measure(textView);
-      rnMs = measure(rn);
-    }
-    if (index >= 0) {
-      samples.rn.push_back(rnMs);
-      samples.textView.push_back(textViewMs);
-    }
+std::vector<double> Measure(const std::function<void()> &work, int repetitions) {
+  std::vector<double> samples;
+  for (int index = -10; index < 9; ++index) {
+    const auto start = std::chrono::steady_clock::now();
+    for (int pass = 0; pass < repetitions; ++pass) work();
+    const double elapsed = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+    if (index >= 0) samples.push_back(elapsed);
   }
   return samples;
+}
+
+void WriteSamples(std::ostream &output, const std::string &scenario, int operations,
+    bool engine, const std::vector<double> &samples) {
+  output << "{\"scenario\":\"" << scenario << "\",\"implementation\":\"" << (engine ? "TextView" : "RN Text")
+      << "\",\"operations\":" << operations << ",\"samplesMs\":[";
+  for (size_t index = 0; index < samples.size(); ++index) {
+    if (index) output << ',';
+    Require(std::isfinite(samples[index]) && samples[index] > 0, "Invalid duration");
+    output << samples[index];
+  }
+  output << "]}";
+}
+
+std::string RunComparison(const jni::global_ref<jobject> &fabricManager, float density, bool prepared, bool engine) {
+  Require(ReactNativeFeatureFlags::enablePreparedTextLayout() == prepared, "RN prepared mode does not match the request");
+  Require(!ReactNativeFeatureFlags::disableTextLayoutManagerCacheAndroid() &&
+      ReactNativeFeatureFlags::preparedTextCacheSize() == 200, "RN layout cache defaults changed");
+  const auto chatTexts = ChatTexts();
+  std::vector<std::string> labelTexts;
+  const std::vector<std::string> labelPrefixes{"OK", "Done 🙂", "日本語", "বাংলা"};
+  for (int index = 0; index < 128; ++index) {
+    labelTexts.push_back(labelPrefixes[index % labelPrefixes.size()] + " " + std::to_string(index + 1));
+  }
+  const TextStyleFixture labelStyle{.fontSize = 16, .lineHeight = std::numeric_limits<double>::quiet_NaN()};
+  const std::string richText = "Prepared text performance should cover inline emphasis, quoted insertions, editorial spans, tabular 1234567890, and a final weighted phrase while preserving one coherent source string.";
+  std::vector<std::string> richTexts;
+  for (int index = 1; index <= 96; ++index) {
+    std::ostringstream text;
+    text << richText << " Case " << std::setw(3) << std::setfill('0') << index << ".";
+    richTexts.push_back(text.str());
+  }
+  const TextStyleFixture chatStyle{.fontSize = 16, .letterSpacing = 0.1, .lineHeight = 24, .fontWeight = "700"};
+  const TextStyleFixture richStyle{.fontSize = 16, .letterSpacing = 0.05, .lineHeight = 32};
+  const auto richRuns = RichRuns(richText);
+  const auto packedRuns = TextViewRuns(richRuns);
+  const std::vector<double> widths{256, 224, 304, 240, 280, 200};
+  auto checkPixels = [&](double value) {
+    Require(std::abs(value * density - std::round(value * density)) < 0.0001,
+        "Benchmark sizes must align to physical pixels at this device density");
+  };
+  for (double value : widths) checkPixels(value);
+  for (double value : {320.0, 10000.0, chatStyle.fontSize, chatStyle.lineHeight,
+           richStyle.fontSize, richStyle.lineHeight}) checkPixels(value);
+  for (const auto &styleRun : richRuns) {
+    if (styleRun.styleMask & kRunStyleHasFontSize) checkPixels(styleRun.style.fontSize);
+    if (styleRun.styleMask & kRunStyleHasLineHeight) checkPixels(styleRun.style.lineHeight);
+  }
+  std::weak_ptr<const ContextContainer> releasedContext;
+  {
+    auto registry = BuildBenchmarkComponentDescriptorRegistry(fabricManager);
+    releasedContext = registry->at(ParagraphShadowNode::Handle()).getContextContainer();
+    auto root = BuildRNTextTree(registry, chatTexts, chatStyle, density);
+    Require(root->layoutIfNeeded(), "Lifecycle preflight tree did not lay out");
+  }
+  Require(releasedContext.expired(), "Fabric registry retained its layout context");
+  auto context = std::make_shared<ContextContainer>();
+  context->insert("FabricUIManager", jni::make_global(fabricManager));
+
+  {
+    TextLayoutManager manager(context);
+    for (const auto &text : chatTexts) {
+      AttributedStringBox input{BuildRNAttributedString(text, chatStyle, {})};
+      auto handle = PrepareText(text, chatStyle);
+      for (double width : widths) CheckLines(manager, input, handle, text, width, density);
+      CheckLines(manager, input, handle, text, 10000, density);
+      for (int maxLines : {0, 2}) {
+        for (double width : widths) {
+          CheckSizes(MeasureRN(manager, input, width, maxLines, density),
+              MeasureTextView(handle, width, maxLines), width, density, "Direct maxLines=" + std::to_string(maxLines) + ": " + text);
+        }
+      }
+      rntextengine::releasePreparedTextMeasurementHandle(handle);
+    }
+    for (const auto &text : labelTexts) {
+      AttributedStringBox input{BuildRNAttributedString(text, labelStyle, {})};
+      auto handle = PrepareText(text, labelStyle);
+      for (double width : {96, 160}) {
+        CheckLines(manager, input, handle, text, width, density);
+        CheckSizes(MeasureRN(manager, input, width, 0, density),
+            MeasureTextView(handle, width, 0), width, density, "Natural-height label: " + text);
+      }
+      rntextengine::releasePreparedTextMeasurementHandle(handle);
+    }
+    for (const auto &text : richTexts) {
+      AttributedStringBox input{BuildRNAttributedString(text, richStyle, richRuns)};
+      auto handle = PrepareText(text, richStyle, packedRuns);
+      CheckLines(manager, input, handle, text, 280, density);
+      CheckLines(manager, input, handle, text, 10000, density);
+      auto actual = MeasureTextView(handle, 280, 0);
+      rntextengine::releasePreparedTextMeasurementHandle(handle);
+      CheckSizes(MeasureRN(manager, input, 280, 0, density), actual, 280, density, text);
+    }
+    auto rnRegistry = BuildBenchmarkComponentDescriptorRegistry(fabricManager);
+    auto rnRoot = BuildRNTextTree(rnRegistry, chatTexts, chatStyle, density);
+    auto tvRegistry = BuildBenchmarkComponentDescriptorRegistry(fabricManager);
+    auto tvRoot = BuildTextViewTree(tvRegistry, chatTexts, chatStyle, density);
+    Require(rnRoot->layoutIfNeeded() && tvRoot->layoutIfNeeded(), "Fabric tree did not lay out");
+    Require(rnRoot->getChildren().size() == 128 && tvRoot->getChildren().size() == 128, "Incomplete Fabric tree");
+    for (size_t i = 0; i < chatTexts.size(); ++i) {
+      const auto &rnNode = static_cast<const ParagraphShadowNode &>(*rnRoot->getChildren()[i]);
+      Require(rnNode.getStateData().attributedString.getString() == chatTexts[i], "Fabric paragraph lost its input text");
+      auto rn = rnNode.getLayoutMetrics().frame;
+      auto tv = static_cast<const RNTextEngineTextViewShadowNode &>(*tvRoot->getChildren()[i]).getLayoutMetrics().frame;
+      CheckSizes(rn.size, tv.size, 256, density, "Fabric child " + std::to_string(i) + ": " + chatTexts[i]);
+      Require(std::abs(rn.size.width - tv.size.width) <= 1.0 / density &&
+          std::abs(rn.origin.x - tv.origin.x) <= 1.0 / density &&
+          std::abs(rn.origin.y - tv.origin.y) <= 1.0 / density, "Fabric frame mismatch: " + std::to_string(i));
+    }
+  }
+
+  std::ostringstream output;
+  output << std::setprecision(17) << '[';
+  bool first = true;
+  auto measure = [&](const std::function<void()> &rn, const std::function<void()> &textView, int repetitions) {
+    return Measure(engine ? textView : rn, repetitions);
+  };
+  auto record = [&](const std::string &scenario, int operations, const std::vector<double> &samples) {
+    if (!first) output << ',';
+    first = false;
+    WriteSamples(output, scenario, operations, engine, samples);
+  };
+  record("fabric_chat_shadow_tree_layout", 512, measure([&] {
+    auto registry = BuildBenchmarkComponentDescriptorRegistry(fabricManager);
+    auto root = BuildRNTextTree(registry, chatTexts, chatStyle, density);
+    sink = sink + root->layoutIfNeeded();
+  }, [&] {
+    auto registry = BuildBenchmarkComponentDescriptorRegistry(fabricManager);
+    auto root = BuildTextViewTree(registry, chatTexts, chatStyle, density);
+    sink = sink + root->layoutIfNeeded();
+  }, 4));
+  {
+    auto registry = BuildBenchmarkComponentDescriptorRegistry(fabricManager);
+    auto root = engine ? BuildTextViewTree(registry, chatTexts, chatStyle, density)
+                       : BuildRNTextTree(registry, chatTexts, chatStyle, density);
+    Require(root->layoutIfNeeded(), "Retained tree did not lay out");
+    auto retainedContext = BuildFabricLayoutContext(density);
+    auto retainedConstraints = BuildLayoutConstraints(256);
+    retainedConstraints.minimumSize.width = 256;
+    record("retained_paragraph_measurement", 16384, measure([&] {
+      for (const auto &child : root->getChildren()) {
+        sink = sink + static_cast<const ParagraphShadowNode &>(*child).measureContent(
+            retainedContext, retainedConstraints).height;
+      }
+    }, [&] {
+      for (const auto &child : root->getChildren()) {
+        sink = sink + static_cast<const RNTextEngineTextViewShadowNode &>(*child).measureContent(
+            retainedContext, retainedConstraints).height;
+      }
+    }, 128));
+  }
+  record("cold_uniform_chat_layout", 512, measure([&] {
+    TextLayoutManager manager(context);
+    for (const auto &text : chatTexts) {
+      AttributedStringBox input{BuildRNAttributedString(text, chatStyle, {})};
+      MeasureRN(manager, input, 256, 0, density);
+    }
+  }, [&] {
+    for (const auto &text : chatTexts) {
+      auto handle = PrepareText(text, chatStyle);
+      MeasureTextView(handle, 256, 0);
+      rntextengine::releasePreparedTextMeasurementHandle(handle);
+    }
+  }, 4));
+
+  record("cold_short_label_layout", 512, measure([&] {
+    TextLayoutManager manager(context);
+    for (const auto &text : labelTexts) {
+      AttributedStringBox input{BuildRNAttributedString(text, labelStyle, {})};
+      MeasureRN(manager, input, 160, 0, density);
+    }
+  }, [&] {
+    for (const auto &text : labelTexts) {
+      auto handle = PrepareText(text, labelStyle);
+      MeasureTextView(handle, 160, 0);
+      rntextengine::releasePreparedTextMeasurementHandle(handle);
+    }
+  }, 4));
+
+  std::vector<AttributedStringBox> inputs;
+  std::vector<uint64_t> handles;
+  for (const auto &text : chatTexts) {
+    if (engine) handles.push_back(PrepareText(text, chatStyle));
+    else inputs.emplace_back(BuildRNAttributedString(text, chatStyle, {}));
+  }
+  for (int maxLines : {0, 2}) {
+    TextLayoutManager manager(context);
+    record(maxLines == 0 ? "cached_uniform_layout_queries" : "cached_truncated_layout_queries", 6144,
+        measure([&] {
+          for (double width : widths) for (const auto &input : inputs) MeasureRN(manager, input, width, maxLines, density);
+        }, [&] {
+          for (double width : widths) for (auto handle : handles) MeasureTextView(handle, width, maxLines);
+        }, 8));
+  }
+  for (auto handle : handles) rntextengine::releasePreparedTextMeasurementHandle(handle);
+
+  record("cold_rich_inline_layout", 384, measure([&] {
+    TextLayoutManager manager(context);
+    for (const auto &text : richTexts) {
+      AttributedStringBox input{BuildRNAttributedString(text, richStyle, richRuns)};
+      MeasureRN(manager, input, 280, 0, density);
+    }
+  }, [&] {
+    for (const auto &text : richTexts) {
+      auto handle = PrepareText(text, richStyle, packedRuns);
+      MeasureTextView(handle, 280, 0);
+      rntextengine::releasePreparedTextMeasurementHandle(handle);
+    }
+  }, 4));
+  Require(std::isfinite(sink) && sink > 0, "Measurement sink is invalid");
+  output << ']';
+  return output.str();
 }
 
 void CheckPreparedContentState(jni::alias_ref<jobject> receiver, float density) {
@@ -901,159 +1098,33 @@ void CheckPreparedContentState(jni::alias_ref<jobject> receiver, float density) 
 
 }
 
-std::string RunComparison(const jni::global_ref<jobject> &fabricManager, float density, int run, bool prepared) {
-  Require(ReactNativeFeatureFlags::enablePreparedTextLayout() == prepared, "RN prepared mode does not match the request");
-  Require(!ReactNativeFeatureFlags::disableTextLayoutManagerCacheAndroid() &&
-      ReactNativeFeatureFlags::preparedTextCacheSize() == 200, "RN layout cache defaults changed");
-  const auto chatTexts = ChatTexts();
-  const std::string richText = "Prepared text performance should cover inline emphasis, quoted insertions, editorial spans, tabular 1234567890, and a final weighted phrase while preserving one coherent source string.";
-  std::vector<std::string> richTexts;
-  for (int index = 1; index <= 96; ++index) {
-    std::ostringstream text;
-    text << richText << " Case " << std::setw(3) << std::setfill('0') << index << ".";
-    richTexts.push_back(text.str());
-  }
-  const TextStyleFixture chatStyle{.fontSize = 16, .letterSpacing = 0.1, .lineHeight = 24, .fontWeight = "700"};
-  const TextStyleFixture richStyle{.fontSize = 16, .letterSpacing = 0.05, .lineHeight = 32};
-  const auto richRuns = RichRuns(richText);
-  const auto packedRuns = TextViewRuns(richRuns);
-  const std::vector<double> widths{256, 224, 304, 240, 280, 200};
-  auto checkPixels = [&](double value) {
-    Require(std::abs(value * density - std::round(value * density)) < 0.0001,
-        "Benchmark sizes must align to physical pixels at this device density");
-  };
-  for (double value : widths) checkPixels(value);
-  for (double value : {320.0, 10000.0, chatStyle.fontSize, chatStyle.lineHeight,
-           richStyle.fontSize, richStyle.lineHeight}) checkPixels(value);
-  for (const auto &styleRun : richRuns) {
-    if (styleRun.styleMask & kRunStyleHasFontSize) checkPixels(styleRun.style.fontSize);
-    if (styleRun.styleMask & kRunStyleHasLineHeight) checkPixels(styleRun.style.lineHeight);
-  }
-  std::weak_ptr<const ContextContainer> releasedContext;
-  {
+std::string RunFirstDraw(jni::alias_ref<jobject> receiver,
+    const jni::global_ref<jobject> &fabricManager, float density, bool engine) {
+  auto mountAndDraw = receiver->getClass()->getMethod<void(jboolean, ReadableNativeMap::javaobject,
+      StateWrapper::javaobject, jint, jint, jstring)>("mountAndDraw");
+  const auto texts = ChatTexts();
+  const TextStyleFixture style{.fontSize = 16, .letterSpacing = 0.1, .lineHeight = 24, .fontWeight = "700"};
+  auto draw = [&](bool validate) {
     auto registry = BuildBenchmarkComponentDescriptorRegistry(fabricManager);
-    releasedContext = registry->at(ParagraphShadowNode::Handle()).getContextContainer();
-    auto root = BuildRNTextTree(registry, chatTexts, chatStyle, density);
-    Require(root->layoutIfNeeded(), "Lifecycle preflight tree did not lay out");
-  }
-  Require(releasedContext.expired(), "Fabric registry retained its layout context");
-  auto context = std::make_shared<ContextContainer>();
-  context->insert("FabricUIManager", jni::make_global(fabricManager));
-
-  {
-    TextLayoutManager manager(context);
-    for (const auto &text : chatTexts) {
-      AttributedStringBox input{BuildRNAttributedString(text, chatStyle, {})};
-      auto handle = PrepareText(text, chatStyle);
-      for (double width : widths) CheckLines(manager, input, handle, text, width, density);
-      CheckLines(manager, input, handle, text, 10000, density);
-      for (int maxLines : {0, 2}) {
-        for (double width : widths) {
-          CheckSizes(MeasureRN(manager, input, width, maxLines, density),
-              MeasureTextView(handle, width, maxLines), width, density, "Direct maxLines=" + std::to_string(maxLines) + ": " + text);
-        }
-      }
-      rntextengine::releasePreparedTextMeasurementHandle(handle);
+    auto root = engine ? BuildTextViewTree(registry, texts, style, density)
+                       : BuildRNTextTree(registry, texts, style, density);
+    Require(root->layoutIfNeeded(), "Mounted tree did not lay out");
+    for (size_t index = 0; index < root->getChildren().size(); ++index) {
+      const auto &node = static_cast<const LayoutableShadowNode &>(*root->getChildren()[index]);
+      auto props = ReadableNativeMap::newObjectCxxArgs(node.getProps()->getDiffProps(nullptr));
+      auto state = StateWrapperImpl::newObjectJavaArgs();
+      jni::cthis(state)->setState(node.getState());
+      const auto &metrics = node.getLayoutMetrics();
+      auto expectedText = validate ? jni::make_jstring(texts[index]) : nullptr;
+      mountAndDraw(receiver, engine, props.get(), state.get(),
+          std::round(metrics.frame.size.width * density), std::round(metrics.frame.size.height * density), expectedText.get());
     }
-    for (const auto &text : richTexts) {
-      AttributedStringBox input{BuildRNAttributedString(text, richStyle, richRuns)};
-      auto handle = PrepareText(text, richStyle, packedRuns);
-      CheckLines(manager, input, handle, text, 280, density);
-      CheckLines(manager, input, handle, text, 10000, density);
-      auto actual = MeasureTextView(handle, 280, 0);
-      rntextengine::releasePreparedTextMeasurementHandle(handle);
-      CheckSizes(MeasureRN(manager, input, 280, 0, density), actual, 280, density, text);
-    }
-    auto rnRegistry = BuildBenchmarkComponentDescriptorRegistry(fabricManager);
-    auto rnRoot = BuildRNTextTree(rnRegistry, chatTexts, chatStyle, density);
-    auto tvRegistry = BuildBenchmarkComponentDescriptorRegistry(fabricManager);
-    auto tvRoot = BuildTextViewTree(tvRegistry, chatTexts, chatStyle, density);
-    Require(rnRoot->layoutIfNeeded() && tvRoot->layoutIfNeeded(), "Fabric tree did not lay out");
-    Require(rnRoot->getChildren().size() == 128 && tvRoot->getChildren().size() == 128, "Incomplete Fabric tree");
-    for (size_t i = 0; i < chatTexts.size(); ++i) {
-      const auto &rnNode = static_cast<const ParagraphShadowNode &>(*rnRoot->getChildren()[i]);
-      Require(rnNode.getStateData().attributedString.getString() == chatTexts[i], "Fabric paragraph lost its input text");
-      auto rn = rnNode.getLayoutMetrics().frame;
-      auto tv = static_cast<const RNTextEngineTextViewShadowNode &>(*tvRoot->getChildren()[i]).getLayoutMetrics().frame;
-      CheckSizes(rn.size, tv.size, 256, density, "Fabric child " + std::to_string(i) + ": " + chatTexts[i]);
-      Require(std::abs(rn.size.width - tv.size.width) <= 1.0 / density &&
-          std::abs(rn.origin.x - tv.origin.x) <= 1.0 / density &&
-          std::abs(rn.origin.y - tv.origin.y) <= 1.0 / density, "Fabric frame mismatch: " + std::to_string(i));
-    }
-  }
-
+  };
+  draw(true);
+  const auto samples = Measure([&] { draw(false); }, 4);
   std::ostringstream output;
   output << std::setprecision(17) << '[';
-  bool first = true;
-  auto record = [&](const std::string &scenario, int operations, const Samples &samples) {
-    for (int impl = 0; impl < 2; ++impl) {
-      if (!first) output << ',';
-      first = false;
-      output << "{\"scenario\":\"" << scenario << "\",\"implementation\":\"" << (impl == 0 ? "RN Text" : "TextView")
-          << "\",\"operations\":" << operations << ",\"samplesMs\":[";
-      const auto &values = impl == 0 ? samples.rn : samples.textView;
-      for (size_t i = 0; i < values.size(); ++i) {
-        if (i) output << ',';
-        Require(std::isfinite(values[i]) && values[i] > 0, "Invalid duration");
-        output << values[i];
-      }
-      output << "]}";
-    }
-  };
-  record("fabric_chat_shadow_tree_layout", 512, MeasurePair([&] {
-    auto registry = BuildBenchmarkComponentDescriptorRegistry(fabricManager);
-    auto root = BuildRNTextTree(registry, chatTexts, chatStyle, density);
-    sink = sink + root->layoutIfNeeded();
-  }, [&] {
-    auto registry = BuildBenchmarkComponentDescriptorRegistry(fabricManager);
-    auto root = BuildTextViewTree(registry, chatTexts, chatStyle, density);
-    sink = sink + root->layoutIfNeeded();
-  }, 4, run));
-  record("cold_uniform_chat_layout", 512, MeasurePair([&] {
-    TextLayoutManager manager(context);
-    for (const auto &text : chatTexts) {
-      AttributedStringBox input{BuildRNAttributedString(text, chatStyle, {})};
-      MeasureRN(manager, input, 256, 0, density);
-    }
-  }, [&] {
-    for (const auto &text : chatTexts) {
-      auto handle = PrepareText(text, chatStyle);
-      MeasureTextView(handle, 256, 0);
-      rntextengine::releasePreparedTextMeasurementHandle(handle);
-    }
-  }, 4, run));
-
-  std::vector<AttributedStringBox> inputs;
-  std::vector<uint64_t> handles;
-  for (const auto &text : chatTexts) {
-    inputs.emplace_back(BuildRNAttributedString(text, chatStyle, {}));
-    handles.push_back(PrepareText(text, chatStyle));
-  }
-  for (int maxLines : {0, 2}) {
-    TextLayoutManager manager(context);
-    record(maxLines == 0 ? "cached_uniform_layout_queries" : "cached_truncated_layout_queries", 6144,
-        MeasurePair([&] {
-          for (double width : widths) for (const auto &input : inputs) MeasureRN(manager, input, width, maxLines, density);
-        }, [&] {
-          for (double width : widths) for (auto handle : handles) MeasureTextView(handle, width, maxLines);
-        }, 8, run));
-  }
-  for (auto handle : handles) rntextengine::releasePreparedTextMeasurementHandle(handle);
-
-  record("cold_rich_inline_layout", 384, MeasurePair([&] {
-    TextLayoutManager manager(context);
-    for (const auto &text : richTexts) {
-      AttributedStringBox input{BuildRNAttributedString(text, richStyle, richRuns)};
-      MeasureRN(manager, input, 280, 0, density);
-    }
-  }, [&] {
-    for (const auto &text : richTexts) {
-      auto handle = PrepareText(text, richStyle, packedRuns);
-      MeasureTextView(handle, 280, 0);
-      rntextengine::releasePreparedTextMeasurementHandle(handle);
-    }
-  }, 4, run));
-  Require(std::isfinite(sink) && sink > 0, "Measurement sink is invalid");
+  WriteSamples(output, "fabric_mount_and_first_draw", 512, engine, samples);
   output << ']';
   return output.str();
 }
@@ -1072,12 +1143,32 @@ Java_com_rntextengine_RNTextEngineTextComparisonBenchmark_checkNativeMeasurement
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_rntextengine_RNTextEngineTextComparisonBenchmark_runNativeComparison(
-    JNIEnv *env, jobject, jobject manager, jfloat density, jint run, jboolean prepared) {
+    JNIEnv *env, jobject, jobject manager, jfloat density, jboolean prepared, jboolean engine) {
   try {
-    return env->NewStringUTF(RunComparison(jni::make_global(manager), density, run, prepared).c_str());
+    return env->NewStringUTF(RunComparison(jni::make_global(manager), density, prepared, engine).c_str());
   } catch (const std::exception &error) {
     env->ThrowNew(env->FindClass("java/lang/RuntimeException"), error.what());
     return nullptr;
+  }
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_rntextengine_RNTextEngineTextComparisonBenchmark_runNativeFirstDraw(
+    JNIEnv *env, jobject receiver, jobject manager, jfloat density, jboolean engine) {
+  try {
+    return env->NewStringUTF(RunFirstDraw(jni::wrap_alias(receiver), jni::make_global(manager), density, engine).c_str());
+  } catch (const std::exception &error) {
+    env->ThrowNew(env->FindClass("java/lang/RuntimeException"), error.what());
+    return nullptr;
+  }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_rntextengine_RNTextEngineTextComparisonBenchmark_checkTextEnvironment(JNIEnv* env, jobject receiver) {
+  try {
+    CheckTextEnvironment(jni::wrap_alias(receiver));
+  } catch (const std::exception& error) {
+    env->ThrowNew(env->FindClass("java/lang/RuntimeException"), error.what());
   }
 }
 
@@ -1106,15 +1197,6 @@ Java_com_rntextengine_RNTextEngineTextComparisonBenchmark_checkNestedFontScaling
   try {
     CheckNestedFontScaling(density, fontSize, lineHeight, letterSpacing);
   } catch (const std::exception &error) {
-    env->ThrowNew(env->FindClass("java/lang/RuntimeException"), error.what());
-  }
-}
-
-extern "C" JNIEXPORT void JNICALL
-Java_com_rntextengine_RNTextEngineTextComparisonBenchmark_checkTextEnvironment(JNIEnv* env, jobject receiver) {
-  try {
-    CheckTextEnvironment(jni::wrap_alias(receiver));
-  } catch (const std::exception& error) {
     env->ThrowNew(env->FindClass("java/lang/RuntimeException"), error.what());
   }
 }

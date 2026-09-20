@@ -9,17 +9,19 @@ import { fileURLToPath } from 'node:url';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const scenarios = new Map([
   ['fabric_chat_shadow_tree_layout', { label: 'Chat list layout', operations: 512 }],
+  ['fabric_mount_and_first_draw', { label: 'Native layout, mount, and first draw', operations: 512 }],
+  ['retained_paragraph_measurement', { label: 'Retained paragraph measurement', operations: 16384 }],
+  ['cold_short_label_layout', { label: 'Short labels, natural line height', operations: 512 }],
   ['cold_uniform_chat_layout', { label: 'Plain text creation and layout', operations: 512 }],
   [
     'cached_uniform_layout_queries',
-    { label: 'Cached layout', operations: 98304, androidLabel: 'Repeated manager queries', androidOperations: 6144 },
+    { label: 'Manager queries, 768 keys', operations: 98304, androidOperations: 6144 },
   ],
   [
     'cached_truncated_layout_queries',
     {
-      label: 'Cached layout, two-line limit',
+      label: 'Manager queries, 768 keys, two-line limit',
       operations: 98304,
-      androidLabel: 'Repeated manager queries, two-line limit',
       androidOperations: 6144,
     },
   ],
@@ -64,6 +66,7 @@ export function parseRun(log, run, platform = 'ios') {
     assert.match(meta.sdk, /^(iphoneos|iphonesimulator)\d+(\.\d+)*$/, 'Missing iOS build SDK');
   } else {
     assert.equal(meta.platform, 'android');
+    assert(implementations.includes(meta.implementation), 'Missing isolated implementation');
     assert.equal(typeof meta.enablePreparedTextLayout, 'boolean');
     assert.equal(meta.disableTextLayoutManagerCacheAndroid, false);
     assert.equal(meta.preparedTextCacheSize, 200);
@@ -74,11 +77,12 @@ export function parseRun(log, run, platform = 'ios') {
   assert(Number.isInteger(meta.pid) && meta.pid > 0, 'Missing test process identity');
   assert(typeof meta.deviceName === 'string' && meta.deviceName.trim().length > 0 && meta.deviceName !== 'unknown');
   assert(typeof meta.osVersion === 'string' && meta.osVersion.trim().length > 0 && meta.osVersion !== 'unknown');
-  assert.equal(records.length, scenarios.size * implementations.length, 'Incomplete comparison');
+  assert.equal(records.length, scenarios.size * (platform === 'android' ? 1 : implementations.length), 'Incomplete comparison');
   const seen = new Set();
   for (const record of records) {
     assert(scenarios.has(record.scenario), `Unknown scenario: ${record.scenario}`);
     assert(implementations.includes(record.implementation), 'Unknown implementation');
+    if (platform === 'android') assert.equal(record.implementation, meta.implementation, 'Mixed implementations in one process');
     const key = `${record.scenario}/${record.implementation}`;
     assert(!seen.has(key), `Duplicate result: ${key}`);
     seen.add(key);
@@ -102,7 +106,7 @@ const median = values => {
 
 export function renderComparison(metadata, logs) {
   const platform = metadata.platform ?? 'ios';
-  assert.equal(logs.length, platform === 'android' ? 6 : 3, 'Three fresh processes per configuration are required');
+  assert.equal(logs.length, platform === 'android' ? 12 : 3, 'Three fresh processes per implementation and configuration are required');
   const runs = logs.map((log, index) => parseRun(log, (index % 3) + 1, platform));
   assert.equal(new Set(runs.map(run => run.meta.pid)).size, runs.length, 'Each run must use a fresh process');
   assert.equal(new Set(runs.map(run => `${run.meta.deviceName}/${run.meta.osVersion}`)).size, 1, 'Runs used different devices');
@@ -113,11 +117,13 @@ export function renderComparison(metadata, logs) {
       'Android configuration changed'
     );
     for (const prepared of [false, true]) {
-      assert.deepEqual(
-        runs.filter(run => run.meta.enablePreparedTextLayout === prepared).map(run => run.meta.run),
-        [1, 2, 3],
-        'Each Android configuration requires runs 1, 2, and 3'
-      );
+      for (const implementation of implementations) {
+        assert.deepEqual(
+          runs.filter(run => run.meta.enablePreparedTextLayout === prepared && run.meta.implementation === implementation).map(run => run.meta.run),
+          [1, 2, 3],
+          'Each Android implementation and configuration requires runs 1, 2, and 3'
+        );
+      }
     }
     assert.equal(metadata.compilation, 'speed');
     assert.match(metadata.apkSha256, /^[a-f0-9]{64}$/);
@@ -144,10 +150,11 @@ export function renderComparison(metadata, logs) {
     if (platform === 'android') lines.push(`### RN Text${prepared ? ' with prepared layout' : ' with default layout'}`, '');
     lines.push('| Test | Operations/sample | RN Text (ms) | TextView (ms) | TextView / RN |', '| --- | ---: | ---: | ---: | ---: |');
     for (const [scenario, definition] of scenarios) {
-      const label = platform === 'android' ? (definition.androidLabel ?? definition.label) : definition.label;
+      const label = definition.label;
       const operations = platform === 'android' ? (definition.androidOperations ?? definition.operations) : definition.operations;
       const stats = implementations.map(implementation => {
-        const values = group.map(run =>
+        const implementationRuns = platform === 'android' ? group.filter(run => run.meta.implementation === implementation) : group;
+        const values = implementationRuns.map(run =>
           median(run.records.find(record => record.scenario === scenario && record.implementation === implementation).samplesMs)
         );
         const value = median(values);
@@ -158,6 +165,9 @@ export function renderComparison(metadata, logs) {
       );
     }
     lines.push('');
+    if (platform === 'android' && prepared) {
+      lines.push('The manager-query rows miss RN’s 200-entry prepared-layout cache on every query. The retained-paragraph row measures repeated calls on the same paragraph nodes at unchanged constraints.', '');
+    }
   }
   lines.push(
     '<details>',
@@ -182,10 +192,11 @@ export function renderComparison(metadata, logs) {
     `| --- | --- | ${platform === 'android' ? '--- | ' : ''}---: | --- |`
   );
   for (const [scenario, definition] of scenarios) {
-    const label = platform === 'android' ? (definition.androidLabel ?? definition.label) : definition.label;
+    const label = definition.label;
     for (const implementation of implementations) {
       runs.forEach(run => {
         const record = run.records.find(item => item.scenario === scenario && item.implementation === implementation);
+        if (!record) return;
         const configuration = platform === 'android' ? `${run.meta.enablePreparedTextLayout ? 'Prepared' : 'Default'} | ` : '';
         lines.push(
           `| ${label} | ${implementation} | ${configuration}${run.meta.run} | ${record.samplesMs.map(value => value.toFixed(6)).join(', ')} |`
@@ -342,7 +353,8 @@ function main() {
     }
     const names =
       platform === 'android'
-        ? ['default', 'prepared'].flatMap(mode => [1, 2, 3].map(run => `run-${run}-${mode}.log`))
+        ? ['default', 'prepared'].flatMap(mode => ['rn', 'textview'].flatMap(implementation =>
+            [1, 2, 3].map(run => `run-${run}-${mode}-${implementation}.log`)))
         : [1, 2, 3].map(run => `run-${run}.log`);
     const logs = names.map(name => readFileSync(join(runDirectory, name), 'utf8'));
     const section = renderComparison(metadata, logs);

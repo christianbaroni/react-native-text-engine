@@ -478,6 +478,30 @@ static std::shared_ptr<RootShadowNode> BuildTextViewTree(
       .surfaceId(1).tag(1).props(BuildRootProps(320)).children(std::move(children)));
 }
 
+static void DisplayLayers(CALayer *layer)
+{
+  [layer displayIfNeeded];
+  for (CALayer *child in layer.sublayers) DisplayLayers(child);
+}
+
+static NSUInteger ValidateDrawingLeaf(UIView *view, NSString *expectedText)
+{
+  NSUInteger count = 0;
+  if ([view isKindOfClass:NSClassFromString(@"RCTParagraphTextView")] ||
+      [view isKindOfClass:NSClassFromString(@"RNTextEngineAttributedTextDisplayView")]) {
+    XCTAssertFalse(view.layer.needsDisplay);
+    XCTAssertEqualWithAccuracy(view.layer.contentsScale, UIScreen.mainScreen.scale, 0.001);
+    XCTAssertNotNil(view.layer.contents, @"%@ has no drawn backing store", view.class);
+    if ([view isKindOfClass:NSClassFromString(@"RNTextEngineAttributedTextDisplayView")]) {
+      NSAttributedString *text = [view valueForKey:@"attributedText"];
+      XCTAssertEqualObjects(text.string, expectedText);
+    }
+    count += 1;
+  }
+  for (UIView *child in view.subviews) count += ValidateDrawingLeaf(child, expectedText);
+  return count;
+}
+
 static void WithMethodImplementation(Class owner, SEL selector, id implementation, dispatch_block_t body)
 {
   Method method = class_getInstanceMethod(owner, selector);
@@ -524,6 +548,51 @@ static NSData *TextViewPixels(UIView *component, UIUserInterfaceStyle appearance
   return UIImagePNGRepresentation(image);
 }
 
+static void MountAndDrawTree(const RootShadowNode &root, BOOL textView, CGContextRef validationContext = nullptr)
+{
+  RCTViewComponentView *parent = [RCTViewComponentView new];
+  Class componentClass = textView ? NSClassFromString(@"RNTextEngineTextViewComponentView") : RCTParagraphComponentView.class;
+  for (const auto &child : root.getChildren()) {
+    const auto &node = static_cast<const LayoutableShadowNode &>(*child);
+    UIView<RCTComponentViewProtocol> *view = [componentClass new];
+    view.tag = node.getTag();
+    [view updateProps:node.getProps() oldProps:nullptr];
+    [view updateEventEmitter:node.getEventEmitter()];
+    [view updateState:node.getState() oldState:nullptr];
+    [view updateLayoutMetrics:node.getLayoutMetrics() oldLayoutMetrics:EmptyLayoutMetrics];
+    [view finalizeUpdates:RNComponentViewUpdateMaskAll];
+    [parent mountChildComponentView:view index:0];
+    [view layoutIfNeeded];
+    DisplayLayers(view.layer);
+    if (validationContext != nullptr) {
+      NSString *expectedText = ToNSString(textView
+          ? static_cast<const RNTextEngineTextViewShadowNode &>(node).getConcreteProps().text
+          : static_cast<const ParagraphShadowNode &>(node).getStateData().attributedString.getString());
+      XCTAssertEqual(ValidateDrawingLeaf(view, expectedText), 1u);
+      if (!textView) XCTAssertEqualObjects(((RCTParagraphComponentView *)view).attributedText.string, expectedText);
+      XCTAssertGreaterThan(view.bounds.size.width, 0);
+      XCTAssertGreaterThan(view.bounds.size.height, 0);
+      XCTAssertLessThanOrEqual(view.bounds.size.height, 320);
+      CGContextClearRect(validationContext, CGRectMake(0, 0, 320, 320));
+      [view.layer renderInContext:validationContext];
+      const uint8_t *data = static_cast<const uint8_t *>(CGBitmapContextGetData(validationContext));
+      size_t stride = CGBitmapContextGetBytesPerRow(validationContext);
+      size_t bytes = stride * CGBitmapContextGetHeight(validationContext);
+      CGRect expectedBounds = CGRectInset(CGContextConvertRectToDeviceSpace(validationContext, view.bounds), -1, -1);
+      NSUInteger inkCount = 0;
+      BOOL inkFits = YES;
+      for (size_t index = 3; index < bytes; index += 4) {
+        if (data[index] == 0) continue;
+        inkCount += 1;
+        inkFits &= CGRectContainsPoint(expectedBounds, CGPointMake((index % stride) / 4, index / stride));
+      }
+      XCTAssertGreaterThan(inkCount, 0u, @"Mounted text did not draw");
+      XCTAssertLessThan(inkCount, CGRectGetWidth(expectedBounds) * CGRectGetHeight(expectedBounds));
+      XCTAssertTrue(inkFits, @"Mounted text exceeds measured bounds");
+    }
+    [parent unmountChildComponentView:view index:0];
+  }
+}
 
 #endif
 
@@ -650,24 +719,28 @@ static NSData *TextViewPixels(UIView *component, UIUserInterfaceStyle appearance
 
 #ifdef RCT_NEW_ARCH_ENABLED
 
+- (BOOL)validateRNSize:(CGSize)rn
+         textViewSize:(CGSize)textView
+                width:(double)width
+              fixture:(NSString *)fixture
+{
+  const double tolerance = 1.0 / UIScreen.mainScreen.scale;
+  bool valid = std::isfinite(rn.width) && std::isfinite(rn.height) &&
+      std::isfinite(textView.width) && std::isfinite(textView.height) &&
+      rn.width > 0 && textView.width > 0 && rn.height > 0 && textView.height > 0 &&
+      rn.width <= width + tolerance && textView.width <= width + tolerance;
+  XCTAssertTrue(valid, @"Invalid geometry for %@: RN %@, TextView %@", fixture, NSStringFromCGSize(rn), NSStringFromCGSize(textView));
+  if (!valid) return false;
+  // RN returns the container width for wrapped text; TextView returns used glyph width.
+  bool sameHeight = std::abs(rn.height - textView.height) <= tolerance;
+  XCTAssertTrue(sameHeight, @"Height mismatch for %@: RN %@, TextView %@", fixture, NSStringFromCGSize(rn), NSStringFromCGSize(textView));
+  return sameHeight;
+}
+
 - (BOOL)validateLayoutsWithChatStyle:(const TextStyleFixture &)chatStyle
                           richStyle:(const TextStyleFixture &)richStyle
                              widths:(const std::vector<double> &)widths
 {
-  const double tolerance = 1.0 / UIScreen.mainScreen.scale;
-  auto check = [&](CGSize rn, CGSize textView, double width, NSString *fixture) {
-    bool valid = std::isfinite(rn.width) && std::isfinite(rn.height) &&
-        std::isfinite(textView.width) && std::isfinite(textView.height) &&
-        rn.width > 0 && textView.width > 0 && rn.height > 0 && textView.height > 0 &&
-        rn.width <= width + tolerance && textView.width <= width + tolerance;
-    XCTAssertTrue(valid, @"Invalid geometry for %@: RN %@, TextView %@", fixture, NSStringFromCGSize(rn), NSStringFromCGSize(textView));
-    if (!valid) return false;
-    // RN returns the container width for wrapped text; TextView returns used glyph width.
-    bool sameHeight = std::abs(rn.height - textView.height) <= tolerance;
-    XCTAssertTrue(sameHeight, @"Height mismatch for %@: RN %@, TextView %@", fixture, NSStringFromCGSize(rn), NSStringFromCGSize(textView));
-    return sameHeight;
-  };
-
   auto contextContainer = std::make_shared<ContextContainer>();
   TextLayoutManager manager(contextContainer);
   auto context = BuildTextLayoutContext();
@@ -682,7 +755,7 @@ static NSData *TextViewPixels(UIView *component, UIUserInterfaceStyle appearance
       for (double width : widths) {
         CGSize rn = MeasureRNTextLayout(manager, input, BuildParagraphAttributes(maxLines), context, BuildLayoutConstraints(width));
         CGSize textView = MeasureTextViewLayout(handle, width, maxLines);
-        if (!check(rn, textView, width, text)) {
+        if (![self validateRNSize:rn textViewSize:textView width:width fixture:text]) {
           rntextengine::releasePreparedTextHandle(handle);
           return NO;
         }
@@ -701,7 +774,7 @@ static NSData *TextViewPixels(UIView *component, UIUserInterfaceStyle appearance
     CGSize rn = MeasureRNTextLayout(manager, input, BuildParagraphAttributes(0), context, BuildLayoutConstraints(280));
     CGSize textView = MeasureTextViewLayout(handle, 280, 0);
     rntextengine::releasePreparedTextHandle(handle);
-    if (!check(rn, textView, 280, text)) return NO;
+    if (![self validateRNSize:rn textViewSize:textView width:280 fixture:text]) return NO;
   }
 
   auto rnRegistry = BuildBenchmarkComponentDescriptorRegistry();
@@ -716,10 +789,14 @@ static NSData *TextViewPixels(UIView *component, UIUserInterfaceStyle appearance
   XCTAssertEqual(rnChildren.size(), _chatTexts.count);
   XCTAssertEqual(textViewChildren.size(), _chatTexts.count);
   if (rnChildren.size() != _chatTexts.count || textViewChildren.size() != _chatTexts.count) return NO;
+  const double tolerance = 1.0 / UIScreen.mainScreen.scale;
   for (NSUInteger index = 0; index < _chatTexts.count; index += 1) {
     auto rn = static_cast<const ParagraphShadowNode &>(*rnChildren[index]).getLayoutMetrics().frame;
     auto textView = static_cast<const RNTextEngineTextViewShadowNode &>(*textViewChildren[index]).getLayoutMetrics().frame;
-    if (!check(CGSizeMake(rn.size.width, rn.size.height), CGSizeMake(textView.size.width, textView.size.height), 260, _chatTexts[index])) return NO;
+    if (![self validateRNSize:CGSizeMake(rn.size.width, rn.size.height)
+                textViewSize:CGSizeMake(textView.size.width, textView.size.height)
+                       width:260
+                     fixture:_chatTexts[index]]) return NO;
     bool sameFrame = std::abs(rn.size.width - textView.size.width) <= tolerance &&
         std::abs(rn.origin.x - textView.origin.x) <= tolerance && std::abs(rn.origin.y - textView.origin.y) <= tolerance;
     XCTAssertTrue(sameFrame, @"Fabric frame mismatch at child %lu", (unsigned long)index);
@@ -1254,6 +1331,31 @@ static NSData *TextViewPixels(UIView *component, UIUserInterfaceStyle appearance
   };
   const std::vector<double> widths = {260, 220, 300, 240, 280, 200};
   if (![self validateLayoutsWithChatStyle:chatStyle richStyle:richStyle widths:widths]) return;
+  const TextStyleFixture labelStyle = {.fontSize = 17};
+  NSArray<NSString *> *labelPrefixes = @[@"OK", @"Done 🙂", @"日本語", @"বাংলা"];
+  NSMutableArray<NSString *> *labelTexts = [NSMutableArray arrayWithCapacity:128];
+  std::vector<std::string> labelStdTexts;
+  for (NSUInteger index = 0; index < 128; ++index) {
+    NSString *text = [NSString stringWithFormat:@"%@ %lu", labelPrefixes[index % labelPrefixes.count], (unsigned long)index + 1];
+    [labelTexts addObject:text];
+    labelStdTexts.emplace_back(text.UTF8String);
+  }
+  {
+    TextLayoutManager manager(std::make_shared<ContextContainer>());
+    for (NSUInteger index = 0; index < labelTexts.count; ++index) {
+      AttributedStringBox input{BuildRNAttributedString(labelStdTexts[index], labelStyle, {})};
+      uint64_t handle = CreateTextViewHandle(labelTexts[index], labelStyle, nil, nil, nil, nil, nil, nil, nil, nil, nil);
+      for (double width : {96, 160}) {
+        CGSize rn = MeasureRNTextLayout(manager, input, BuildParagraphAttributes(0), BuildTextLayoutContext(), BuildLayoutConstraints(width));
+        CGSize textView = MeasureTextViewLayout(handle, width, 0);
+        if (![self validateRNSize:rn textViewSize:textView width:width fixture:labelTexts[index]]) {
+          rntextengine::releasePreparedTextHandle(handle);
+          return;
+        }
+      }
+      rntextengine::releasePreparedTextHandle(handle);
+    }
+  }
   [self emitMeta];
 
   NSArray<NSString *> *chatTexts = _chatTexts;
@@ -1285,6 +1387,73 @@ static NSData *TextViewPixels(UIView *component, UIUserInterfaceStyle appearance
                  RNTextBenchmarkSink += root->layoutIfNeeded() ? 1 : 0;
                }];
 
+  dispatch_block_t firstDraw = ^{
+    CGFloat scale = UIScreen.mainScreen.scale;
+    size_t pixels = static_cast<size_t>(320 * scale);
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    CGContextRef context = CGBitmapContextCreate(nullptr, pixels, pixels, 8, pixels * 4, colorSpace,
+        kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
+    CGColorSpaceRelease(colorSpace);
+    XCTAssertNotEqual(context, nullptr);
+    if (context == nullptr) return;
+    CGContextTranslateCTM(context, 0, pixels);
+    CGContextScaleCTM(context, scale, -scale);
+    for (BOOL textView : {NO, YES}) {
+      auto registry = BuildBenchmarkComponentDescriptorRegistry();
+      auto root = textView ? BuildTextViewTree(registry, *chatStdTexts, chatStyle)
+                           : BuildRNTextTree(registry, *chatStdTexts, chatStyle);
+      XCTAssertTrue(root->layoutIfNeeded());
+      MountAndDrawTree(*root, textView, context);
+    }
+    [self benchmark:@"fabric_mount_and_first_draw"
+        operations:chatTexts.count
+       repetitions:4
+                rn:^{
+                   auto registry = BuildBenchmarkComponentDescriptorRegistry();
+                   auto root = BuildRNTextTree(registry, *chatStdTexts, chatStyle);
+                   root->layoutIfNeeded();
+                   MountAndDrawTree(*root, NO);
+                 }
+          textView:^{
+                   auto registry = BuildBenchmarkComponentDescriptorRegistry();
+                   auto root = BuildTextViewTree(registry, *chatStdTexts, chatStyle);
+                   root->layoutIfNeeded();
+                   MountAndDrawTree(*root, YES);
+                 }];
+    CGContextRelease(context);
+  };
+  if (NSThread.isMainThread) firstDraw();
+  else dispatch_sync(dispatch_get_main_queue(), firstDraw);
+
+  @autoreleasepool {
+    auto retainedRNRegistry = BuildBenchmarkComponentDescriptorRegistry();
+    auto retainedRNRoot = BuildRNTextTree(retainedRNRegistry, *chatStdTexts, chatStyle);
+    auto retainedTextViewRegistry = BuildBenchmarkComponentDescriptorRegistry();
+    auto retainedTextViewRoot = BuildTextViewTree(retainedTextViewRegistry, *chatStdTexts, chatStyle);
+    XCTAssertTrue(retainedRNRoot->layoutIfNeeded());
+    XCTAssertTrue(retainedTextViewRoot->layoutIfNeeded());
+    auto retainedContext = BuildFabricLayoutContext();
+    auto retainedConstraints = BuildLayoutConstraints(260);
+    retainedConstraints.minimumSize.width = 260;
+    [self benchmark:@"retained_paragraph_measurement"
+        operations:chatTexts.count
+       repetitions:128
+                rn:^{
+                   for (const auto &child : retainedRNRoot->getChildren()) {
+                     auto size = static_cast<const ParagraphShadowNode &>(*child).measureContent(
+                         retainedContext, retainedConstraints);
+                     RNTextBenchmarkSink += size.height;
+                   }
+                 }
+          textView:^{
+                   for (const auto &child : retainedTextViewRoot->getChildren()) {
+                     auto size = static_cast<const RNTextEngineTextViewShadowNode &>(*child).measureContent(
+                         retainedContext, retainedConstraints);
+                     RNTextBenchmarkSink += size.height;
+                   }
+                 }];
+  }
+
   [self benchmark:@"cold_uniform_chat_layout"
       operations:chatTexts.count
      repetitions:4
@@ -1303,6 +1472,24 @@ static NSData *TextViewPixels(UIView *component, UIUserInterfaceStyle appearance
                  for (NSString *text in chatTexts) {
                    uint64_t handle = CreateTextViewHandle(text, chatStyle, nil, nil, nil, nil, nil, nil, nil, nil, nil);
                    MeasureTextViewLayout(handle, 260, 0);
+                   rntextengine::releasePreparedTextHandle(handle);
+                 }
+               }];
+
+  [self benchmark:@"cold_short_label_layout"
+      operations:labelTexts.count
+     repetitions:4
+              rn:^{
+                 TextLayoutManager manager(std::make_shared<ContextContainer>());
+                 for (const auto &text : labelStdTexts) {
+                   AttributedStringBox input{BuildRNAttributedString(text, labelStyle, {})};
+                   MeasureRNTextLayout(manager, input, BuildParagraphAttributes(0), BuildTextLayoutContext(), BuildLayoutConstraints(160));
+                 }
+               }
+        textView:^{
+                 for (NSString *text in labelTexts) {
+                   uint64_t handle = CreateTextViewHandle(text, labelStyle, nil, nil, nil, nil, nil, nil, nil, nil, nil);
+                   MeasureTextViewLayout(handle, 160, 0);
                    rntextengine::releasePreparedTextHandle(handle);
                  }
                }];
