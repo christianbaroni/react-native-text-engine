@@ -380,6 +380,60 @@ void CheckNestedFontScaling(float density, double fontSize, double lineHeight, d
   }
 }
 
+void CheckMeasurementBoundaries(float density) {
+  ComponentDescriptorProviderRegistry providers;
+  providers.add(concreteComponentDescriptorProvider<RNTextEngineTextViewComponentDescriptor>());
+  auto registry = providers.createComponentDescriptorRegistry(ComponentDescriptorParameters{
+      .eventDispatcher = {}, .contextContainer = std::make_shared<ContextContainer>(), .flavor = nullptr});
+  const auto context = BuildFabricLayoutContext(density);
+  auto build = [&](const std::string& text, double fontSize = 17) {
+    return BuildBenchmarkShadowNode(registry, Element<RNTextEngineTextViewShadowNode>().surfaceId(0)
+        .props(BuildTextViewProps(text, {.fontSize = fontSize, .lineHeight = 0}, 240)));
+  };
+  std::string failures;
+  for (bool mixed : {false, true}) {
+    auto flat = build("AB");
+    auto parent = build("A");
+    auto child = build("B", mixed ? 23 : 0);
+    parent->appendChild(child);
+    if (mixed) {
+      auto props = std::make_shared<RNTextEngineTextViewProps>(flat->getConcreteProps());
+      props->runCount = 1;
+      props->runStarts = {1};
+      props->runEnds = {2};
+      props->runStyleMasks = {kRunStyleHasFontSize};
+      props->runFontSizes = {23};
+      flat = std::static_pointer_cast<RNTextEngineTextViewShadowNode>(flat->clone({.props = props}));
+    }
+    const auto expected = flat->measureContent(context, BuildLayoutConstraints(240));
+    const auto actual = parent->measureContent(context, BuildLayoutConstraints(240));
+    if (expected != actual) failures += "Natural nested height: expected " + std::to_string(expected.height) +
+        ", actual " + std::to_string(actual.height) + "; ";
+  }
+  const std::string text = "Wrapping must change at a physical pixel boundary, even when DIP widths are very close.";
+  bool foundBoundary = false;
+  for (int pixels = 40; pixels < 640 && !foundBoundary; ++pixels) {
+    const float low = pixels / density - 0.001f;
+    const float high = pixels / density + 0.001f;
+    auto lowConstraints = BuildLayoutConstraints(low);
+    auto highConstraints = BuildLayoutConstraints(high);
+    const auto lowSize = build(text)->measureContent(context, lowConstraints);
+    const auto highSize = build(text)->measureContent(context, highConstraints);
+    if (lowSize.height == highSize.height) continue;
+    foundBoundary = true;
+    for (bool reverse : {false, true}) {
+      auto retained = build(text);
+      retained->measureContent(context, reverse ? highConstraints : lowConstraints);
+      const auto result = retained->measureContent(context, reverse ? lowConstraints : highConstraints);
+      const auto expected = reverse ? lowSize : highSize;
+      if (result != expected) failures += "Width cache crossed pixel " + std::to_string(pixels) +
+          ": expected height " + std::to_string(expected.height) + ", actual " + std::to_string(result.height) + "; ";
+    }
+  }
+  Require(foundBoundary, "Width fixture did not cross a wrapping boundary");
+  Require(failures.empty(), failures);
+}
+
 void CheckConcurrentMeasurement(float density) {
   auto contextContainer = std::make_shared<ContextContainer>();
   ComponentDescriptorProviderRegistry providers;
@@ -863,6 +917,15 @@ Java_com_rntextengine_RNTextEngineTextComparisonBenchmark_runNativeComparison(
   } catch (const std::exception &error) {
     env->ThrowNew(env->FindClass("java/lang/RuntimeException"), error.what());
     return nullptr;
+  }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_rntextengine_RNTextEngineTextComparisonBenchmark_checkMeasurementBoundaries(JNIEnv* env, jobject, jfloat density) {
+  try {
+    CheckMeasurementBoundaries(density);
+  } catch (const std::exception& error) {
+    env->ThrowNew(env->FindClass("java/lang/RuntimeException"), error.what());
   }
 }
 

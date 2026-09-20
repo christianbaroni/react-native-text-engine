@@ -3,7 +3,6 @@
 #include <fbjni/fbjni.h>
 #include <jni.h>
 #include <react/renderer/core/conversions.h>
-#include <react/utils/FloatComparison.h>
 
 #include <algorithm>
 #include <cmath>
@@ -456,7 +455,7 @@ constexpr MapBuffer::Key kArrayLength = 0;
 
 bool hasExactConstraint(Float minimum, Float maximum) {
   return std::isfinite(minimum) && std::isfinite(maximum) &&
-      floatEquality(minimum, maximum);
+      minimum == maximum;
 }
 
 bool hasBoundedConstraint(Float maximum) {
@@ -910,7 +909,7 @@ Size RNTextEngineTextViewShadowNode::measureContent(
         return layout.anchorToCapHeight == props.anchorToCapHeight &&
             layout.ellipsizeMode == ellipsizeMode &&
             layout.maxLines == maxLines &&
-            floatEquality(static_cast<Float>(layout.width), layoutWidth);
+            layout.width == layoutWidth;
       });
 
   if (layoutIterator == cache.layouts.end()) {
@@ -1008,7 +1007,7 @@ void RNTextEngineTextViewShadowNode::prepareMeasurementHandle(MeasurementCache& 
       rootStyle.fontWeight,
       rootStyle.fontStyle,
       rootStyle.letterSpacing,
-      rootStyle.lineHeight,
+      resolveLineHeight(rootStyle.lineHeight),
       rootStyle.tabularNumbers,
       buildRuns(payload));
 }

@@ -745,6 +745,28 @@ class RNTextEngineBindingsInstrumentedTest {
     }
 
     @Test
+    fun nestedTextKeepsNaturalLineHeight() {
+        for (mixed in listOf(false, true)) {
+            val parent = RNTextEngineTextShadowNode().apply { measureText = "A"; measureFontSize = 17.0 }
+            val child = RNTextEngineTextShadowNode().apply {
+                measureText = "B"
+                measureRnteIsVirtualTextSpan = true
+                if (mixed) measureFontSize = 23.0
+            }
+            parent.addChildAt(child, 0)
+            try {
+                val content = requireNotNull(RNTextEngineBindings.preparedText(resolvePreparedHandle(parent)))
+                assertEquals(null, content.style.lineHeightPx)
+                val geometry = RNTextEngineBindings.layout(resolvePreparedHandle(parent), 240.0, 0, null, false)
+                assertTrue("Natural nested text must have positive height", geometry[1] > 0)
+            } finally {
+                parent.removeAndDisposeAllChildren()
+                parent.dispose()
+            }
+        }
+    }
+
+    @Test
     @Suppress("DEPRECATION")
     fun nestedTextUsesTheSameFontScalingAsFlatText() {
         val originalConfiguration = Configuration(application.resources.configuration)
