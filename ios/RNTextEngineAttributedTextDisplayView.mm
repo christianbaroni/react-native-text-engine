@@ -95,6 +95,7 @@ void RNTextEngineApplyInteractionTextViewFrame(
 
 - (void)setAttributedText:(NSAttributedString *)attributedText
 {
+  if (_attributedText == attributedText) return;
   _attributedText = [attributedText copy] ?: [[NSAttributedString alloc] initWithString:@""];
   [_textStorage setAttributedString:_attributedText];
   [self invalidateLayout];

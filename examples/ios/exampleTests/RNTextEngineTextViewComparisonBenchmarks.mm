@@ -899,6 +899,21 @@ static void MountAndDrawTree(const RootShadowNode &root, BOOL textView, CGContex
   XCTAssertFalse([TextViewDisplay(view) valueForKey:@"layoutManager"] ==
                  [TextViewDisplay(secondView) valueForKey:@"layoutManager"]);
 
+  NSData *originalPixels = TextViewPixels(view, UIUserInterfaceStyleLight);
+  auto selectableProps = std::make_shared<RNTextEngineTextViewProps>(*props);
+  selectableProps->selectable = true;
+  [view updateProps:selectableProps oldProps:props];
+  [view finalizeUpdates:RNComponentViewUpdateMaskProps];
+  [view layoutIfNeeded];
+  XCTAssertNotNil([[view valueForKey:@"textView"] valueForKey:@"interactionTextView"]);
+  XCTAssertTrue(TextViewDisplay(view).hidden);
+  [view updateProps:props oldProps:selectableProps];
+  [view finalizeUpdates:RNComponentViewUpdateMaskProps];
+  [view layoutIfNeeded];
+  XCTAssertNil([[view valueForKey:@"textView"] valueForKey:@"interactionTextView"]);
+  XCTAssertFalse(TextViewDisplay(view).hidden);
+  XCTAssertEqualObjects(TextViewPixels(view, UIUserInterfaceStyleLight), originalPixels);
+
   auto unrelatedProps = std::make_shared<RNTextEngineTextViewProps>(*props);
   unrelatedProps->opacity = 0.4;
   auto unrelated = std::static_pointer_cast<RNTextEngineTextViewShadowNode>(node->clone({.props = unrelatedProps}));
@@ -1323,6 +1338,32 @@ static void MountAndDrawTree(const RootShadowNode &root, BOOL textView, CGContex
       .children = std::make_shared<const std::vector<std::shared_ptr<const ShadowNode>>>()}));
   flat->layout(context);
   XCTAssertFalse(flat->getStateData().content->nestedText != nil);
+#endif
+}
+
+- (void)testDisplayPreservesLayoutForIdenticalImmutableText
+{
+#ifdef RCT_NEW_ARCH_ENABLED
+  auto view = [[RNTextEngineAttributedTextDisplayView alloc] initWithFrame:CGRectMake(0, 0, 240, 100)];
+  auto mutableText = [[NSMutableAttributedString alloc] initWithString:@"Shared immutable typography" attributes:@{
+      NSFontAttributeName:[UIFont systemFontOfSize:19], NSForegroundColorAttributeName:UIColor.labelColor}];
+  NSAttributedString *text = [mutableText copy];
+  view.attributedText = text;
+  UIEdgeInsets insets = [view capHeightInsetsForWidth:240];
+  view.attributedText = text;
+  XCTAssertFalse([[view valueForKey:@"layoutDirty"] boolValue]);
+  XCTAssertFalse([[view valueForKey:@"capHeightInsetsDirty"] boolValue]);
+  XCTAssertTrue(UIEdgeInsetsEqualToEdgeInsets(insets, [view capHeightInsetsForWidth:240]));
+
+  view.attributedText = mutableText;
+  XCTAssertFalse(view.attributedText == mutableText);
+  [view capHeightInsetsForWidth:240];
+  [mutableText replaceCharactersInRange:NSMakeRange(0, mutableText.length) withString:@"Replacement text"];
+  XCTAssertEqualObjects(view.attributedText.string, text.string);
+  view.attributedText = mutableText;
+  XCTAssertTrue([[view valueForKey:@"layoutDirty"] boolValue]);
+  XCTAssertTrue([[view valueForKey:@"capHeightInsetsDirty"] boolValue]);
+  XCTAssertEqualObjects(view.attributedText.string, @"Replacement text");
 #endif
 }
 
