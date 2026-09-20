@@ -111,6 +111,34 @@ class RNTextEngineBindingsTest {
     }
 
     @Test
+    fun transformationBuildsOffsetsOnlyWhenTextChanges() {
+        for (transform in listOf(null, "none", "unknown", "uppercase")) {
+            val result = transformText("ALREADY 😀", transform) {
+                throw AssertionError("Unchanged text must not request run boundaries")
+            }
+            assertEquals("ALREADY 😀", result.text)
+            assertTrue(result.offsetsByOriginal.isEmpty())
+        }
+        val locale = java.util.Locale.getDefault()
+        try {
+            java.util.Locale.setDefault(java.util.Locale.GERMAN)
+            var requested = 0
+            val expanded = transformText("Straße 😀", "uppercase") {
+                requested++
+                listOf(0, 6, 9)
+            }
+            assertEquals(1, requested)
+            assertEquals("STRASSE 😀", expanded.text)
+            assertEquals(mapOf(0 to 0, 6 to 7, 9 to 10), expanded.offsetsByOriginal)
+            val changed = transformText("abc", "uppercase") { listOf(0, 3) }
+            assertEquals("ABC", changed.text)
+            assertEquals(mapOf(0 to 0, 3 to 3), changed.offsetsByOriginal)
+        } finally {
+            java.util.Locale.setDefault(locale)
+        }
+    }
+
+    @Test
     fun preparedBatchLayoutMatchesSingleLayoutAndReleaseClearsViewData() {
         val singleAlpha =
             RNTextEngineBindings.prepare(

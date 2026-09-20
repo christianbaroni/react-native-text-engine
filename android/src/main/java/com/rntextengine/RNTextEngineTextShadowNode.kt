@@ -760,13 +760,14 @@ internal class RNTextEngineTextShadowNode : LayoutShadowNode(), YogaMeasureFunct
         if (sourceText.isEmpty()) return ""
         if (localRuns.isEmpty()) return applyTextTransform(sourceText, textTransform)
 
-        val boundaries = ArrayList<Int>(localRuns.size * 2)
-        localRuns.forEach { run ->
-            boundaries.add(run.start)
-            boundaries.add(run.end)
+        val transformed = transformText(sourceText, textTransform) {
+            ArrayList<Int>(localRuns.size * 2).apply {
+                localRuns.forEach { run ->
+                    add(run.start)
+                    add(run.end)
+                }
+            }
         }
-
-        val transformed = transformText(sourceText, textTransform, boundaries)
         if (transformed.offsetsByOriginal.isEmpty()) return transformed.text
 
         localRuns.replaceAll { run ->

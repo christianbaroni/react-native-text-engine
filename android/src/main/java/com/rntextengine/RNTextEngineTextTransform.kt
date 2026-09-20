@@ -30,22 +30,26 @@ internal fun applyTextTransform(text: String, textTransform: String?): String {
     }
 }
 
-internal fun transformText(
+internal inline fun transformText(
     text: String,
     textTransform: String?,
-    boundaries: Collection<Int> = emptyList(),
+    boundaries: () -> Collection<Int> = { emptyList() },
 ): RNTextEngineTransformedText {
     val transformedText = applyTextTransform(text, textTransform)
-    if (boundaries.isEmpty() || transformedText == text) {
+    if (transformedText == text) {
+        return RNTextEngineTransformedText(offsetsByOriginal = emptyMap(), text = transformedText)
+    }
+    val requestedBoundaries = boundaries()
+    if (requestedBoundaries.isEmpty()) {
         return RNTextEngineTransformedText(offsetsByOriginal = emptyMap(), text = transformedText)
     }
 
-    val offsetsByOriginal = HashMap<Int, Int>(boundaries.size + 2)
+    val offsetsByOriginal = HashMap<Int, Int>(requestedBoundaries.size + 2)
     val resolvedBoundaries =
         buildSet {
             add(0)
             add(text.length)
-            boundaries.forEach { boundary ->
+            requestedBoundaries.forEach { boundary ->
                 if (boundary in 0..text.length) add(boundary)
             }
         }.sorted()

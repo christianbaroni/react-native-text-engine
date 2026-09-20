@@ -2079,14 +2079,16 @@ internal object RNTextEngineBindings {
     ): PreparedText {
         if (runs.isEmpty()) return buildPreparedTextForTextView(text, textTransform, style, source, environmentVersion)
 
-        val boundaries = ArrayList<Int>(runs.size * 2)
-        runs.forEach { run ->
-            boundaries.add(run.start)
-            boundaries.add(run.end)
+        val transformed = transformText(text, textTransform) {
+            ArrayList<Int>(runs.size * 2).apply {
+                runs.forEach { run ->
+                    add(run.start)
+                    add(run.end)
+                }
+            }
         }
-        val transformed = transformText(text, textTransform, boundaries)
         val transformedRuns =
-            runs.map { run ->
+            if (transformed.offsetsByOriginal.isEmpty()) runs else runs.map { run ->
                 run.copy(
                     start = transformed.offsetsByOriginal[run.start] ?: run.start,
                     end = transformed.offsetsByOriginal[run.end] ?: run.end,
@@ -2959,7 +2961,7 @@ internal object RNTextEngineBindings {
     @JvmStatic
     fun transformTextWithBoundaries(text: String, textTransform: String?, boundaries: IntArray?): Array<Any> {
         val resolvedBoundaries = boundaries ?: IntArray(0)
-        val transformed = transformText(text, textTransform, resolvedBoundaries.toList())
+        val transformed = transformText(text, textTransform) { resolvedBoundaries.toList() }
         val mappedBoundaries =
             IntArray(resolvedBoundaries.size) { index ->
                 transformed.offsetsByOriginal[resolvedBoundaries[index]] ?: resolvedBoundaries[index]
