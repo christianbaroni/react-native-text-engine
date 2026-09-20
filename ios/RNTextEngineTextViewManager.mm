@@ -653,10 +653,11 @@ static UIEdgeInsets RNTextEngineUIEdgeInsetsAdd(UIEdgeInsets left, UIEdgeInsets 
     if (environmentMatches && RNTextEngineHasSameTextAttributes(props, *_preparedContent->props)) {
       return _preparedContent->attributedText;
     }
+    const auto flatRuns = nested ? std::vector<RNTextEngineTextRun>{} : RNTextEngineTextRunsFromProps(props);
     return RNTextEngineBuildAttributedText(
         nested ? _preparedContent->nestedText : RCTNSStringFromString(props.text),
         RNTextEngineTextAttributesFromProps(props, fontScale),
-        nested ? _preparedContent->nestedRuns : RNTextEngineTextRunsFromProps(props),
+        nested ? _preparedContent->nestedRuns : flatRuns,
         nested ? nil : RCTNSStringFromStringNilIfEmpty(props.textTransform),
         nested);
   }

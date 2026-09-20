@@ -318,11 +318,12 @@ void RNTextEngineTextViewShadowNode::prepareMeasurementContent(MeasurementCache 
   } else if (props.textTransform == "capitalize") {
     content->locale = locale;
   }
+  const auto flatRuns = nested ? std::vector<RNTextEngineTextRun>{} : RNTextEngineTextRunsFromProps(props);
   CGFloat emptyLineHeight = 0;
   content->attributedText = RNTextEngineBuildAttributedText(
       nested ? content->nestedText : (toNSString(props.text) ?: @""),
       RNTextEngineTextAttributesFromProps(props, fontScale),
-      nested ? content->nestedRuns : RNTextEngineTextRunsFromProps(props),
+      nested ? content->nestedRuns : flatRuns,
       nested ? nil : toNSString(props.textTransform),
       nested,
       &emptyLineHeight);
