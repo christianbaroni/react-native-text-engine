@@ -2945,10 +2945,8 @@ internal object RNTextEngineBindings {
     }
 
     @JvmStatic
-    fun currentFontScaleMultiplier(): Double {
-        if (!::reactContext.isInitialized) return 1.0
-        val fontScale = reactContext.resources.configuration.fontScale
-        return if (fontScale > 0f) fontScale.toDouble() else 1.0
+    fun scaleTypographyValue(value: Double): Double {
+        return PixelUtil.toPixelFromSP(value.toFloat()).toDouble() / currentDensity()
     }
 
     private fun currentDensity(): Double {

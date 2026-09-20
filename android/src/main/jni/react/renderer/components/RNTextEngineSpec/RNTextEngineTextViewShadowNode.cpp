@@ -30,7 +30,7 @@ constexpr auto kTransformTextWithBoundariesSignature =
 struct JavaBindings {
   jclass bindingsClass = nullptr;
   jclass stringClass = nullptr;
-  jmethodID currentFontScaleMultiplierMethod = nullptr;
+  jmethodID scaleTypographyValueMethod = nullptr;
   jmethodID prepareTextViewMethod = nullptr;
   jmethodID prepareTextViewWithRunsMethod = nullptr;
   jmethodID releaseMethod = nullptr;
@@ -47,8 +47,8 @@ struct JavaBindings {
     stringClass = reinterpret_cast<jclass>(env->NewGlobalRef(localStringClass));
     env->DeleteLocalRef(localStringClass);
 
-    currentFontScaleMultiplierMethod =
-        env->GetStaticMethodID(bindingsClass, "currentFontScaleMultiplier", "()D");
+    scaleTypographyValueMethod =
+        env->GetStaticMethodID(bindingsClass, "scaleTypographyValue", "(D)D");
     prepareTextViewMethod = env->GetStaticMethodID(
         bindingsClass,
         "prepareTextView",
@@ -170,21 +170,22 @@ JNIEnv* getEnv(bool& needsDetach) {
 
 } // namespace
 
-static double currentFontScaleMultiplier() {
+static double scaleTypographyValue(double value) {
   bool needsDetach = false;
   JNIEnv* env = getEnv(needsDetach);
   if (env == nullptr) {
     throw std::runtime_error("Unable to retrieve jni environment. Is the thread attached?");
   }
   const auto& bindings = getBindings(env);
-  const auto multiplier = env->CallStaticDoubleMethod(
+  const auto scaledValue = env->CallStaticDoubleMethod(
       bindings.bindingsClass,
-      bindings.currentFontScaleMultiplierMethod);
+      bindings.scaleTypographyValueMethod,
+      value);
   clearPendingException(
       env,
-      "RNTextEngine: native font-scale multiplier lookup failed.");
+      "RNTextEngine: native typography conversion failed.");
   if (needsDetach) javaVm()->DetachCurrentThread();
-  return static_cast<double>(multiplier);
+  return static_cast<double>(scaledValue);
 }
 
 uint64_t prepareTextViewMeasurementHandle(
@@ -578,10 +579,6 @@ bool fragmentHasProps(const ShadowNodeFragment& fragment) {
 
 bool fragmentHasChildren(const ShadowNodeFragment& fragment) {
   return &fragment.children != &ShadowNodeFragment::childrenPlaceholder();
-}
-
-double resolveTypographyValue(double value, bool allowFontScaling) {
-  return allowFontScaling ? value * rntextengine::currentFontScaleMultiplier() : value;
 }
 
 bool usesIdentityTransform(std::string_view textTransform) {
@@ -1252,10 +1249,10 @@ RNTextEngineTextViewShadowNode::normalizePreparedStyle(const ResolvedStyle& styl
   }
 
   auto normalized = style;
-  normalized.fontSize = resolveTypographyValue(normalized.fontSize, true);
-  normalized.letterSpacing = resolveTypographyValue(normalized.letterSpacing, true);
+  normalized.fontSize = rntextengine::scaleTypographyValue(normalized.fontSize);
+  normalized.letterSpacing = rntextengine::scaleTypographyValue(normalized.letterSpacing);
   if (normalized.lineHeight > 0) {
-    normalized.lineHeight = resolveTypographyValue(normalized.lineHeight, true);
+    normalized.lineHeight = rntextengine::scaleTypographyValue(normalized.lineHeight);
   }
   normalized.allowFontScaling = false;
   return normalized;

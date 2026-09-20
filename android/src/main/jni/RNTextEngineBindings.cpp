@@ -136,7 +136,6 @@ jclass stringClass_ = nullptr;
 
 jmethodID initializeMethod_ = nullptr;
 jmethodID cleanupMethod_ = nullptr;
-jmethodID currentFontScaleMultiplierMethod_ = nullptr;
 jmethodID createGlyphFieldMethod_ = nullptr;
 jmethodID getGlyphFieldCellCountMethod_ = nullptr;
 jmethodID prepareMethod_ = nullptr;
@@ -221,7 +220,6 @@ void initializeIfNeeded(JNIEnv* env, jobject context) {
 
   initializeMethod_ = env->GetStaticMethodID(bindingsClass_, "initialize", "(Lcom/facebook/react/bridge/ReactApplicationContext;)V");
   cleanupMethod_ = env->GetStaticMethodID(bindingsClass_, "cleanup", "()V");
-  currentFontScaleMultiplierMethod_ = env->GetStaticMethodID(bindingsClass_, "currentFontScaleMultiplier", "()D");
   createGlyphFieldMethod_ = env->GetStaticMethodID(
       bindingsClass_,
       "createGlyphField",
@@ -958,21 +956,6 @@ void cleanup(JNIEnv* env) {
   }
   env->DeleteGlobalRef(bindingsClass_);
   bindingsClass_ = nullptr;
-}
-
-double currentFontScaleMultiplier() {
-  bool needsDetach = false;
-  JNIEnv* env = getEnv(needsDetach);
-  if (env == nullptr) return 1.0;
-
-  initializeIfNeeded(env, nullptr);
-  const jdouble multiplier =
-      env->CallStaticDoubleMethod(bindingsClass_, currentFontScaleMultiplierMethod_);
-  clearPendingException(
-      env,
-      "RNTextEngine: native font-scale multiplier lookup failed.");
-  if (needsDetach) jvm_->DetachCurrentThread();
-  return static_cast<double>(multiplier);
 }
 
 void install(Runtime& runtime) {

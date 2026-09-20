@@ -332,6 +332,54 @@ static std::shared_ptr<RootShadowNode> BuildTextViewTree(
       .surfaceId(0).tag(1).props(BuildRootProps(320, density)).children(std::move(children)));
 }
 
+void CheckNestedFontScaling(float density, double fontSize, double lineHeight, double letterSpacing) {
+  ComponentDescriptorProviderRegistry providers;
+  providers.add(concreteComponentDescriptorProvider<RNTextEngineTextViewComponentDescriptor>());
+  auto registry = providers.createComponentDescriptorRegistry(ComponentDescriptorParameters{
+      .eventDispatcher = {}, .contextContainer = std::make_shared<ContextContainer>(), .flavor = nullptr});
+  const auto context = BuildFabricLayoutContext(density);
+  const TextStyleFixture unscaled{.fontSize = 18, .letterSpacing = 2, .lineHeight = 40};
+  const TextStyleFixture scaled{.fontSize = fontSize, .letterSpacing = letterSpacing, .lineHeight = lineHeight};
+  for (bool rootScales : {false, true}) {
+    for (bool childScales : {false, true}) {
+      for (bool anchored : {false, true}) {
+        auto parentProps = BuildTextViewProps("Parent ", unscaled, 240);
+        parentProps->allowFontScaling = rootScales;
+        parentProps->anchorToCapHeight = anchored;
+        auto childProps = BuildTextViewProps("child", unscaled, 240);
+        childProps->allowFontScaling = childScales;
+        const auto &childStyle = childScales ? scaled : unscaled;
+        auto flatProps = BuildTextViewProps("Parent child", rootScales ? scaled : unscaled, 240);
+        flatProps->anchorToCapHeight = anchored;
+        if (rootScales != childScales) {
+          flatProps->runCount = 1;
+          flatProps->runStarts = {7};
+          flatProps->runEnds = {12};
+          flatProps->runStyleMasks = {(1 << 2) | (1 << 5) | (1 << 6)};
+          flatProps->runFontSizes = {childStyle.fontSize};
+          flatProps->runLetterSpacings = {childStyle.letterSpacing};
+          flatProps->runLineHeights = {childStyle.lineHeight};
+        }
+        auto flat = BuildBenchmarkShadowNode(registry,
+            Element<RNTextEngineTextViewShadowNode>().surfaceId(0).props(flatProps));
+        auto nested = BuildBenchmarkShadowNode(registry,
+            Element<RNTextEngineTextViewShadowNode>().surfaceId(0).props(parentProps).children({
+                Element<RNTextEngineTextViewShadowNode>().surfaceId(0).props(childProps)}));
+        for (double width : {60.0, 240.0}) {
+          const auto constraints = BuildLayoutConstraints(width);
+          auto expected = flat->measureContent(context, constraints);
+          auto actual = nested->measureContent(context, constraints);
+          Require(std::abs(expected.width - actual.width) < 0.001 && std::abs(expected.height - actual.height) < 0.001,
+              "Nested font scaling differs: scaledFontSize=" + std::to_string(fontSize) + "; root=" + std::to_string(rootScales) + "; child=" + std::to_string(childScales) +
+                  "; anchor=" + std::to_string(anchored) + "; width=" + std::to_string(width) +
+                  "; expected=" + std::to_string(expected.width) + "x" + std::to_string(expected.height) +
+                  "; actual=" + std::to_string(actual.width) + "x" + std::to_string(actual.height));
+        }
+      }
+    }
+  }
+}
+
 void CheckConcurrentMeasurement(float density) {
   auto contextContainer = std::make_shared<ContextContainer>();
   ComponentDescriptorProviderRegistry providers;
@@ -823,6 +871,16 @@ Java_com_rntextengine_RNTextEngineTextComparisonBenchmark_checkConcurrentMeasure
     JNIEnv *env, jobject, jfloat density) {
   try {
     CheckConcurrentMeasurement(density);
+  } catch (const std::exception &error) {
+    env->ThrowNew(env->FindClass("java/lang/RuntimeException"), error.what());
+  }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_rntextengine_RNTextEngineTextComparisonBenchmark_checkNestedFontScaling(
+    JNIEnv *env, jobject, jfloat density, jdouble fontSize, jdouble lineHeight, jdouble letterSpacing) {
+  try {
+    CheckNestedFontScaling(density, fontSize, lineHeight, letterSpacing);
   } catch (const std::exception &error) {
     env->ThrowNew(env->FindClass("java/lang/RuntimeException"), error.what());
   }

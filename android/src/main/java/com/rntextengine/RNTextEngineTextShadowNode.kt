@@ -830,17 +830,14 @@ internal class RNTextEngineTextShadowNode : LayoutShadowNode(), YogaMeasureFunct
 
     private fun resolvedLineHeight(): Double = if (lineHeight > 0) lineHeight else Double.NaN
     private fun resolvedFontSize(): Double = if (fontSize > 0) fontSize else 14.0
-    private fun scaleTypographyValue(value: Double, allowFontScaling: Boolean): Double {
-        return if (allowFontScaling) value * RNTextEngineBindings.currentFontScaleMultiplier() else value
-    }
 
     private fun ResolvedStyle.normalizedForPreparedText(): ResolvedStyle {
         if (!allowFontScaling) return this
         return copy(
             allowFontScaling = false,
-            fontSize = scaleTypographyValue(fontSize, true),
-            letterSpacing = scaleTypographyValue(letterSpacing, true),
-            lineHeight = if (lineHeight > 0.0) scaleTypographyValue(lineHeight, true) else lineHeight,
+            fontSize = RNTextEngineBindings.scaleTypographyValue(fontSize),
+            letterSpacing = RNTextEngineBindings.scaleTypographyValue(letterSpacing),
+            lineHeight = if (lineHeight > 0.0) RNTextEngineBindings.scaleTypographyValue(lineHeight) else lineHeight,
         )
     }
 

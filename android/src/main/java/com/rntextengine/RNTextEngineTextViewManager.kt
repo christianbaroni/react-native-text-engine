@@ -499,7 +499,7 @@ internal class RNTextEngineTextViewManager :
 
         private fun resolvePreparedTypographyValue(value: Float): Double {
             return if (allowFontScaling) {
-                value * RNTextEngineBindings.currentFontScaleMultiplier()
+                RNTextEngineBindings.scaleTypographyValue(value.toDouble())
             } else {
                 value.toDouble()
             }

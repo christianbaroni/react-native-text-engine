@@ -1,6 +1,8 @@
 package com.rntextengine
 
 import android.app.Application
+import android.util.DisplayMetrics
+import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
 import android.os.Process
@@ -16,6 +18,7 @@ import com.facebook.react.modules.core.ReactChoreographer
 import com.facebook.react.shell.MainReactPackage
 import com.facebook.react.soloader.OpenSourceMergedSoMapping
 import com.facebook.react.uimanager.DisplayMetricsHolder
+import com.facebook.react.uimanager.PixelUtil
 import com.facebook.react.uimanager.ViewManagerRegistry
 import com.facebook.react.views.text.ReactTextViewManager
 import com.facebook.soloader.SoLoader
@@ -29,8 +32,41 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class RNTextEngineTextComparisonBenchmark {
     private external fun checkNativeMeasurement(): String
+    private external fun checkNestedFontScaling(density: Float, fontSize: Double, lineHeight: Double, letterSpacing: Double)
     private external fun checkConcurrentMeasurement(density: Float)
     private external fun runNativeComparison(manager: FabricUIManager, density: Float, run: Int, prepared: Boolean): String
+
+    @Test
+    @Suppress("DEPRECATION")
+    fun nestedTextUsesPlatformFontScaling() {
+        assumeTrue(InstrumentationRegistry.getArguments().getString("rnteFontScaling") == "true")
+        val application = ApplicationProvider.getApplicationContext<Application>()
+        SoLoader.init(application, OpenSourceMergedSoMapping)
+        SoLoader.loadLibrary("fabricjni")
+        System.loadLibrary("rnte-text-comparison")
+        DisplayMetricsHolder.initDisplayMetricsIfNotInitialized(application)
+        RNTextEngineBindings.initialize(BenchmarkReactApplicationContext(application))
+        val originalConfiguration = Configuration(application.resources.configuration)
+        val originalMetrics = DisplayMetrics().apply { setTo(DisplayMetricsHolder.getScreenDisplayMetrics()) }
+        try {
+            for (fontScale in floatArrayOf(1f, 1.5f, 2f)) {
+                application.resources.updateConfiguration(
+                    Configuration(originalConfiguration).apply { this.fontScale = fontScale },
+                    application.resources.displayMetrics,
+                )
+                DisplayMetricsHolder.setScreenDisplayMetrics(application.resources.displayMetrics)
+                val density = PixelUtil.getDisplayMetricDensity()
+                checkNestedFontScaling(density,
+                    (PixelUtil.toPixelFromSP(18f) / density).toDouble(),
+                    (PixelUtil.toPixelFromSP(40f) / density).toDouble(),
+                    (PixelUtil.toPixelFromSP(2f) / density).toDouble())
+            }
+        } finally {
+            RNTextEngineBindings.cleanup()
+            application.resources.updateConfiguration(originalConfiguration, application.resources.displayMetrics)
+            DisplayMetricsHolder.setScreenDisplayMetrics(originalMetrics)
+        }
+    }
 
     @Test
     fun concurrentTextViewMeasurements() {

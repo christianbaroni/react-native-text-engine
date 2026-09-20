@@ -746,49 +746,81 @@ class RNTextEngineBindingsInstrumentedTest {
 
     @Test
     @Suppress("DEPRECATION")
-    fun nestedPaperTextUsesConfigurationFontScaleWhenScreenMetricsAreUnscaled() {
+    fun nestedTextUsesTheSameFontScalingAsFlatText() {
         val originalConfiguration = Configuration(application.resources.configuration)
-        val configuration = Configuration(originalConfiguration).apply { fontScale = 1.5f }
         val originalMetrics = DisplayMetrics().apply { setTo(DisplayMetricsHolder.getScreenDisplayMetrics()) }
-        val unscaledMetrics = DisplayMetrics().apply {
-            setTo(originalMetrics)
-            scaledDensity = density
-        }
-        val parent = RNTextEngineTextShadowNode()
-        val child = RNTextEngineTextShadowNode()
         try {
-            application.resources.updateConfiguration(configuration, application.resources.displayMetrics)
-            DisplayMetricsHolder.setScreenDisplayMetrics(unscaledMetrics)
-            assertEquals(1.5, RNTextEngineBindings.currentFontScaleMultiplier(), 0.0)
-            parent.measureRnteHasAllowFontScaling = true
-            parent.measureFontSize = 16.0
-            parent.measureLineHeight = 24.0
-            parent.measureRnteHasLetterSpacing = true
-            parent.measureLetterSpacing = 2.0
-            parent.measureText = "Parent "
-            child.measureRnteIsVirtualTextSpan = true
-            child.measureText = "child"
-            parent.addChildAt(child, 0)
-
-            for (allowFontScaling in booleanArrayOf(true, false)) {
-                parent.measureAllowFontScaling = allowFontScaling
-                val handle = resolvePreparedHandle(parent)
-                val prepared = requireNotNull(RNTextEngineBindings.preparedText(handle))
-                val measurement = measurePreparedAutoSizeText(handle, 0f, YogaMeasureMode.UNDEFINED, 0f, YogaMeasureMode.UNDEFINED, 0, null, false)
-                val multiplier = if (allowFontScaling) 1.5f else 1f
-
-                assertEquals("Parent child", prepared.displayText(false).toString())
-                assertEquals(PixelUtil.toPixelFromDIP(16f * multiplier), prepared.style.textPaint.textSize, 0.001f)
-                assertEquals(PixelUtil.toPixelFromDIP(24f * multiplier), measurement.heightPx, 0.001f)
-                assertEquals(
-                    PixelUtil.toPixelFromDIP(2f * multiplier),
-                    prepared.style.textPaint.letterSpacing * prepared.style.textPaint.textSize,
-                    0.001f,
+            for (fontScale in floatArrayOf(1f, 1.5f, 2f)) {
+                application.resources.updateConfiguration(
+                    Configuration(originalConfiguration).apply { this.fontScale = fontScale },
+                    application.resources.displayMetrics,
                 )
+                DisplayMetricsHolder.setScreenDisplayMetrics(application.resources.displayMetrics)
+                for (allowFontScaling in booleanArrayOf(true, false)) {
+                    val parent = RNTextEngineTextShadowNode()
+                    val flat = RNTextEngineTextShadowNode()
+                    val child = RNTextEngineTextShadowNode()
+                    try {
+                        for (node in listOf(parent, flat)) {
+                            node.measureRnteHasAllowFontScaling = true
+                            node.measureAllowFontScaling = allowFontScaling
+                            node.measureFontSize = 18.0
+                            node.measureLineHeight = 40.0
+                            node.measureRnteHasLetterSpacing = true
+                            node.measureLetterSpacing = 2.0
+                        }
+                        parent.measureText = "Parent "
+                        child.measureRnteIsVirtualTextSpan = true
+                        child.measureText = "child"
+                        parent.addChildAt(child, 0)
+                        flat.measureText = "Parent child"
+                        val flatHandle = resolvePreparedHandle(flat)
+                        val nestedHandle = resolvePreparedHandle(parent)
+                        val flatText = requireNotNull(RNTextEngineBindings.preparedText(flatHandle))
+                        val nestedText = requireNotNull(RNTextEngineBindings.preparedText(nestedHandle))
+                        val label = "fontScale=$fontScale allowFontScaling=$allowFontScaling"
+                        assertEquals(label, flatText.style.textPaint.textSize, nestedText.style.textPaint.textSize, 0.001f)
+                        assertEquals(label, flatText.style.lineHeightPx!!, nestedText.style.lineHeightPx!!, 0.001f)
+                        assertEquals(label, flatText.style.textPaint.letterSpacing, nestedText.style.textPaint.letterSpacing, 0.001f)
+                        for (width in doubleArrayOf(60.0, 240.0)) {
+                            val expected = RNTextEngineBindings.layout(flatHandle, width, 0, null, false)
+                            val actual = RNTextEngineBindings.layout(nestedHandle, width, 0, null, false)
+                            org.junit.Assert.assertArrayEquals(label, expected, actual, 0.001)
+                        }
+                        val payloadMethod = RNTextEngineTextShadowNode::class.java.getDeclaredMethod("resolvePayload")
+                        payloadMethod.isAccessible = true
+                        val payload = payloadMethod.invoke(parent) as RNTextEngineTextShadowNode.RNTextEngineResolvedTextPayload
+                        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+                            val manager = RNTextEngineTextViewManager()
+                            val flatView = RNTextEngineTextViewManager.RNTextEngineTextView(application)
+                            val nestedView = RNTextEngineTextViewManager.RNTextEngineTextView(application)
+                            for (view in listOf(flatView, nestedView)) {
+                                manager.setText(view, "Parent child")
+                                manager.setFontSize(view, 18.0)
+                                manager.setLineHeight(view, 40.0)
+                                manager.setLetterSpacing(view, 2.0)
+                                manager.setAllowFontScaling(view, allowFontScaling)
+                            }
+                            manager.updateExtraData(nestedView, payload)
+                            for (width in intArrayOf(160, 640)) {
+                                measureAndLayout(flatView, width, 1000)
+                                measureAndLayout(nestedView, width, 1000)
+                                val expected = requireNotNull(flatView.displayView.resolveLayout(width))
+                                val actual = requireNotNull(nestedView.displayView.resolveLayout(width))
+                                assertEquals(label, flatText.style.textPaint.textSize, actual.paint.textSize, 0.001f)
+                                assertEquals(label, expected.paint.letterSpacing, actual.paint.letterSpacing, 0.001f)
+                                assertEquals(label, expected.lineCount, actual.lineCount)
+                                assertEquals(label, expected.height, actual.height)
+                            }
+                        }
+                    } finally {
+                        parent.removeAndDisposeAllChildren()
+                        parent.dispose()
+                        flat.dispose()
+                    }
+                }
             }
         } finally {
-            parent.removeAndDisposeAllChildren()
-            parent.dispose()
             application.resources.updateConfiguration(originalConfiguration, application.resources.displayMetrics)
             DisplayMetricsHolder.setScreenDisplayMetrics(originalMetrics)
         }
