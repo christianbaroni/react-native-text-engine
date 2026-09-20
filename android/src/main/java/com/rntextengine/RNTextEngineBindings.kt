@@ -253,6 +253,7 @@ internal object RNTextEngineBindings {
     @JvmStatic
     fun initialize(context: ReactApplicationContext) {
         synchronized(this) {
+            if (::reactContext.isInitialized && reactContext === context) return
             reactContext = context
             textEnvironment = null
         }

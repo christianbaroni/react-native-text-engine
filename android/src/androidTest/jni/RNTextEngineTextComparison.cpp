@@ -438,12 +438,16 @@ void CheckMeasurementBoundaries(float density) {
 void CheckTextEnvironment(jni::alias_ref<jobject> receiver) {
   auto update = receiver->getClass()->getMethod<jfloat(jint)>("updateTextEnvironment");
   auto check = receiver->getClass()->getMethod<void(jlong)>("checkEnvironmentContent");
+  auto fontScale = receiver->getClass()->getMethod<jfloat()>("environmentFontScale");
   ComponentDescriptorProviderRegistry providers;
+  providers.add(concreteComponentDescriptorProvider<RootComponentDescriptor>());
   providers.add(concreteComponentDescriptorProvider<RNTextEngineTextViewComponentDescriptor>());
   auto registry = providers.createComponentDescriptorRegistry(ComponentDescriptorParameters{
       .eventDispatcher = {}, .contextContainer = std::make_shared<ContextContainer>(), .flavor = nullptr});
-  auto build = [&](bool nested) {
+  auto build = [&](bool nested, bool fixedSize = false) {
     auto props = BuildTextViewProps(nested ? "initial " : "initial child", {.fontSize = 18, .lineHeight = 0}, 120);
+    if (fixedSize) props->yogaStyle.setDimension(yoga::Dimension::Height, yoga::StyleSizeLength::points(100));
+    else props->yogaStyle.setDimension(yoga::Dimension::Width, yoga::StyleSizeLength::ofAuto());
     props->allowFontScaling = true;
     props->textTransform = "uppercase";
     auto element = Element<RNTextEngineTextViewShadowNode>().surfaceId(0).props(props);
@@ -460,8 +464,12 @@ void CheckTextEnvironment(jni::alias_ref<jobject> receiver) {
     auto retained = build(nested);
     std::shared_ptr<const rntextengine::PreparedTextHandle> previous;
     for (int stage = 0; stage < 8; ++stage) {
+      const auto previousRevision = retained;
+      const auto previousSize = previousRevision->measureContent(
+          BuildFabricLayoutContext(1), BuildLayoutConstraints(120));
       const float density = update(receiver, stage);
       const auto context = BuildFabricLayoutContext(density);
+      retained = std::static_pointer_cast<RNTextEngineTextViewShadowNode>(previousRevision->clone({}));
       const auto expected = build(nested);
       for (float width : {60.f, 240.f, std::numeric_limits<float>::infinity()}) {
         const auto constraints = BuildLayoutConstraints(width);
@@ -478,7 +486,53 @@ void CheckTextEnvironment(jni::alias_ref<jobject> receiver) {
       }
       retained->layout(context);
       Require(resource == retained->getStateData().preparedText, "Unchanged environment replaced State content");
+      Require(previousRevision->measureContent(context, BuildLayoutConstraints(120)) == previousSize,
+          "New environment changed an admitted revision's measurement");
+      Require(previousRevision->getStateData().preparedText == previous,
+          "New environment changed an admitted revision's State");
       previous = resource;
+    }
+
+    for (bool exactSize : {false, true}) {
+      std::shared_ptr<RootShadowNode> root;
+      for (int stage = 0; stage < 8; ++stage) {
+        const float density = update(receiver, stage);
+        const float width = stage % 2 ? 160 : 280;
+        auto props = BuildRootProps(width, density);
+        props->layoutContext.fontSizeMultiplier = fontScale(receiver);
+        auto freshRoot = [&] {
+          auto result = BuildBenchmarkShadowNode(registry,
+              Element<RootShadowNode>().surfaceId(0).tag(1).props(props));
+          result->appendChild(build(nested, exactSize));
+          return result;
+        };
+        const auto previousRoot = root;
+        root = root ? std::static_pointer_cast<RootShadowNode>(root->ShadowNode::clone({.props = props}))
+                    : freshRoot();
+        const auto expected = freshRoot();
+        Require(root->layoutIfNeeded() && expected->layoutIfNeeded(), "Environment update did not lay out");
+        const auto& node = static_cast<const RNTextEngineTextViewShadowNode&>(*root->getChildren().front());
+        const auto& reference = static_cast<const RNTextEngineTextViewShadowNode&>(*expected->getChildren().front());
+        Require(node.getLayoutMetrics().frame == reference.getLayoutMetrics().frame,
+            "Updated Fabric root retained stale geometry: stage=" + std::to_string(stage));
+        check(receiver, static_cast<jlong>(node.getStateData().preparedText->handle));
+        if (previousRoot) {
+          Require(root->getChildren().front() != previousRoot->getChildren().front(),
+              "Re-layout reused a sealed child revision");
+          if (!exactSize) {
+            const auto& oldNode = static_cast<const RNTextEngineTextViewShadowNode&>(*previousRoot->getChildren().front());
+            const auto constraints = BuildLayoutConstraints(width + 40);
+            const auto actualSize = oldNode.measure(props->layoutContext, constraints);
+            const auto expectedSize = reference.measure(props->layoutContext, constraints);
+            Require(actualSize == expectedSize,
+                "Standalone measurement mismatch: stage=" + std::to_string(stage) +
+                    " nested=" + std::to_string(nested) + " exact=" + std::to_string(exactSize) +
+                    " actual=" + std::to_string(actualSize.width) + "," + std::to_string(actualSize.height) +
+                    " expected=" + std::to_string(expectedSize.width) + "," + std::to_string(expectedSize.height));
+          }
+        }
+        root->sealRecursive();
+      }
     }
   }
 }

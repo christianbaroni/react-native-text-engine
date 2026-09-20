@@ -858,22 +858,17 @@ bool RNTextEngineTextViewShadowNode::shouldNewRevisionDirtyMeasurement(
 
 RNTextEngineTextViewShadowNode::MeasurementCache&
 RNTextEngineTextViewShadowNode::ensureMeasurementCache() const {
+  // Fabric clones nodes for re-layout; validate inherited preparation once per revision.
   std::call_once(measurementCacheInitialization_, [this] {
-    if (measurementCache_ == nullptr) {
-      std::atomic_store(&measurementCache_, std::make_shared<MeasurementCache>());
+    const auto environmentVersion = rntextengine::textEnvironmentVersion();
+    if (!measurementCache_ || measurementCache_->environmentVersion != environmentVersion) {
+      std::atomic_store(&measurementCache_, std::make_shared<MeasurementCache>(environmentVersion));
     }
   });
   return *measurementCache_;
 }
 
 void RNTextEngineTextViewShadowNode::prepareMeasurementHandle(MeasurementCache& cache) const {
-  const auto environmentVersion = rntextengine::textEnvironmentVersion();
-  if (cache.environmentVersion != environmentVersion) {
-    cache.preparedText.reset();
-    cache.layouts.clear();
-    cache.preferredWidth = -1;
-    cache.environmentVersion = environmentVersion;
-  }
   if (cache.preparedText) return;
 
   const auto& props = getConcreteProps();
@@ -891,7 +886,7 @@ void RNTextEngineTextViewShadowNode::prepareMeasurementHandle(MeasurementCache& 
         resolveLineHeight(props.lineHeight),
         props.tabularNumbers,
         buildRuns(),
-        environmentVersion);
+        cache.environmentVersion);
   } else {
     const auto payload = resolvePayload();
     const auto rootStyle = normalizePreparedStyle(resolveNodeStyle(props, nullptr));
@@ -907,7 +902,7 @@ void RNTextEngineTextViewShadowNode::prepareMeasurementHandle(MeasurementCache& 
         resolveLineHeight(rootStyle.lineHeight),
         rootStyle.tabularNumbers,
         payload.runs,
-        environmentVersion,
+        cache.environmentVersion,
         true);
   }
   cache.preparedText = std::make_shared<const rntextengine::PreparedTextHandle>(handle);

@@ -237,6 +237,9 @@ class RNTextEngineTextComparisonBenchmark {
         return PixelUtil.getDisplayMetricDensity()
     }
 
+    private fun environmentFontScale(): Float =
+        ApplicationProvider.getApplicationContext<Application>().resources.configuration.fontScale
+
     private fun checkEnvironmentContent(handle: Long) {
         val content = requireNotNull(RNTextEngineBindings.preparedText(handle))
         assertTrue(content.text == "initial child".uppercase(java.util.Locale.getDefault()))
@@ -245,7 +248,7 @@ class RNTextEngineTextComparisonBenchmark {
 
     @Test
     @Suppress("DEPRECATION")
-    fun textViewCacheTracksPlatformEnvironment() {
+    fun textViewRevisionsTrackPlatformEnvironment() {
         assumeTrue(InstrumentationRegistry.getArguments().getString("rnteConcurrency") == "true")
         val application = ApplicationProvider.getApplicationContext<Application>()
         SoLoader.init(application, OpenSourceMergedSoMapping)

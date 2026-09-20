@@ -161,8 +161,10 @@ class RNTextEngineTextViewShadowNode final : public ConcreteViewShadowNode<
   };
 
   struct MeasurementCache {
+    explicit MeasurementCache(uint64_t version) : environmentVersion(version) {}
+
     std::mutex mutex;
-    uint64_t environmentVersion{0};
+    const uint64_t environmentVersion;
     std::shared_ptr<const rntextengine::PreparedTextHandle> preparedText;
     double preferredWidth{-1};
     std::vector<CachedLayout> layouts{};

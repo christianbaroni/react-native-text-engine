@@ -130,6 +130,42 @@ class RNTextEngineBindingsInstrumentedTest {
     }
 
     @Test
+    fun initializationPreservesContentUntilItsEnvironmentChanges() {
+        val context = InstrumentedTestReactApplicationContext(application)
+        RNTextEngineBindings.initialize(context)
+        fun prepare(previous: RNTextEngineBindings.PreparedText? = null) = RNTextEngineBindings.prepareTextViewContent(
+            "initial", "uppercase", null, null, 18.0, null, null, 0.0, Double.NaN, true,
+            tabularNumbers = false, textBreakStrategy = null, prepared = previous, retainSource = true,
+        )
+        val locale = java.util.Locale.getDefault()
+        try {
+            java.util.Locale.setDefault(java.util.Locale.US)
+            val original = prepare()
+            RNTextEngineBindings.initialize(context)
+            assertSame(original, prepare(original))
+
+            java.util.Locale.setDefault(java.util.Locale.forLanguageTag("tr-TR"))
+            RNTextEngineBindings.initialize(context)
+            val localized = prepare(original)
+            assertNotSame(original, localized)
+            assertEquals("İNİTİAL", localized.text)
+
+            val replacement = InstrumentedTestReactApplicationContext(application)
+            RNTextEngineBindings.initialize(replacement)
+            val replaced = prepare(localized)
+            assertNotSame(localized, replaced)
+            RNTextEngineBindings.initialize(replacement)
+            assertSame(replaced, prepare(replaced))
+
+            RNTextEngineBindings.cleanup()
+            RNTextEngineBindings.initialize(replacement)
+            assertNotSame(replaced, prepare(replaced))
+        } finally {
+            java.util.Locale.setDefault(locale)
+        }
+    }
+
+    @Test
     fun fabricPreparedStatePreservesUiOverridesAcrossCommits() {
         InstrumentationRegistry.getInstrumentation().runOnMainSync {
             fun prepare(text: String, fontSize: Double) = RNTextEngineBindings.prepareTextView(
