@@ -20,7 +20,7 @@ internal class RNTextEngineAttributedTextDisplayView(context: Context) : View(co
     private var layoutDirty = true
     private var preparedText: RNTextEngineBindings.PreparedTextViewData? = null
     private var textAlign: String? = null
-    private var textDecorationLine: String? = null
+    private var decorationFlags = 0
     private var textShadowColor: Int? = null
     private var textShadowOffsetHeightPx = 0f
     private var textShadowOffsetWidthPx = 0f
@@ -65,28 +65,35 @@ internal class RNTextEngineAttributedTextDisplayView(context: Context) : View(co
     }
 
     fun setTextDecorationLineValue(value: String?) {
-        if (textDecorationLine == value) return
-        textDecorationLine = value
-        invalidateLayout()
+        var flags = 0
+        value?.split(" ")?.forEach { decoration ->
+            when (decoration) {
+                "underline" -> flags = flags or Paint.UNDERLINE_TEXT_FLAG
+                "line-through" -> flags = flags or Paint.STRIKE_THRU_TEXT_FLAG
+            }
+        }
+        if (decorationFlags == flags) return
+        decorationFlags = flags
+        invalidateDrawingStyle()
     }
 
     fun setTextShadowColorValue(value: Int?) {
         if (textShadowColor == value) return
         textShadowColor = value
-        invalidateLayout()
+        invalidateDrawingStyle()
     }
 
     fun setTextShadowOffsetPx(widthPx: Float, heightPx: Float) {
         if (textShadowOffsetWidthPx == widthPx && textShadowOffsetHeightPx == heightPx) return
         textShadowOffsetWidthPx = widthPx
         textShadowOffsetHeightPx = heightPx
-        invalidateLayout()
+        invalidateDrawingStyle()
     }
 
     fun setTextShadowRadiusPx(value: Float) {
         if (textShadowRadiusPx == value) return
         textShadowRadiusPx = value
-        invalidateLayout()
+        invalidateDrawingStyle()
     }
 
     fun resolveCapHeightInsets(width: Int): RNTextEngineCapHeightInsetsPx {
@@ -144,7 +151,7 @@ internal class RNTextEngineAttributedTextDisplayView(context: Context) : View(co
         cachedLayout =
             buildStaticLayoutCompat(
                 text = prepared.text,
-                paint = resolveTextPaint(prepared),
+                paint = TextPaint(prepared.textPaint).also(::applyDrawingStyle),
                 widthPx = max(1, contentWidth),
                 includeFontPadding = prepared.includeFontPadding,
                 breakStrategy = Layout.BREAK_STRATEGY_HIGH_QUALITY,
@@ -167,18 +174,14 @@ internal class RNTextEngineAttributedTextDisplayView(context: Context) : View(co
         invalidate()
     }
 
-    private fun resolveTextPaint(prepared: RNTextEngineBindings.PreparedTextViewData): TextPaint {
-        return TextPaint(prepared.textPaint).apply {
-            var flags = flags and Paint.UNDERLINE_TEXT_FLAG.inv() and Paint.STRIKE_THRU_TEXT_FLAG.inv()
-            textDecorationLine?.split(" ")?.forEach { decoration ->
-                when (decoration) {
-                    "underline" -> flags = flags or Paint.UNDERLINE_TEXT_FLAG
-                    "line-through" -> flags = flags or Paint.STRIKE_THRU_TEXT_FLAG
-                }
-            }
-            this.flags = flags
-            setShadowLayer(textShadowRadiusPx, textShadowOffsetWidthPx, textShadowOffsetHeightPx, textShadowColor ?: Color.TRANSPARENT)
-        }
+    private fun invalidateDrawingStyle() {
+        cachedLayout?.paint?.let(::applyDrawingStyle)
+        invalidate()
+    }
+
+    private fun applyDrawingStyle(paint: TextPaint) {
+        paint.flags = (paint.flags and Paint.UNDERLINE_TEXT_FLAG.inv() and Paint.STRIKE_THRU_TEXT_FLAG.inv()) or decorationFlags
+        paint.setShadowLayer(textShadowRadiusPx, textShadowOffsetWidthPx, textShadowOffsetHeightPx, textShadowColor ?: Color.TRANSPARENT)
     }
 
     private fun resolveNativeLineSpacingAddPx(prepared: RNTextEngineBindings.PreparedTextViewData): Float {

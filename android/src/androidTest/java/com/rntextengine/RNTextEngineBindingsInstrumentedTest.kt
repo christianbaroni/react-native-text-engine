@@ -2,6 +2,9 @@ package com.rntextengine
 
 import android.app.Application
 import android.content.res.Configuration
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
 import android.text.Layout
 import android.text.TextPaint
 import android.util.DisplayMetrics
@@ -32,6 +35,8 @@ import kotlin.math.roundToInt
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertSame
+import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertThrows
 import org.junit.Before
@@ -120,6 +125,60 @@ class RNTextEngineBindingsInstrumentedTest {
     @After
     fun tearDown() {
         RNTextEngineBindings.cleanup()
+    }
+
+    @Test
+    fun drawStyleUpdatesReuseLayoutAndMatchFreshRendering() {
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            val prepared = RNTextEngineBindings.buildTextViewDisplayData(
+                text = "Visible text wraps across several lines.",
+                textTransform = null,
+                color = Color.BLACK,
+                fontFamily = null,
+                fontSize = 17.0,
+                fontWeight = null,
+                fontStyle = null,
+                letterSpacing = 0.0,
+                lineHeight = 24.0,
+                allowFontScaling = false,
+                tabularNumbers = false,
+                textBreakStrategy = "highQuality",
+            )
+            fun createView() = RNTextEngineAttributedTextDisplayView(application).apply {
+                setPreparedText(prepared)
+                layout(0, 0, 320, 240)
+            }
+            fun render(view: View) = Bitmap.createBitmap(320, 240, Bitmap.Config.ARGB_8888).also {
+                view.draw(Canvas(it))
+            }
+            val view = createView()
+            val layout = requireNotNull(view.resolveLayout(320))
+            val updates = listOf<(RNTextEngineAttributedTextDisplayView) -> Unit>(
+                { it.setTextDecorationLineValue("underline line-through") },
+                { it.setTextShadowColorValue(Color.RED) },
+                { it.setTextShadowOffsetPx(2f, 3f) },
+                { it.setTextShadowRadiusPx(2f) },
+                { it.setTextDecorationLineValue(null) },
+                { it.setTextShadowColorValue(null) },
+            )
+            updates.forEachIndexed { index, update ->
+                update(view)
+                assertSame("Draw-only update $index rebuilt text layout", layout, view.resolveLayout(320))
+                assertEquals(0, prepared.textPaint.flags and (android.graphics.Paint.UNDERLINE_TEXT_FLAG or android.graphics.Paint.STRIKE_THRU_TEXT_FLAG))
+                val reference = createView()
+                updates.take(index + 1).forEach { it(reference) }
+                val actual = render(view)
+                val expected = render(reference)
+                assertTrue("Draw-only update $index changed rendering", actual.sameAs(expected))
+                val pixels = IntArray(actual.width * actual.height)
+                actual.getPixels(pixels, 0, actual.width, 0, 0, actual.width, actual.height)
+                assertTrue("Text drawing must not be blank", pixels.any { it != Color.TRANSPARENT })
+                actual.recycle()
+                expected.recycle()
+            }
+            view.numberOfLines = 1
+            assertNotSame("Line limits must invalidate layout", layout, view.resolveLayout(320))
+        }
     }
 
     @Test
