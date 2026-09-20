@@ -131,12 +131,12 @@ class RNTextEngineTextViewManagerTest {
         val text = "Cap anchored text"
         val view = RNTextEngineTextViewManager.RNTextEngineTextView(application)
         view.anchorToCapHeight = true
-        view.textContentView.textValue = text
-        view.textContentView.fontFamily = "serif"
-        view.textContentView.setFontSizeValue(48f)
-        view.textContentView.setLineHeightValue(56f)
+        view.setTextValue(text)
+        view.fontFamily = "serif"
+        view.fontSizeValue = 48f
+        view.lineHeightValue = 56f
         view.invalidateTextDisplay()
-        view.flushTextDisplayIfNeeded()
+        measureAndLayout(view, width = 200, height = 50)
 
         val insets = view.displayView.resolveCapHeightInsets(240)
         val viewHeight = 80
@@ -243,7 +243,7 @@ class RNTextEngineTextViewManagerTest {
             view,
             "Push this harder. A prepared message can be measured repeatedly without rebuilding the message itself.",
         )
-        view.flushTextDisplayIfNeeded()
+        measureAndLayout(view, width = 200, height = 50)
 
         measureAndLayout(view, width = hostWidth, height = hostHeight)
         shadowOf(Looper.getMainLooper()).idle()
@@ -630,7 +630,7 @@ class RNTextEngineTextViewManagerTest {
         val prepared = requireNotNull(RNTextEngineBindings.resolvePreparedTextViewData(handle))
         val textView = AppCompatTextView(application)
 
-        applyPreparedTextViewData(textView, prepared, textView.currentTextColor)
+        applyPreparedTextViewData(textView, prepared)
 
         assertEquals(RNTextEngineBindings.TextMountMode.SPANNABLE, prepared.mountMode)
         assertTrue(textView.text is Spanned)
@@ -672,7 +672,7 @@ class RNTextEngineTextViewManagerTest {
         val prepared = requireNotNull(RNTextEngineBindings.resolvePreparedTextViewData(handle))
         val textView = AppCompatTextView(application)
 
-        applyPreparedTextViewData(textView, prepared, textView.currentTextColor)
+        applyPreparedTextViewData(textView, prepared)
 
         assertTrue(textView.text is Spanned)
         assertEquals(0f, textView.lineSpacingExtra, 0.0001f)
@@ -723,20 +723,20 @@ class RNTextEngineTextViewManagerTest {
 
         manager.setText(view, "gas")
         manager.setTextTransform(view, "uppercase")
-        view.flushTextDisplayIfNeeded()
-        assertEquals("GAS", view.textContentView.text.toString())
+        measureAndLayout(view, width = 200, height = 50)
+        assertEquals("GAS", requireNotNull(view.displayView.resolveLayout(200)).text.toString())
 
         manager.setTextTransform(view, "capitalize")
         manager.setText(view, "hold to swap")
         view.invalidateTextDisplay()
-        view.flushTextDisplayIfNeeded()
-        assertEquals("Hold To Swap", view.textContentView.text.toString())
+        measureAndLayout(view, width = 200, height = 50)
+        assertEquals("Hold To Swap", requireNotNull(view.displayView.resolveLayout(200)).text.toString())
 
         manager.setTextTransform(view, "none")
         manager.setText(view, "Hold To Swap")
         view.invalidateTextDisplay()
-        view.flushTextDisplayIfNeeded()
-        assertEquals("Hold To Swap", view.textContentView.text.toString())
+        measureAndLayout(view, width = 200, height = 50)
+        assertEquals("Hold To Swap", requireNotNull(view.displayView.resolveLayout(200)).text.toString())
     }
 
     @Test
@@ -761,11 +761,11 @@ class RNTextEngineTextViewManagerTest {
     fun collapsingCapAnchoredHostClearsTheMountedDisplayOwnerBounds() {
         val view = RNTextEngineTextViewManager.RNTextEngineTextView(application)
         view.anchorToCapHeight = true
-        view.textContentView.textValue = "Animated text"
-        view.textContentView.setFontSizeValue(36f)
-        view.textContentView.setLineHeightValue(42f)
+        view.setTextValue("Animated text")
+        view.fontSizeValue = 36f
+        view.lineHeightValue = 42f
         view.invalidateTextDisplay()
-        view.flushTextDisplayIfNeeded()
+        measureAndLayout(view, width = 200, height = 50)
 
         measureAndLayout(view, width = 220, height = 60)
         assertTrue(view.displayView.bottom > 0)
@@ -783,20 +783,20 @@ class RNTextEngineTextViewManagerTest {
         val view = RNTextEngineTextViewManager.RNTextEngineTextView(application)
 
         assertEquals(view, view.displayView.parent)
-        assertEquals(null, view.textContentView.parent)
+        assertEquals(null, view.selectionView?.parent)
         assertEquals(0, view.childCount)
         assertEquals(null, view.getChildAt(0))
         assertEquals(-1, view.indexOfChild(view.displayView))
 
         repeat(2) {
             view.setSelectable(true)
-            assertEquals(view, view.textContentView.parent)
+            assertEquals(view, requireNotNull(view.selectionView).parent)
             assertEquals(0, view.childCount)
             assertEquals(null, view.getChildAt(0))
-            assertEquals(-1, view.indexOfChild(view.textContentView))
+            assertEquals(-1, view.indexOfChild(view.selectionView))
 
             view.setSelectable(false)
-            assertEquals(null, view.textContentView.parent)
+            assertEquals(null, view.selectionView?.parent)
             assertEquals(view, view.displayView.parent)
             assertEquals(View.VISIBLE, view.displayView.visibility)
             assertEquals(0, view.childCount)
@@ -809,13 +809,13 @@ class RNTextEngineTextViewManagerTest {
 
         repeat(2) {
             view.setSelectable(true)
-            assertEquals(view, view.textContentView.parent)
+            assertEquals(view, requireNotNull(view.selectionView).parent)
             assertEquals(0, view.childCount)
             assertEquals(null, view.getChildAt(0))
-            assertEquals(-1, view.indexOfChild(view.textContentView))
+            assertEquals(-1, view.indexOfChild(view.selectionView))
 
             view.setSelectable(false)
-            assertEquals(null, view.textContentView.parent)
+            assertEquals(null, view.selectionView?.parent)
             assertEquals(view, view.displayView.parent)
             assertEquals(View.VISIBLE, view.displayView.visibility)
             assertEquals(0, view.childCount)
@@ -836,14 +836,14 @@ class RNTextEngineTextViewManagerTest {
 
         manager.setText(view, "short")
         measureAndLayout(view, width = 200, height = 50)
-        assertEquals("short", view.textContentView.text.toString())
-        val staleText = view.textContentView.text as? Spanned
+        assertEquals("short", requireNotNull(view.displayView.resolveLayout(200)).text.toString())
+        val staleText = requireNotNull(view.displayView.resolveLayout(200)).text as? Spanned
         assertEquals(0, staleText?.getSpans(0, staleText.length, RNTextEngineTextPaintSpan::class.java)?.size ?: 0)
 
         manager.setRunStarts(view, JavaOnlyArray.of(0))
         manager.setRunEnds(view, JavaOnlyArray.of(5))
         measureAndLayout(view, width = 200, height = 50)
-        val updatedText = view.textContentView.text as Spanned
+        val updatedText = requireNotNull(view.displayView.resolveLayout(200)).text as Spanned
         assertEquals(1, updatedText.getSpans(0, updatedText.length, RNTextEngineTextPaintSpan::class.java).size)
     }
 
@@ -854,26 +854,26 @@ class RNTextEngineTextViewManagerTest {
         manager.setText(view, "Hello")
         manager.setRuns(view, JavaOnlyArray.of(JavaOnlyMap.of("start", 0, "end", 5, "style", JavaOnlyMap.of("fontWeight", "700"))))
         measureAndLayout(view, width = 200, height = 50)
-        val originalText = view.textContentView.text as Spanned
+        val originalText = requireNotNull(view.displayView.resolveLayout(200)).text as Spanned
         assertEquals(1, originalText.getSpans(0, originalText.length, RNTextEngineTextPaintSpan::class.java).size)
 
         manager.setRunEnds(view, JavaOnlyArray.of(5))
         measureAndLayout(view, width = 200, height = 50)
-        val partialText = view.textContentView.text as? Spanned
+        val partialText = requireNotNull(view.displayView.resolveLayout(200)).text as? Spanned
         assertEquals(0, partialText?.getSpans(0, partialText.length, RNTextEngineTextPaintSpan::class.java)?.size ?: 0)
 
         manager.setRunStarts(view, JavaOnlyArray())
         manager.setRunEnds(view, JavaOnlyArray())
         manager.setRunStyleMasks(view, JavaOnlyArray())
         measureAndLayout(view, width = 200, height = 50)
-        val clearedText = view.textContentView.text as? Spanned
+        val clearedText = requireNotNull(view.displayView.resolveLayout(200)).text as? Spanned
         assertEquals(0, clearedText?.getSpans(0, clearedText.length, RNTextEngineTextPaintSpan::class.java)?.size ?: 0)
 
         manager.setRunStarts(view, null)
         manager.setRunEnds(view, null)
         manager.setRunStyleMasks(view, null)
         measureAndLayout(view, width = 200, height = 50)
-        val restoredText = view.textContentView.text as Spanned
+        val restoredText = requireNotNull(view.displayView.resolveLayout(200)).text as Spanned
         assertEquals(1, restoredText.getSpans(0, restoredText.length, RNTextEngineTextPaintSpan::class.java).size)
     }
 
@@ -894,8 +894,8 @@ class RNTextEngineTextViewManagerTest {
         manager.updateExtraData(view, payload)
         measureAndLayout(view, width = 200, height = 50)
 
-        assertEquals("short", view.textContentView.text.toString())
-        val text = view.textContentView.text as? Spanned
+        assertEquals("short", requireNotNull(view.displayView.resolveLayout(200)).text.toString())
+        val text = requireNotNull(view.displayView.resolveLayout(200)).text as? Spanned
         assertEquals(0, text?.getSpans(0, text.length, RNTextEngineTextPaintSpan::class.java)?.size ?: 0)
     }
 
@@ -951,25 +951,21 @@ class RNTextEngineTextViewManagerTest {
             )
 
         manager.setText(view, "")
-        view.flushTextDisplayIfNeeded()
-        assertEquals("", view.textContentView.text.toString())
+        view.finishUpdates()
+        assertEquals(null, view.displayView.resolveLayout(200))
 
         manager.updateExtraData(view, payload)
-        assertEquals("", view.textContentView.text.toString())
+        assertEquals(null, view.displayView.resolveLayout(200))
 
         measureAndLayout(view, width = 200, height = 50)
 
-        assertEquals("nested text", view.textContentView.text.toString())
+        assertEquals("nested text", requireNotNull(view.displayView.resolveLayout(200)).text.toString())
     }
 
     @Test
     fun equivalentNestedPayloadDoesNotRedirtyMountedText() {
         val manager = RNTextEngineTextViewManager()
         val view = RNTextEngineTextViewManager.RNTextEngineTextView(application)
-        val dirtyField =
-            view.textContentView.javaClass.getDeclaredField("textDisplayDirty").apply {
-                isAccessible = true
-            }
         val firstPayload =
             RNTextEngineTextShadowNode.RNTextEngineResolvedTextPayload(
                 hasNested = true,
@@ -1007,11 +1003,9 @@ class RNTextEngineTextViewManagerTest {
 
         manager.updateExtraData(view, firstPayload)
         measureAndLayout(view, width = 200, height = 50)
-        assertFalse(dirtyField.getBoolean(view.textContentView))
-
+        val layout = requireNotNull(view.displayView.resolveLayout(200))
         manager.updateExtraData(view, equivalentPayload)
-
-        assertFalse(dirtyField.getBoolean(view.textContentView))
+        org.junit.Assert.assertSame(layout, view.displayView.resolveLayout(200))
     }
 
     @Test
@@ -1039,39 +1033,41 @@ class RNTextEngineTextViewManagerTest {
         manager.updateExtraData(view, payload)
         measureAndLayout(view, width = 200, height = 50)
 
-        assertEquals("nested text", view.textContentView.text.toString())
+        assertEquals("nested text", requireNotNull(view.displayView.resolveLayout(200)).text.toString())
     }
 
     @Test
     fun shadowPropsUpdateMountedTextPaint() {
         val manager = RNTextEngineTextViewManager()
         val view = RNTextEngineTextViewManager.RNTextEngineTextView(application)
+        view.setSelectable(true)
         val offset = JavaOnlyMap.of("width", 2.0, "height", 3.0)
 
         manager.setTextShadowColor(view, Color.RED)
         manager.setTextShadowOffset(view, offset)
         manager.setTextShadowRadius(view, 4.0)
 
-        assertEquals(Color.RED, view.textContentView.shadowColor)
-        assertEquals(PixelUtil.toPixelFromDIP(2f), view.textContentView.shadowDx, 0.001f)
-        assertEquals(PixelUtil.toPixelFromDIP(3f), view.textContentView.shadowDy, 0.001f)
-        assertEquals(PixelUtil.toPixelFromDIP(4f), view.textContentView.shadowRadius, 0.001f)
+        assertEquals(Color.RED, requireNotNull(view.selectionView).shadowColor)
+        assertEquals(PixelUtil.toPixelFromDIP(2f), requireNotNull(view.selectionView).shadowDx, 0.001f)
+        assertEquals(PixelUtil.toPixelFromDIP(3f), requireNotNull(view.selectionView).shadowDy, 0.001f)
+        assertEquals(PixelUtil.toPixelFromDIP(4f), requireNotNull(view.selectionView).shadowRadius, 0.001f)
     }
 
     @Test
     fun textDecorationLineTogglesUnderlineAndStrikethrough() {
         val manager = RNTextEngineTextViewManager()
         val view = RNTextEngineTextViewManager.RNTextEngineTextView(application)
+        view.setSelectable(true)
 
         manager.setTextDecorationLine(view, "underline line-through")
 
-        assertTrue(view.textContentView.paintFlags and android.graphics.Paint.UNDERLINE_TEXT_FLAG != 0)
-        assertTrue(view.textContentView.paintFlags and android.graphics.Paint.STRIKE_THRU_TEXT_FLAG != 0)
+        assertTrue(requireNotNull(view.selectionView).paintFlags and android.graphics.Paint.UNDERLINE_TEXT_FLAG != 0)
+        assertTrue(requireNotNull(view.selectionView).paintFlags and android.graphics.Paint.STRIKE_THRU_TEXT_FLAG != 0)
 
         manager.setTextDecorationLine(view, null)
 
-        assertTrue(view.textContentView.paintFlags and android.graphics.Paint.UNDERLINE_TEXT_FLAG == 0)
-        assertTrue(view.textContentView.paintFlags and android.graphics.Paint.STRIKE_THRU_TEXT_FLAG == 0)
+        assertTrue(requireNotNull(view.selectionView).paintFlags and android.graphics.Paint.UNDERLINE_TEXT_FLAG == 0)
+        assertTrue(requireNotNull(view.selectionView).paintFlags and android.graphics.Paint.STRIKE_THRU_TEXT_FLAG == 0)
     }
 
     @Test
@@ -1080,12 +1076,12 @@ class RNTextEngineTextViewManagerTest {
         val view = RNTextEngineTextViewManager.RNTextEngineTextView(application)
 
         manager.setTabularNumbers(view, true)
-        view.flushTextDisplayIfNeeded()
-        assertEquals("'tnum'", view.textContentView.fontFeatureSettings)
+        measureAndLayout(view, width = 200, height = 50)
+        assertEquals("'tnum'", requireNotNull(view.displayView.resolveLayout(200)).paint.fontFeatureSettings)
 
         manager.setTabularNumbers(view, false)
-        view.flushTextDisplayIfNeeded()
-        assertEquals(null, view.textContentView.fontFeatureSettings)
+        measureAndLayout(view, width = 200, height = 50)
+        assertEquals(null, requireNotNull(view.displayView.resolveLayout(200)).paint.fontFeatureSettings)
     }
 
     @Test
@@ -1099,16 +1095,16 @@ class RNTextEngineTextViewManagerTest {
         manager.setLetterSpacing(view, 1.5)
         manager.setLineHeight(view, 24.0)
         manager.setAllowFontScaling(view, false)
-        view.flushTextDisplayIfNeeded()
+        measureAndLayout(view, width = 200, height = 50)
         shadowOf(Looper.getMainLooper()).idle()
 
-        assertEquals(PixelUtil.toPixelFromDIP(20f), view.textContentView.textSize, 0.001f)
+        assertEquals(PixelUtil.toPixelFromDIP(20f), requireNotNull(view.displayView.resolveLayout(200)).paint.textSize, 0.001f)
 
         manager.setAllowFontScaling(view, true)
-        view.flushTextDisplayIfNeeded()
+        measureAndLayout(view, width = 200, height = 50)
         shadowOf(Looper.getMainLooper()).idle()
 
-        assertEquals(PixelUtil.toPixelFromSP(20f), view.textContentView.textSize, 0.001f)
+        assertEquals(PixelUtil.toPixelFromSP(20f), requireNotNull(view.displayView.resolveLayout(200)).paint.textSize, 0.001f)
     }
 
     @Test

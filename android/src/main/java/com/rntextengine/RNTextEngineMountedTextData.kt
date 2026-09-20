@@ -1,9 +1,9 @@
 package com.rntextengine
 
-import android.os.Build
+import android.graphics.Color
 import android.util.TypedValue
+import android.widget.TextView
 import android.widget.TextView.BufferType
-import androidx.appcompat.widget.AppCompatTextView
 import kotlin.math.max
 
 internal data class RNTextEngineTextRunStyle(
@@ -31,26 +31,20 @@ internal data class RNTextEngineTextRun(
     val style: RNTextEngineTextRunStyle,
 )
 
-internal data class RNTextEngineMountedTextMetrics(
-    val baseCapHeightPx: Float,
-    val uniformCapHeightPx: Float?,
-)
-
 internal fun applyPreparedTextViewData(
-    textView: AppCompatTextView,
+    textView: TextView,
     prepared: RNTextEngineBindings.PreparedTextViewData?,
-    defaultTextColor: Int,
-): RNTextEngineMountedTextMetrics {
+) {
     if (prepared == null) {
         textView.setText("", BufferType.NORMAL)
         textView.typeface = null
-        textView.setTextColor(defaultTextColor)
+        textView.setTextColor(Color.BLACK)
         textView.includeFontPadding = false
         textView.letterSpacing = 0f
         textView.setLineSpacing(0f, 1f)
         textView.fontFeatureSettings = null
 
-        return RNTextEngineMountedTextMetrics(baseCapHeightPx = 0f, uniformCapHeightPx = 0f)
+        return
     }
 
     textView.paintFlags = textView.paintFlags or RN_TEXT_ENGINE_SHAPING_FLAGS
@@ -58,7 +52,7 @@ internal fun applyPreparedTextViewData(
     textView.typeface = prepared.textPaint.typeface
     textView.setTextSize(TypedValue.COMPLEX_UNIT_PX, prepared.textPaint.textSize)
     textView.letterSpacing = prepared.textPaint.letterSpacing
-    textView.setTextColor(prepared.textColor ?: defaultTextColor)
+    textView.setTextColor(prepared.textPaint.color)
     textView.fontFeatureSettings = prepared.textPaint.fontFeatureSettings
 
     if (prepared.mountMode == RNTextEngineBindings.TextMountMode.SPANNABLE) {
@@ -68,14 +62,9 @@ internal fun applyPreparedTextViewData(
         applyNativeLineHeight(textView, prepared.lineHeightPx)
         textView.setText(prepared.text, BufferType.NORMAL)
     }
-
-    return RNTextEngineMountedTextMetrics(
-        baseCapHeightPx = prepared.baseCapHeightPx,
-        uniformCapHeightPx = prepared.uniformCapHeightPx,
-    )
 }
 
-private fun applyNativeLineHeight(textView: AppCompatTextView, lineHeightPx: Float?) {
+private fun applyNativeLineHeight(textView: TextView, lineHeightPx: Float?) {
     if (lineHeightPx == null || lineHeightPx.isNaN()) {
         textView.setLineSpacing(0f, 1f)
         return

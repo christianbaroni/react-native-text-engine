@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="RNTETextAppearance" parent="android:TextAppearance">
+        <item name="android:textColor">#ff2345aa</item>
+    </style>
+    <style name="RNTETextViewStyle" parent="android:Widget.TextView">
+        <item name="android:textAppearance">@style/RNTETextAppearance</item>
+        <item name="android:padding">23dp</item>
+        <item name="android:gravity">bottom|right</item>
+        <item name="android:maxLines">1</item>
+        <item name="android:textAllCaps">true</item>
+        <item name="android:scrollHorizontally">true</item>
+        <item name="autoSizeTextType">uniform</item>
+    </style>
+    <style name="RNTEDirectTextViewStyle" parent="RNTETextViewStyle">
+        <item name="android:textColor">@color/rnte_selection_text</item>
+    </style>
+    <style name="RNTETextTheme" parent="Theme.AppCompat.Light.NoActionBar">
+        <item name="android:textViewStyle">@style/RNTETextViewStyle</item>
+    </style>
+    <style name="RNTEDirectTextTheme" parent="RNTETextTheme">
+        <item name="android:textViewStyle">@style/RNTEDirectTextViewStyle</item>
+    </style>
+    <style name="RNTEDisabledTextViewStyle" parent="RNTEDirectTextViewStyle">
+        <item name="android:enabled">false</item>
+    </style>
+    <style name="RNTESingleLineTextViewStyle" parent="RNTEDirectTextViewStyle">
+        <item name="android:singleLine">true</item>
+    </style>
+    <style name="RNTEInputTextViewStyle" parent="RNTESingleLineTextViewStyle">
+        <item name="android:inputType">textMultiLine</item>
+    </style>
+    <style name="RNTEDigitsTextViewStyle" parent="RNTEInputTextViewStyle">
+        <item name="android:digits">0123456789</item>
+    </style>
+    <style name="RNTEDisabledTextTheme" parent="RNTETextTheme">
+        <item name="android:textViewStyle">@style/RNTEDisabledTextViewStyle</item>
+    </style>
+    <style name="RNTESingleLineTextTheme" parent="RNTETextTheme">
+        <item name="android:textViewStyle">@style/RNTESingleLineTextViewStyle</item>
+    </style>
+    <style name="RNTEInputTextTheme" parent="RNTETextTheme">
+        <item name="android:textViewStyle">@style/RNTEInputTextViewStyle</item>
+    </style>
+    <style name="RNTEDigitsTextTheme" parent="RNTETextTheme">
+        <item name="android:textViewStyle">@style/RNTEDigitsTextViewStyle</item>
+    </style>
+</resources>

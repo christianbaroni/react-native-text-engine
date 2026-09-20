@@ -25,6 +25,8 @@ import com.facebook.react.soloader.OpenSourceMergedSoMapping
 import com.facebook.react.turbomodule.core.interfaces.CallInvokerHolder
 import com.facebook.react.uimanager.DisplayMetricsHolder
 import com.facebook.react.uimanager.PixelUtil
+import com.facebook.react.uimanager.ReactStylesDiffMap
+import com.facebook.react.bridge.JavaOnlyMap
 import com.facebook.yoga.YogaMeasureMode
 import com.facebook.yoga.YogaMeasureOutput
 import com.facebook.soloader.SoLoader
@@ -125,6 +127,204 @@ class RNTextEngineBindingsInstrumentedTest {
     @After
     fun tearDown() {
         RNTextEngineBindings.cleanup()
+    }
+
+    @Test
+    fun selectionIsLazyAndUsesPreparedContentAcrossUpdates() {
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            val manager = RNTextEngineTextViewManager()
+            val view = RNTextEngineTextViewManager.RNTextEngineTextView(application)
+            manager.setText(view, "First mounted text")
+            manager.setFontSize(view, 17.0)
+            manager.setColor(view, Color.BLUE)
+            view.finishUpdates()
+            assertEquals(null, view.selectionView)
+            assertEquals(null, view.displayView.resolveLayout(320))
+            view.setSelectable(false)
+            measureAndLayout(view, 320, 160)
+            val firstLayout = requireNotNull(view.displayView.resolveLayout(320))
+            view.finishUpdates()
+            view.applyResolvedNestedPayload(null)
+            assertSame(firstLayout, view.displayView.resolveLayout(320))
+            assertEquals(null, view.selectionView)
+
+            view.setSelectable(true)
+            view.finishUpdates()
+            val selection = requireNotNull(view.selectionView)
+            assertEquals("First mounted text", selection.text.toString())
+            assertEquals(Color.BLUE, selection.currentTextColor)
+            val selectedText = selection.text
+            view.finishUpdates()
+            assertSame("Unchanged preparation must not reset selection text", selectedText, selection.text)
+            view.setSelectable(false)
+            assertEquals(null, selection.parent)
+            assertEquals(false, selection.isTextSelectable)
+
+            manager.setText(view, "Second text has the latest style")
+            manager.setColor(view, Color.RED)
+            manager.setFontSize(view, 23.0)
+            manager.setLineHeight(view, 29.5)
+            manager.setNumberOfLines(view, 2)
+            manager.setTextAlign(view, "center")
+            manager.setTextDecorationLine(view, "underline line-through")
+            manager.setTextShadowColor(view, Color.BLUE)
+            manager.setTextShadowRadius(view, 2.0)
+            manager.setTextShadowOffset(view, JavaOnlyMap.of("width", 2.0, "height", 3.0))
+            manager.setPadding(view, 7, 5, 11, 3)
+            view.finishUpdates()
+            assertEquals("Disabled selection must retain no obsolete text", "", selection.text.toString())
+            view.setSelectable(true)
+            view.finishUpdates()
+            assertSame(selection, view.selectionView)
+            assertEquals("Second text has the latest style", selection.text.toString())
+            assertEquals(Color.RED, selection.currentTextColor)
+            assertEquals(2, selection.maxLines)
+            assertEquals(android.text.TextUtils.TruncateAt.END, selection.ellipsize)
+            assertEquals(7, selection.paddingLeft)
+            assertEquals(5, selection.paddingTop)
+            assertEquals(11, selection.paddingRight)
+            assertEquals(3, selection.paddingBottom)
+            assertEquals(Color.BLUE, selection.shadowColor)
+            assertEquals(PixelUtil.toPixelFromDIP(2f), selection.shadowRadius, 0.001f)
+            assertEquals(PixelUtil.toPixelFromDIP(2f), selection.shadowDx, 0.001f)
+            assertEquals(PixelUtil.toPixelFromDIP(3f), selection.shadowDy, 0.001f)
+            assertTrue(selection.paintFlags and android.graphics.Paint.UNDERLINE_TEXT_FLAG != 0)
+            assertTrue(selection.paintFlags and android.graphics.Paint.STRIKE_THRU_TEXT_FLAG != 0)
+        }
+    }
+
+    @Test
+    fun defaultTextColorMatchesTheInitialNativeWidgetState() {
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            val testContext = InstrumentationRegistry.getInstrumentation().context
+            for (themeName in listOf("RNTETextTheme", "RNTEDirectTextTheme", "RNTEDisabledTextTheme", "RNTESingleLineTextTheme", "RNTEInputTextTheme", "RNTEDigitsTextTheme")) {
+                val themeId = testContext.resources.getIdentifier(themeName, "style", testContext.packageName)
+                assertNotEquals(0, themeId)
+                val context = androidx.appcompat.view.ContextThemeWrapper(testContext, themeId)
+                val reference = androidx.appcompat.widget.AppCompatTextView(context)
+                val view = RNTextEngineTextViewManager.RNTextEngineTextView(context)
+                assertEquals(themeName, reference.currentTextColor, view.defaultTextColor)
+                assertEquals(null, view.selectionView)
+            }
+        }
+    }
+
+    @Test
+    fun selectionDrawingStyleUpdatesMatchFreshRendering() {
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            val manager = RNTextEngineTextViewManager()
+            fun createView() = RNTextEngineTextViewManager.RNTextEngineTextView(application).apply {
+                manager.setText(this, "Selected text with a shadow near its edge")
+                manager.setFontSize(this, 17.0)
+                manager.setColor(this, Color.BLACK)
+                setSelectable(true)
+                measureAndLayout(this, 360, 160)
+            }
+            fun render(view: View) = Bitmap.createBitmap(360, 160, Bitmap.Config.ARGB_8888).also {
+                view.draw(Canvas(it))
+            }
+            val updates = listOf<(RNTextEngineTextViewManager.RNTextEngineTextView) -> Unit>(
+                { it.setTextDecorationLineValue("underline line-through") },
+                { it.setTextShadowColorValue(Color.RED) },
+                { it.setTextShadowOffsetPx(-3f, -2f) },
+                { it.setTextShadowRadiusPx(4f) },
+                { it.setTextDecorationLineValue(null) },
+                { it.setTextShadowColorValue(null) },
+            )
+            val view = createView()
+            updates.forEachIndexed { index, update ->
+                update(view)
+                view.finishUpdates()
+                val fresh = createView()
+                updates.take(index + 1).forEach { it(fresh) }
+                fresh.finishUpdates()
+                val actual = render(view)
+                val expected = render(fresh)
+                assertTrue("Selected style update $index changed pixels", actual.sameAs(expected))
+                val pixels = IntArray(actual.width * actual.height)
+                actual.getPixels(pixels, 0, actual.width, 0, 0, actual.width, actual.height)
+                assertTrue(pixels.any { it != Color.TRANSPARENT })
+                actual.recycle()
+                expected.recycle()
+            }
+        }
+    }
+
+    @Test
+    fun selectionPreservesPreparedGeometryUnderWidgetThemes() {
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            fun render(view: View) = Bitmap.createBitmap(360, 640, Bitmap.Config.ARGB_8888).also {
+                view.draw(Canvas(it))
+            }
+            val testContext = InstrumentationRegistry.getInstrumentation().context
+            for (themeName in listOf("RNTETextTheme", "RNTEDirectTextTheme")) {
+                val themeId = testContext.resources.getIdentifier(themeName, "style", testContext.packageName)
+                assertNotEquals(0, themeId)
+                val context = androidx.appcompat.view.ContextThemeWrapper(testContext, themeId)
+                val referenceColor = androidx.appcompat.widget.AppCompatTextView(context).currentTextColor
+                val manager = RNTextEngineTextViewManager()
+                val view = RNTextEngineTextViewManager.RNTextEngineTextView(context)
+                assertEquals(referenceColor, view.defaultTextColor)
+                manager.setText(view, "Mixed case text wraps onto several lines under either interaction mode.")
+                manager.setFontSize(view, 17.0)
+                manager.setLineHeight(view, 24.5)
+                manager.setColor(view, Color.MAGENTA)
+                manager.setColor(view, null)
+                manager.setPadding(view, 5, 3, 7, 2)
+                measureAndLayout(view, 360, 640)
+                assertEquals(referenceColor, requireNotNull(view.displayView.resolveLayout(360)).paint.color)
+                for (text in listOf("Mixed case text wraps onto several lines under either interaction mode.", "אבג דהו זחט יכל מנס עפצ קרש תאב גדה וזח טיכ למנ סעפ צקר שתא", "Hello 🙂 日本語 বাংলা mixed fallback fonts")) {
+                    manager.setText(view, text)
+                    for (alignment in listOf(null, "left", "right", "center")) {
+                        manager.setTextAlign(view, alignment)
+                        for (anchored in listOf(false, true)) {
+                            view.anchorToCapHeight = anchored
+                            view.setSelectable(false)
+                            measureAndLayout(view, 360, 640)
+                            val displayLayout = requireNotNull(view.displayView.resolveLayout(360))
+                            val displayed = render(view)
+                            view.setSelectable(true)
+                            view.finishUpdates()
+                            val selected = requireNotNull(view.selectionView)
+                            val selectedLayout = requireNotNull(selected.layout)
+                            val case = "$themeName $alignment anchored=$anchored text=$text"
+                            assertEquals(case, text, selected.text.toString())
+                            assertEquals(case, referenceColor, selected.currentTextColor)
+                            assertEquals(case, Int.MAX_VALUE, selected.maxLines)
+                            assertEquals(case, displayLayout.lineCount, selectedLayout.lineCount)
+                            assertEquals(case, view.displayView.y, selected.y, 0.001f)
+                            val selectedBitmap = render(view)
+                            assertTrue("$case changed pixels", displayed.sameAs(selectedBitmap))
+                            displayed.recycle()
+                            selectedBitmap.recycle()
+                            for (line in 0 until displayLayout.lineCount) {
+                                assertEquals(case, displayLayout.getLineStart(line), selectedLayout.getLineStart(line))
+                                assertEquals(case, displayLayout.getLineEnd(line), selectedLayout.getLineEnd(line))
+                                assertEquals(case, displayLayout.getLineBaseline(line), selectedLayout.getLineBaseline(line))
+                                assertEquals(case, displayLayout.getLineLeft(line), selectedLayout.getLineLeft(line), 0.01f)
+                            }
+                        }
+                    }
+                }
+                val handle = RNTextEngineBindings.prepare(
+                    text = "Prepared color", color = null, fontFamily = null, fontSize = 17.0,
+                    fontWeight = null, fontStyle = null, letterSpacing = 0.0, lineHeight = Double.NaN,
+                    allowFontScaling = false, includeFontPadding = false, tabularNumbers = false,
+                    textBreakStrategy = null,
+                )
+                try {
+                    val preparedView = RNTextEnginePreparedTextViewManager.RNTextEnginePreparedTextView(context)
+                    preparedView.setPreparedHandle(handle)
+                    measureAndLayout(preparedView, 360, 160)
+                    val color = requireNotNull(preparedView.displayView.resolveLayout(360)).paint.color
+                    preparedView.setSelectable(true)
+                    preparedView.finishUpdates()
+                    assertEquals(color, requireNotNull(preparedView.selectionView).currentTextColor)
+                } finally {
+                    RNTextEngineBindings.release(handle)
+                }
+            }
+        }
     }
 
     @Test
@@ -646,8 +846,7 @@ class RNTextEngineBindingsInstrumentedTest {
         val initialTop = effectiveTextOwnerTopInset(view.displayView)
 
         InstrumentationRegistry.getInstrumentation().runOnMainSync {
-            manager.setFontSize(view, 44.0)
-            manager.setLineHeight(view, 48.0)
+            manager.updateProperties(view, ReactStylesDiffMap(JavaOnlyMap.of("fontSize", 44.0, "lineHeight", 48.0)))
         }
         InstrumentationRegistry.getInstrumentation().waitForIdleSync()
 
@@ -704,7 +903,9 @@ class RNTextEngineBindingsInstrumentedTest {
             val initialTop = effectiveTextOwnerTopInset(view.displayView)
 
             InstrumentationRegistry.getInstrumentation().runOnMainSync {
-                view.setPreparedHandle(largeHandle)
+                RNTextEnginePreparedTextViewManager().updateProperties(
+                    view, ReactStylesDiffMap(JavaOnlyMap.of("handle", largeHandle.toDouble())),
+                )
             }
             InstrumentationRegistry.getInstrumentation().waitForIdleSync()
 
@@ -925,7 +1126,7 @@ class RNTextEngineBindingsInstrumentedTest {
                     }
 
                     val layout = requireNotNull(
-                        if (selectable) view.textContentView.layout else view.displayView.resolveLayout(hostWidthPx)
+                        if (selectable) requireNotNull(view.selectionView).layout else view.displayView.resolveLayout(hostWidthPx)
                     )
                     val context = "width=$widthDp selectable=$selectable"
                     assertEquals(context, expectedLines.size, layout.lineCount)

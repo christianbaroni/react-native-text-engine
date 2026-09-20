@@ -290,7 +290,7 @@ class RNTextEngineBindingsTest {
         assertEquals(prepared.textPaint.textSize, direct.textPaint.textSize, 0.0001f)
         assertEquals(prepared.textPaint.letterSpacing, direct.textPaint.letterSpacing, 0.0001f)
         assertEquals(prepared.textPaint.fontFeatureSettings, direct.textPaint.fontFeatureSettings)
-        assertEquals(prepared.textColor, direct.textColor)
+        assertEquals(prepared.textPaint.color, direct.textPaint.color)
         assertEquals(prepared.includeFontPadding, direct.includeFontPadding)
         assertEquals(prepared.baseCapHeightPx, direct.baseCapHeightPx, 0.0001f)
         assertEquals(prepared.uniformCapHeightPx, direct.uniformCapHeightPx)

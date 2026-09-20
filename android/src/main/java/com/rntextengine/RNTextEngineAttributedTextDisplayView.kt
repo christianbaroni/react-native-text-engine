@@ -9,6 +9,8 @@ import android.text.Layout
 import android.text.TextPaint
 import android.text.TextUtils
 import android.view.View
+import android.view.Gravity
+import android.widget.TextView
 import androidx.core.graphics.withTranslation
 import kotlin.math.ceil
 import kotlin.math.max
@@ -94,6 +96,26 @@ internal class RNTextEngineAttributedTextDisplayView(context: Context) : View(co
         if (textShadowRadiusPx == value) return
         textShadowRadiusPx = value
         invalidateDrawingStyle()
+    }
+
+    fun applySelectionLayout(view: TextView) {
+        view.maxLines = if (numberOfLines > 0) numberOfLines else Int.MAX_VALUE
+        view.ellipsize = resolveEllipsize(view.maxLines, ellipsizeMode)
+        view.textAlignment = View.TEXT_ALIGNMENT_GRAVITY
+        view.gravity = Gravity.TOP or when (textAlign) {
+            "center" -> Gravity.CENTER_HORIZONTAL
+            "right" -> Gravity.END
+            else -> Gravity.START
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            view.justificationMode = resolveJustificationMode(textAlign)
+        }
+        view.setPadding(paddingLeft, paddingTop, paddingRight, paddingBottom)
+    }
+
+    fun applyDrawingStyle(view: TextView) {
+        view.paintFlags = (view.paintFlags and Paint.UNDERLINE_TEXT_FLAG.inv() and Paint.STRIKE_THRU_TEXT_FLAG.inv()) or decorationFlags
+        view.setShadowLayer(textShadowRadiusPx, textShadowOffsetWidthPx, textShadowOffsetHeightPx, textShadowColor ?: Color.TRANSPARENT)
     }
 
     fun resolveCapHeightInsets(width: Int): RNTextEngineCapHeightInsetsPx {

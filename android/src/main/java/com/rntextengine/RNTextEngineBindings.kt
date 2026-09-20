@@ -147,7 +147,6 @@ internal object RNTextEngineBindings {
         val lineHeightPx: Float?,
         val mountMode: TextMountMode,
         val text: CharSequence,
-        val textColor: Int?,
         val textPaint: TextPaint,
         val uniformCapHeightPx: Float?,
     )
@@ -2933,7 +2932,6 @@ internal object RNTextEngineBindings {
             lineHeightPx = if (mountNatively) prepared.style.lineHeightPx else null,
             mountMode = if (mountNatively) TextMountMode.NATIVE else TextMountMode.SPANNABLE,
             text = if (mountNatively) prepared.text else SpannableString.valueOf(resolvePreparedLayoutText(prepared)),
-            textColor = prepared.style.textColor,
             textPaint = TextPaint(prepared.style.textPaint),
             uniformCapHeightPx = prepared.uniformCapHeightPx ?: resolveUniformCapHeightPx(resolvePreparedLayoutText(prepared), baseCapHeightPx),
         )
