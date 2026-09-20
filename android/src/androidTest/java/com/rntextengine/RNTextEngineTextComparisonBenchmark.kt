@@ -109,7 +109,7 @@ class RNTextEngineTextComparisonBenchmark {
         val content = requireNotNull(RNTextEngineBindings.preparedText(handle))
         val text = content.textWithLineHeight as android.text.Spanned
         val paint = android.text.TextPaint(content.style.textPaint)
-        text.getSpans(1, 2, RNTextEngineTextPaintSpan::class.java).single().updateDrawState(paint)
+        text.getSpans(1, 2, android.text.style.CharacterStyle::class.java).forEach { it.updateDrawState(paint) }
         assertTrue("Nested color changed: expected=$color actual=${paint.color}", color == paint.color)
     }
 

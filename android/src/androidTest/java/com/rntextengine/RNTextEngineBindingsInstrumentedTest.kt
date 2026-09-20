@@ -130,6 +130,151 @@ class RNTextEngineBindingsInstrumentedTest {
     }
 
     @Test
+    fun inlineDrawingStylesPreserveNativeShaping() {
+        fun prepare(text: String, starts: IntArray, ends: IntArray, masks: IntArray, height: Double): Long {
+            val count = starts.size
+            return RNTextEngineBindings.prepareTextViewWithRuns(
+                text, null, "#000000", null, 17.0, null, null, 0.0, height, false, false, false, null,
+                starts, ends, masks, Array(count) { if (it % 2 == 0) "#ff0000" else "#0000ff" },
+                arrayOfNulls(count), DoubleArray(count) { 34.0 }, Array(count) { "700" }, arrayOfNulls(count),
+                DoubleArray(count), DoubleArray(count) { 28.0 }, BooleanArray(count),
+            )
+        }
+
+        fun assertGeometry(label: String, expected: Layout, actual: Layout) {
+            assertEquals(label, expected.height, actual.height)
+            assertEquals(label, expected.lineCount, actual.lineCount)
+            for (line in 0 until expected.lineCount) {
+                assertEquals(label, expected.getLineStart(line), actual.getLineStart(line))
+                assertEquals(label, expected.getLineEnd(line), actual.getLineEnd(line))
+                assertEquals(label, expected.getLineTop(line), actual.getLineTop(line))
+                assertEquals(label, expected.getLineBottom(line), actual.getLineBottom(line))
+                assertEquals(label, expected.getLineBaseline(line), actual.getLineBaseline(line))
+                assertEquals(label, expected.getLineLeft(line), actual.getLineLeft(line), 0f)
+                assertEquals(label, expected.getLineRight(line), actual.getLineRight(line), 0f)
+                assertEquals(label, expected.getLineWidth(line), actual.getLineWidth(line), 0f)
+                assertEquals(label, expected.getEllipsisStart(line), actual.getEllipsisStart(line))
+                assertEquals(label, expected.getEllipsisCount(line), actual.getEllipsisCount(line))
+            }
+            for (offset in 0..expected.text.length) {
+                assertEquals(label, expected.getPrimaryHorizontal(offset), actual.getPrimaryHorizontal(offset), 0f)
+            }
+        }
+
+        val fixtures = listOf(
+            "Words, punctuation." to (0 to 5),
+            "office affine" to (2 to 3),
+            "السلام عليكم" to (1 to 3),
+            "क्षत्रिय हिन्दी" to (1 to 2),
+            "a\u0301e\u0308 combining" to (0 to 1),
+            "👩‍👩‍👧‍👦 emoji" to (0 to 2),
+            "English العربية हिन्दी 🙂" to (8 to 11),
+        )
+        val runMasks = listOf(
+            intArrayOf(1, 1, 1),
+            intArrayOf(1, 1 or (1 shl 2), 1 shl 6),
+            intArrayOf(1 shl 6, 1 shl 6, 1 shl 6),
+            intArrayOf(1 or (1 shl 2), 1 shl 2, 1 or (1 shl 4)),
+        )
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            for ((chunk, range) in fixtures) for (masks in runMasks) for (height in listOf(Double.NaN, 25.0)) {
+                val text = "$chunk $chunk $chunk"
+                val starts = intArrayOf(range.first, chunk.length + 1, chunk.length * 2 + 2)
+                val ends = intArrayOf(range.second, chunk.length * 2 + 1, text.length)
+                val handle = prepare(text, starts, ends, masks, height)
+                val label = "$chunk masks=${masks.contentToString()} height=$height"
+                try {
+                    val prepared = requireNotNull(RNTextEngineBindings.preparedText(handle))
+                    val actualText = prepared.displayText(false) as android.text.Spanned
+                    if (masks.all { it and ((1 shl 2) or (1 shl 4)) == 0 }) {
+                        assertEquals(prepared.capHeights.base, requireNotNull(prepared.capHeights.uniform), 0f)
+                    }
+                    val reference = android.text.SpannableString(text)
+                    // Isolate character shaping from the independently tested line-height projection.
+                    actualText.getSpans(0, text.length, android.text.style.LineHeightSpan::class.java).forEach {
+                        reference.setSpan(it, actualText.getSpanStart(it), actualText.getSpanEnd(it), actualText.getSpanFlags(it))
+                    }
+                    for (index in starts.indices) {
+                        fun span(value: Any) = reference.setSpan(value, starts[index], ends[index], android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                        if (masks[index] and (1 shl 2) != 0) span(android.text.style.RelativeSizeSpan(2f))
+                        if (masks[index] and (1 shl 4) != 0) span(android.text.style.StyleSpan(android.graphics.Typeface.BOLD))
+                        if (masks[index] and 1 != 0) span(android.text.style.ForegroundColorSpan(if (index % 2 == 0) Color.RED else Color.BLUE))
+                    }
+                    for (width in listOf(105, 240, 640)) for (maxLines in listOf(Int.MAX_VALUE, 2)) {
+                        fun layout(input: CharSequence) = buildStaticLayoutCompat(
+                            input, TextPaint(prepared.style.textPaint), width, false,
+                            Layout.BREAK_STRATEGY_HIGH_QUALITY, Layout.HYPHENATION_FREQUENCY_NORMAL, maxLines,
+                            if (maxLines == 2) android.text.TextUtils.TruncateAt.END else null,
+                        )
+                        val actual = layout(actualText)
+                        val expected = layout(reference)
+                        assertGeometry("$label width=$width maxLines=$maxLines", expected, actual)
+                        fun render(layout: Layout) = Bitmap.createBitmap(width, max(1, layout.height), Bitmap.Config.ARGB_8888).also {
+                            layout.draw(Canvas(it))
+                        }
+                        val actualBitmap = render(actual)
+                        val expectedBitmap = render(expected)
+                        assertTrue("$label width=$width maxLines=$maxLines pixels", actualBitmap.sameAs(expectedBitmap))
+                        actualBitmap.recycle()
+                        expectedBitmap.recycle()
+                    }
+                    for (anchor in listOf(false, true)) {
+                        val view = RNTextEnginePreparedTextViewManager.RNTextEnginePreparedTextView(application).apply {
+                            setPreparedHandle(handle)
+                            anchorToCapHeight = anchor
+                            measureAndLayout(this, 240, 1600)
+                        }
+                        fun renderView() = Bitmap.createBitmap(240, 1600, Bitmap.Config.ARGB_8888).also { view.draw(Canvas(it)) }
+                        val display = renderView()
+                        view.setSelectable(true)
+                        view.finishUpdates()
+                        measureAndLayout(view, 240, 1600)
+                        val selection = renderView()
+                        assertTrue("$label anchor=$anchor selection", display.sameAs(selection))
+                        display.recycle()
+                        selection.recycle()
+                    }
+                } finally {
+                    RNTextEngineBindings.release(handle)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun inlineSpansKeepExplicitTypographyOverridesAndColorInheritance() {
+        val masks = intArrayOf(1, 1, 1 shl 6, 1 shl 5, 1 shl 7, 1 shl 2, 1 or (1 shl 4), 1 shl 1, 1 shl 3)
+        val count = masks.size
+        val handle = RNTextEngineBindings.prepareTextViewWithRuns(
+            "a b c d e f g h i", null, "#ff00ff", null, 17.0, null, null, 2.0, 25.0, false, false, true, null,
+            IntArray(count) { it * 2 }, IntArray(count) { it * 2 + 1 }, masks,
+            Array(count) { if (it == 1) "invalid" else "#0000ff" }, arrayOfNulls(count), DoubleArray(count) { 17.0 },
+            Array(count) { "700" }, arrayOfNulls(count), DoubleArray(count), DoubleArray(count) { Double.NaN }, BooleanArray(count),
+        )
+        try {
+            val prepared = requireNotNull(RNTextEngineBindings.preparedText(handle))
+            val text = prepared.displayText(false) as android.text.Spanned
+            assertTrue(prepared.hasInlineStyleRuns)
+            assertEquals(6, text.getSpans(0, text.length, RNTextEngineTextPaintSpan::class.java).size)
+            assertEquals(2, text.getSpans(0, text.length, android.text.style.ForegroundColorSpan::class.java).size)
+            assertTrue(text.getSpans(4, 5, android.text.style.CharacterStyle::class.java).isEmpty())
+            assertTrue(text.getSpans(4, 5, android.text.style.LineHeightSpan::class.java).isEmpty())
+            for (index in masks.indices) {
+                val spans = text.getSpans(index * 2, index * 2 + 1, android.text.style.CharacterStyle::class.java)
+                if (index == 2) continue
+                assertEquals(1, spans.size)
+                val paint = TextPaint(prepared.style.textPaint).apply { color = Color.RED }
+                spans.single().updateDrawState(paint)
+                assertEquals(when (index) { 1 -> TextPaint().color; 0, 6 -> Color.BLUE; else -> Color.RED }, paint.color)
+                assertEquals(if (index == 3) 0f else prepared.style.textPaint.letterSpacing, paint.letterSpacing, 0f)
+                assertEquals(if (index == 4) null else "'tnum'", paint.fontFeatureSettings)
+            }
+        } finally {
+            RNTextEngineBindings.release(handle)
+        }
+    }
+
+    @Test
     fun rootFallbackHeightAndExplicitNaturalRunHeightRemainDistinct() {
         val density = PixelUtil.getDisplayMetricDensity()
         for (lineHeight in listOf(Double.NaN, 0.0, 25.0)) {
@@ -642,12 +787,11 @@ class RNTextEngineBindingsInstrumentedTest {
         val text = prepared.displayText(false) as android.text.Spanned
         assertTrue("Canonical spans must be immutable", text !is android.text.Spannable)
         val inherited = text.getSpans(5, 14, RNTextEngineTextPaintSpan::class.java).single()
-        val explicit = text.getSpans(15, 23, RNTextEngineTextPaintSpan::class.java).single()
+        val explicit = text.getSpans(15, 23, android.text.style.CharacterStyle::class.java).single()
         val paint = TextPaint(prepared.style.textPaint).apply { color = Color.RED }
         inherited.updateDrawState(paint)
         assertEquals(Color.RED, paint.color)
-        explicit.updateMeasureState(paint)
-        assertEquals(Color.RED, paint.color)
+        assertTrue(text.getSpans(15, 23, android.text.style.MetricAffectingSpan::class.java).isEmpty())
         explicit.updateDrawState(paint)
         assertEquals(Color.BLUE, paint.color)
         assertSame(prepared.capHeights, prepared.capHeights)
@@ -675,7 +819,7 @@ class RNTextEngineBindingsInstrumentedTest {
             val after = render(second)
             assertTrue("Another view mutated shared prepared content", before.sameAs(after))
             assertEquals("Root inherited explicit", requireNotNull(second.displayView.resolveLayout(360)).text.toString())
-            assertEquals(0, text.getSpans(0, text.length, android.text.style.ForegroundColorSpan::class.java).size)
+            assertSame(explicit, text.getSpans(0, text.length, android.text.style.ForegroundColorSpan::class.java).single())
             before.recycle()
             after.recycle()
         }

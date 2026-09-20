@@ -14,6 +14,7 @@ import android.text.SpannedString
 import android.text.StaticLayout
 import android.text.TextPaint
 import android.text.TextUtils
+import android.text.style.ForegroundColorSpan
 import android.util.LongSparseArray
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.common.assets.ReactFontManager
@@ -77,8 +78,6 @@ internal object RNTextEngineBindings {
         val textBreakStrategy: Int,
         val textPaint: TextPaint,
     )
-
-    private class ResolvedRunTextStyle(val textPaint: TextPaint, val lineHeightPx: Float?)
 
     internal data class TextStyleConfig(
         val allowFontScaling: Boolean,
@@ -658,7 +657,7 @@ internal object RNTextEngineBindings {
         val handle = nextHandle.getAndIncrement()
         preparedTexts[handle] =
             PreparedTextData(
-                buildPreparedText(text, baseStyle, runs) { runStyle -> resolveRunTextStyle(baseStyle, baseConfig, runStyle) },
+                buildPreparedText(text, baseStyle, baseConfig, runs),
             )
         return handle
     }
@@ -735,12 +734,10 @@ internal object RNTextEngineBindings {
         val handle = nextHandle.getAndIncrement()
         preparedTexts[handle] =
             PreparedTextData(
-                buildPreparedTextForTextView(text, textTransform, baseStyle, runs,
+                buildPreparedTextForTextView(text, textTransform, baseStyle, baseConfig, runs,
                     if (environmentVersion != 0L) TextSource(text, textTransform, baseConfig, runs, hasNested) else null,
                     environmentVersion,
-                ) { runStyle ->
-                    resolveRunTextStyle(baseStyle, baseConfig, runStyle)
-                },
+                ),
             )
         return handle
     }
@@ -817,9 +814,7 @@ internal object RNTextEngineBindings {
             val handle = nextHandle.getAndIncrement()
             preparedTexts[handle] =
                 PreparedTextData(
-                    buildPreparedText(texts[index], baseStyle, runsByText[index]) { runStyle ->
-                        resolveRunTextStyle(baseStyle, baseConfig, runStyle)
-                    },
+                    buildPreparedText(texts[index], baseStyle, baseConfig, runsByText[index]),
                 )
             handle
         }
@@ -940,7 +935,7 @@ internal object RNTextEngineBindings {
                 runTabularNumbers = runTabularNumbers,
             )
         val prepared =
-            buildPreparedText(text, baseStyle, runs) { runStyle -> resolveRunTextStyle(baseStyle, baseConfig, runStyle) }
+            buildPreparedText(text, baseStyle, baseConfig, runs)
         return measureIntrinsicWidth(prepared)
     }
 
@@ -1050,7 +1045,7 @@ internal object RNTextEngineBindings {
                 runTabularNumbers = runTabularNumbers,
             )
         val prepared =
-            buildPreparedText(text, baseStyle, runs) { runStyle -> resolveRunTextStyle(baseStyle, baseConfig, runStyle) }
+            buildPreparedText(text, baseStyle, baseConfig, runs)
         val ellipsize = resolveEllipsize(ellipsizeMode, maxLines)
         return packLayout(buildLayout(prepared, width, maxLines, ellipsize, anchorToCapHeight, includeLines = false))
     }
@@ -1178,7 +1173,7 @@ internal object RNTextEngineBindings {
                 packed,
                 index * PACKED_LAYOUT_SIZE,
                 buildLayout(
-                    buildPreparedText(text, baseStyle, runsByText[index]) { runStyle -> resolveRunTextStyle(baseStyle, baseConfig, runStyle) },
+                    buildPreparedText(text, baseStyle, baseConfig, runsByText[index]),
                     width,
                     maxLines,
                     ellipsize,
@@ -1955,17 +1950,16 @@ internal object RNTextEngineBindings {
         )
     }
 
-    private fun resolveRunTextStyle(
+    private fun resolveRunTextPaint(
         baseStyle: ResolvedTextStyle,
         baseConfig: TextStyleConfig,
         runStyle: RNTextEngineTextRunStyle,
-    ): ResolvedRunTextStyle {
+    ): TextPaint {
         val fontFamily = if (runStyle.hasFontFamily) runStyle.fontFamily else baseConfig.fontFamily
         val fontSize = if (runStyle.hasFontSize) runStyle.fontSize else baseConfig.fontSize
         val fontWeight = if (runStyle.hasFontWeight) runStyle.fontWeight else baseConfig.fontWeight
         val fontStyle = if (runStyle.hasFontStyle) runStyle.fontStyle else baseConfig.fontStyle
         val letterSpacing = if (runStyle.hasLetterSpacing) runStyle.letterSpacing else baseConfig.letterSpacing
-        val lineHeight = if (runStyle.hasLineHeight) runStyle.lineHeight else baseConfig.lineHeight
         val tabularNumbers = if (runStyle.hasTabularNumbers) runStyle.tabularNumbers else baseConfig.tabularNumbers
 
         val textPaint = TextPaint(baseStyle.textPaint)
@@ -1997,13 +1991,7 @@ internal object RNTextEngineBindings {
             textPaint.fontFeatureSettings = if (tabularNumbers) "'tnum'" else null
         }
 
-        val lineHeightPx =
-            if (runStyle.hasLineHeight) {
-                if (lineHeight.isNaN()) null else scale(lineHeight, baseConfig.allowFontScaling, defaultValue = lineHeight)
-            } else {
-                baseStyle.lineHeightPx
-            }
-        return ResolvedRunTextStyle(textPaint, lineHeightPx)
+        return textPaint
     }
 
     private fun buildPreparedText(
@@ -2032,16 +2020,16 @@ internal object RNTextEngineBindings {
     private fun buildPreparedText(
         text: String,
         style: ResolvedTextStyle,
+        baseConfig: TextStyleConfig,
         runs: List<RNTextEngineTextRun>,
         source: TextSource? = null,
         environmentVersion: Long = 0,
-        resolveRunStyle: (RNTextEngineTextRunStyle) -> ResolvedRunTextStyle,
     ): PreparedText {
         val styledText =
             if (text.isEmpty()) {
                 text
             } else {
-                buildStyledText(text, style, runs, resolveRunStyle)
+                buildStyledText(text, style, baseConfig, runs)
             }
 
         return PreparedText(
@@ -2058,10 +2046,10 @@ internal object RNTextEngineBindings {
         text: String,
         textTransform: String?,
         style: ResolvedTextStyle,
+        baseConfig: TextStyleConfig,
         runs: List<RNTextEngineTextRun>,
         source: TextSource? = null,
         environmentVersion: Long = 0,
-        resolveRunStyle: (RNTextEngineTextRunStyle) -> ResolvedRunTextStyle,
     ): PreparedText {
         if (runs.isEmpty()) return buildPreparedTextForTextView(text, textTransform, style, source, environmentVersion)
 
@@ -2081,7 +2069,7 @@ internal object RNTextEngineBindings {
                 )
             }
 
-        return buildPreparedText(transformed.text, style, transformedRuns, source, environmentVersion, resolveRunStyle)
+        return buildPreparedText(transformed.text, style, baseConfig, transformedRuns, source, environmentVersion)
     }
 
     private fun resolvePreparedLayoutText(prepared: PreparedText): CharSequence {
@@ -2105,8 +2093,8 @@ internal object RNTextEngineBindings {
     private fun buildStyledText(
         text: String,
         baseStyle: ResolvedTextStyle,
+        baseConfig: TextStyleConfig,
         runs: List<RNTextEngineTextRun>,
-        resolveRunStyle: (RNTextEngineTextRunStyle) -> ResolvedRunTextStyle,
     ): CharSequence {
         val styledText = SpannableString(text)
 
@@ -2115,15 +2103,26 @@ internal object RNTextEngineBindings {
         }
 
         runs.forEach { run ->
-            val runStyle = resolveRunStyle(run.style)
-            styledText.setSpan(
-                RNTextEngineTextPaintSpan(runStyle.textPaint, run.style.hasColor),
-                run.start,
-                run.end,
-                Spannable.SPAN_EXCLUSIVE_EXCLUSIVE,
-            )
+            val runStyle = run.style
+            // Only typography overrides should split Android's shaping context.
+            val span = when {
+                runStyle.hasFontFamily || runStyle.hasFontSize || runStyle.hasFontStyle || runStyle.hasFontWeight ||
+                    runStyle.hasLetterSpacing || runStyle.hasTabularNumbers ->
+                    RNTextEngineTextPaintSpan(resolveRunTextPaint(baseStyle, baseConfig, runStyle), runStyle.hasColor)
+                runStyle.hasColor -> ForegroundColorSpan(resolveTextColor(runStyle.color) ?: defaultTextPaintColor)
+                else -> null
+            }
+            if (span != null) {
+                styledText.setSpan(span, run.start, run.end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
 
-            runStyle.lineHeightPx?.let { lineHeightPx ->
+            val lineHeightPx = if (runStyle.hasLineHeight) {
+                val lineHeight = runStyle.lineHeight
+                if (lineHeight.isNaN()) null else scale(lineHeight, baseConfig.allowFontScaling, defaultValue = lineHeight)
+            } else {
+                baseStyle.lineHeightPx
+            }
+            if (lineHeightPx != null) {
                 styledText.setSpan(
                     RNTextEngineLineHeightSpan(lineHeightPx),
                     run.start,
@@ -2923,9 +2922,7 @@ internal object RNTextEngineBindings {
             sourceText, sourceTransform, baseConfig, sourceRuns, nestedSource != null,
         ) else null
         if (sourceRuns.isEmpty()) return buildPreparedTextForTextView(sourceText, sourceTransform, baseStyle, nextSource, environmentVersion)
-        return buildPreparedTextForTextView(sourceText, sourceTransform, baseStyle, sourceRuns, nextSource, environmentVersion) { runStyle ->
-            resolveRunTextStyle(baseStyle, baseConfig, runStyle)
-        }
+        return buildPreparedTextForTextView(sourceText, sourceTransform, baseStyle, baseConfig, sourceRuns, nextSource, environmentVersion)
     }
 
     private fun TextStyleConfig.matches(
