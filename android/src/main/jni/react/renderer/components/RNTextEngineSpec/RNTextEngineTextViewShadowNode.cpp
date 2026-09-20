@@ -803,7 +803,7 @@ Size RNTextEngineTextViewShadowNode::measureContent(
       });
 
   if (layoutIterator == cache.layouts.end()) {
-    cache.layouts.push_back({
+    CachedLayout layout{
         .anchorToCapHeight = props.anchorToCapHeight,
         .ellipsizeMode = ellipsizeMode,
         .maxLines = maxLines,
@@ -815,8 +815,13 @@ Size RNTextEngineTextViewShadowNode::measureContent(
                 maxLines,
                 ellipsizeMode,
                 props.anchorToCapHeight),
-    });
-    layoutIterator = std::prev(cache.layouts.end());
+    };
+    // Keep recent constraints without tying their history to prepared-text lifetime.
+    constexpr size_t capacity = 8;
+    if (cache.layouts.size() < capacity) cache.layouts.push_back(std::move(layout));
+    else cache.layouts[cache.nextLayout] = std::move(layout);
+    layoutIterator = cache.layouts.begin() + cache.nextLayout;
+    cache.nextLayout = (cache.nextLayout + 1) % capacity;
   }
 
   auto measuredWidth = layoutIterator->measurement.width;

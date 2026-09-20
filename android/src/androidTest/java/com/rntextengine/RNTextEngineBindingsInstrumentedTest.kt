@@ -166,6 +166,45 @@ class RNTextEngineBindingsInstrumentedTest {
     }
 
     @Test
+    fun fabricMeasurementsBoundPhysicalWidthHistory() {
+        val text = "Widths change while the same prepared paragraph survives across revisions."
+        fun prepare(version: Long) = RNTextEngineBindings.prepareTextView(
+            text, null, null, null, 17.0, null, null, 0.0, Double.NaN, false, false, false, null,
+            environmentVersion = version,
+        )
+        val handle = prepare(RNTextEngineBindings.textEnvironmentVersion())
+        val reference = prepare(0)
+        try {
+            for (index in 0 until 4096) {
+                val width = 80.0 + index * 0.25
+                val maxLines = index % 3
+                val anchored = index % 2 == 0
+                val expected = RNTextEngineBindings.layout(reference, width, maxLines, "tail", anchored)
+                val packed = RNTextEngineBindings.measureTextView(handle, width, maxLines, 3, anchored)
+                assertEquals(expected[0].toFloat(), Float.fromBits((packed ushr 32).toInt()))
+                assertEquals(expected[1].toFloat(), Float.fromBits(packed.toInt()))
+            }
+            val registry = RNTextEngineBindings::class.java.getDeclaredField("preparedTexts").apply { isAccessible = true }
+                .get(RNTextEngineBindings) as Map<*, *>
+            val prepared = requireNotNull(registry[handle])
+            val layouts = prepared.javaClass.getDeclaredField("layoutsByKey").apply { isAccessible = true }
+            val history = layouts.get(prepared) as android.util.LongSparseArray<*>
+            assertTrue("Private preparation retained historical widths", history.size() <= 8)
+            val density = PixelUtil.getDisplayMetricDensity()
+            val pixelWidth = ceil(180.0 * density)
+            val width = (pixelWidth - 0.75) / density
+            RNTextEngineBindings.measureTextView(handle, width, 0, 3, false)
+            val entries = List(history.size()) { history.valueAt(it) }
+            RNTextEngineBindings.measureTextView(handle, (pixelWidth - 0.25) / density, 0, 3, false)
+            assertEquals("Subpixel widths must share physical layout results", entries.size, history.size())
+            entries.forEachIndexed { index, value -> assertSame(value, history.valueAt(index)) }
+        } finally {
+            RNTextEngineBindings.release(handle)
+            RNTextEngineBindings.release(reference)
+        }
+    }
+
+    @Test
     fun fabricPreparedStatePreservesUiOverridesAcrossCommits() {
         InstrumentationRegistry.getInstrumentation().runOnMainSync {
             fun prepare(text: String, fontSize: Double) = RNTextEngineBindings.prepareTextView(

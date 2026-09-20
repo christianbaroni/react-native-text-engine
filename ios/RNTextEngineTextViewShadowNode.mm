@@ -136,6 +136,7 @@ struct RNTextEngineTextViewShadowNode::MeasurementCache {
   RNTextEnginePreparedText *prepared{nil};
   double preferredWidth{-1};
   std::vector<CachedLayout> layouts;
+  size_t nextLayout{0};
 };
 
 RNTextEngineTextViewShadowNode::RNTextEngineTextViewShadowNode(
@@ -231,7 +232,7 @@ Size RNTextEngineTextViewShadowNode::measureContent(
       });
 
   if (layoutIterator == cache.layouts.end()) {
-    cache.layouts.push_back({
+    CachedLayout layout{
         .anchorToCapHeight = props.anchorToCapHeight,
         .ellipsizeMode = ellipsizeMode,
         .maxLines = maxLines,
@@ -242,8 +243,13 @@ Size RNTextEngineTextViewShadowNode::measureContent(
             maxLines,
             toNSString(ellipsizeMode),
             props.anchorToCapHeight),
-    });
-    layoutIterator = std::prev(cache.layouts.end());
+    };
+    // Keep recent constraints without tying their history to prepared-text lifetime.
+    constexpr size_t capacity = 8;
+    if (cache.layouts.size() < capacity) cache.layouts.push_back(std::move(layout));
+    else cache.layouts[cache.nextLayout] = std::move(layout);
+    layoutIterator = cache.layouts.begin() + cache.nextLayout;
+    cache.nextLayout = (cache.nextLayout + 1) % capacity;
   }
 
   auto measuredWidth = static_cast<Float>(layoutIterator->measurement.width);
@@ -325,6 +331,7 @@ void RNTextEngineTextViewShadowNode::prepareMeasurementContent(MeasurementCache 
   cache.content = std::move(content);
   cache.preferredWidth = -1;
   cache.layouts.clear();
+  cache.nextLayout = 0;
 }
 
 RNTextEngineTextViewShadowNode::ResolvedPayload RNTextEngineTextViewShadowNode::resolvePayload(CGFloat fontScale) const

@@ -172,6 +172,8 @@ internal object RNTextEngineBindings {
             if (content.text.isNotEmpty()) {
                 synchronized(this) {
                     val layouts = layoutsByKey ?: LongSparseArray<LayoutInfo>().also { layoutsByKey = it }
+                    // Private preparation survives Fabric revisions; query history must stay bounded.
+                    if (content.environmentVersion != 0L && layouts.size() == 8) layouts.clear()
                     layouts.put(cacheKey, result)
                 }
             }

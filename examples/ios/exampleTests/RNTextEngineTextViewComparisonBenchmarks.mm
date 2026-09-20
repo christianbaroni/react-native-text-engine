@@ -1268,6 +1268,21 @@ static void MountAndDrawTree(const RootShadowNode &root, BOOL textView, CGContex
       constraints.push_back(BuildLayoutConstraints(80 + index * 7));
       expected.push_back(reference->measureContent(context, constraints.back()));
     }
+    auto retained = buildNode(nested);
+    retained->measureContent(context, constraints.front());
+    retained->layout(context);
+    for (int index = 0; index < 4096; ++index) {
+      auto props = std::make_shared<RNTextEngineTextViewProps>(retained->getConcreteProps());
+      props->numberOfLines = index % 3;
+      props->anchorToCapHeight = index % 2 == 0;
+      retained = std::static_pointer_cast<RNTextEngineTextViewShadowNode>(retained->clone({.props = props}));
+      const auto query = BuildLayoutConstraints(80 + index * 0.25f);
+      auto freshNode = buildNode(nested);
+      freshNode = std::static_pointer_cast<RNTextEngineTextViewShadowNode>(freshNode->clone({.props = props}));
+      const auto actual = retained->measureContent(context, query);
+      const auto fresh = freshNode->measureContent(context, query);
+      XCTAssertTrue(actual == fresh, @"Width history changed geometry");
+    }
     for (bool warm : {false, true}) {
       auto source = buildNode(nested);
       if (warm) source->measureContent(context, constraints.front());

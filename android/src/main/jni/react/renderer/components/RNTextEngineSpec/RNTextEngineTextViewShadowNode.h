@@ -168,6 +168,7 @@ class RNTextEngineTextViewShadowNode final : public ConcreteViewShadowNode<
     std::shared_ptr<const rntextengine::PreparedTextHandle> preparedText;
     double preferredWidth{-1};
     std::vector<CachedLayout> layouts{};
+    size_t nextLayout{0};
   };
 
   bool hasSameTextContent(const RNTextEngineTextViewShadowNode& source, bool asChild = false) const;
