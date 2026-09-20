@@ -205,6 +205,38 @@ class RNTextEngineBindingsInstrumentedTest {
     }
 
     @Test
+    fun fabricOverflowPreservesOtherPhysicalWidths() {
+        val handle = RNTextEngineBindings.prepareTextView(
+            "A stable paragraph keeps useful measurements when one new width arrives.",
+            null, null, null, 17.0, null, null, 0.0, Double.NaN, false, false, false, null,
+            environmentVersion = RNTextEngineBindings.textEnvironmentVersion(),
+        )
+        try {
+            val density = PixelUtil.getDisplayMetricDensity()
+            fun measure(pixelWidth: Int, fraction: Double) =
+                RNTextEngineBindings.measureTextView(handle, (pixelWidth - fraction) / density, 0, 3, false)
+            val expected = (400 until 408).associateWith { measure(it, 0.75) }
+            val registry = RNTextEngineBindings::class.java.getDeclaredField("preparedTexts").apply { isAccessible = true }
+                .get(RNTextEngineBindings) as Map<*, *>
+            val prepared = requireNotNull(registry[handle])
+            val history = prepared.javaClass.getDeclaredField("layoutsByKey").apply { isAccessible = true }
+                .get(prepared) as android.util.LongSparseArray<*>
+            val entries = (0 until history.size()).associate { history.keyAt(it) to history.valueAt(it) }
+            measure(408, 0.75)
+            assertEquals(8, history.size())
+            val survivors = entries.filter { (key, value) -> history[key] === value }
+            assertEquals("One new width must evict only one result", 7, survivors.size)
+            for ((key, value) in survivors) {
+                val pixelWidth = (key ushr 32).toInt()
+                assertEquals(expected.getValue(pixelWidth), measure(pixelWidth, 0.25))
+                assertSame("Fractional widths must reuse surviving physical results", value, history[key])
+            }
+        } finally {
+            RNTextEngineBindings.release(handle)
+        }
+    }
+
+    @Test
     fun fabricPreparedStatePreservesUiOverridesAcrossCommits() {
         InstrumentationRegistry.getInstrumentation().runOnMainSync {
             fun prepare(text: String, fontSize: Double) = RNTextEngineBindings.prepareTextView(

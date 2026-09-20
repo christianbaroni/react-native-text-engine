@@ -159,6 +159,7 @@ internal object RNTextEngineBindings {
 
     private class PreparedTextData(val content: PreparedText) {
         private var layoutsByKey: LongSparseArray<LayoutInfo>? = null
+        private var nextLayout = 0
         @Volatile var plainNextLineOwner: PlainNextLineOwner? = null
 
         fun layout(width: Double, maxLines: Int, ellipsize: TextUtils.TruncateAt?, anchorToCapHeight: Boolean): LayoutInfo {
@@ -173,7 +174,10 @@ internal object RNTextEngineBindings {
                 synchronized(this) {
                     val layouts = layoutsByKey ?: LongSparseArray<LayoutInfo>().also { layoutsByKey = it }
                     // Private preparation survives Fabric revisions; query history must stay bounded.
-                    if (content.environmentVersion != 0L && layouts.size() == 8) layouts.clear()
+                    if (content.environmentVersion != 0L && layouts.size() == 8 && layouts.indexOfKey(cacheKey) < 0) {
+                        layouts.removeAt(nextLayout)
+                        nextLayout = (nextLayout + 1) % 8
+                    }
                     layouts.put(cacheKey, result)
                 }
             }
