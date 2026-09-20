@@ -323,7 +323,7 @@ internal class RNTextEngineTextViewManager :
         view.setContentPadding(left, top, right, bottom)
     }
 
-    internal class RNTextEngineTextView(context: Context) : RNTextEngineTextContainer(context) {
+    internal class RNTextEngineTextView(context: Context) : RNTextEngineTextContainer(context, nativeLineSpacing = true) {
         var fontFamily: String? = null
         var fontStyle: String? = null
         var fontWeight: String? = null
@@ -389,9 +389,6 @@ internal class RNTextEngineTextViewManager :
         }
 
 
-
-
-
         fun applyResolvedNestedPayload(payload: RNTextEngineTextShadowNode.RNTextEngineResolvedTextPayload?) {
             val nextPayload = payload?.takeIf { it.hasNested }
             val currentPayload = resolvedNestedPayload?.takeIf { it.hasNested }
@@ -454,10 +451,10 @@ internal class RNTextEngineTextViewManager :
             return resolvedRuns
         }
 
-        private fun buildDisplayData(): RNTextEngineBindings.PreparedTextViewData {
+        private fun prepareContent(): RNTextEngineBindings.PreparedText {
             val nestedPayload = resolvedNestedPayload
             return if (nestedPayload != null) {
-                RNTextEngineBindings.buildTextViewDisplayData(
+                RNTextEngineBindings.prepareTextViewContent(
                     text = nestedPayload.text,
                     textTransform = null,
                     color = textColor,
@@ -474,7 +471,7 @@ internal class RNTextEngineTextViewManager :
                 )
             } else {
                 val activeRuns = resolveRunArrayProps() ?: runs
-                RNTextEngineBindings.buildTextViewDisplayData(
+                RNTextEngineBindings.prepareTextViewContent(
                     text = textValue,
                     textTransform = textTransform,
                     color = textColor,
@@ -510,7 +507,7 @@ internal class RNTextEngineTextViewManager :
 
         override fun prepareTextForLayout() {
             if (!textDisplayDirty) return
-            setPreparedText(buildDisplayData())
+            setPreparedText(prepareContent())
             textDisplayDirty = false
         }
 

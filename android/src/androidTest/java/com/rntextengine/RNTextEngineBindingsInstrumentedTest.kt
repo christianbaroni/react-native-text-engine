@@ -328,9 +328,84 @@ class RNTextEngineBindingsInstrumentedTest {
     }
 
     @Test
+    fun mountedViewsSharePreparedTextWithoutSharingMutableDrawingState() {
+        val handle = RNTextEngineBindings.prepareTextViewWithRuns(
+            text = "Root inherited explicit",
+            textTransform = null,
+            color = "#000000",
+            fontFamily = null,
+            fontSize = 17.0,
+            fontWeight = null,
+            fontStyle = null,
+            letterSpacing = 0.0,
+            lineHeight = 25.0,
+            allowFontScaling = false,
+            includeFontPadding = false,
+            tabularNumbers = false,
+            textBreakStrategy = null,
+            runStarts = intArrayOf(5, 15),
+            runEnds = intArrayOf(14, 23),
+            runStyleMasks = intArrayOf(1 shl 2, 1),
+            runColors = arrayOf(null, "#0000ff"),
+            runFontFamilies = arrayOfNulls(2),
+            runFontSizes = doubleArrayOf(20.0, 0.0),
+            runFontWeights = arrayOfNulls(2),
+            runFontStyles = arrayOfNulls(2),
+            runLetterSpacings = doubleArrayOf(0.0, 0.0),
+            runLineHeights = doubleArrayOf(0.0, 0.0),
+            runTabularNumbers = booleanArrayOf(false, false),
+        )
+        repeat(32) { index ->
+            RNTextEngineBindings.layout(handle, 80.0 + index, 0, null, false)
+        }
+        val prepared = requireNotNull(RNTextEngineBindings.preparedText(handle))
+        assertSame(prepared, RNTextEngineBindings.preparedText(handle))
+        val text = prepared.displayText(false) as android.text.Spanned
+        assertTrue("Canonical spans must be immutable", text !is android.text.Spannable)
+        val inherited = text.getSpans(5, 14, RNTextEngineTextPaintSpan::class.java).single()
+        val explicit = text.getSpans(15, 23, RNTextEngineTextPaintSpan::class.java).single()
+        val paint = TextPaint(prepared.style.textPaint).apply { color = Color.RED }
+        inherited.updateDrawState(paint)
+        assertEquals(Color.RED, paint.color)
+        explicit.updateMeasureState(paint)
+        assertEquals(Color.RED, paint.color)
+        explicit.updateDrawState(paint)
+        assertEquals(Color.BLUE, paint.color)
+        assertSame(prepared.capHeights, prepared.capHeights)
+
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            fun createView() = RNTextEnginePreparedTextViewManager.RNTextEnginePreparedTextView(application).apply {
+                setPreparedHandle(handle)
+                measureAndLayout(this, 360, 200)
+            }
+            fun render(view: View) = Bitmap.createBitmap(360, 200, Bitmap.Config.ARGB_8888).also {
+                view.draw(Canvas(it))
+            }
+            val first = createView()
+            val second = createView()
+            val before = render(second)
+            RNTextEngineBindings.release(handle)
+            assertEquals(null, RNTextEngineBindings.preparedText(handle))
+            first.setTextDecorationLineValue("underline line-through")
+            first.setTextShadowColorValue(Color.RED)
+            first.setTextShadowRadiusPx(2f)
+            first.setSelectable(true)
+            first.finishUpdates()
+            val selectedText = requireNotNull(first.selectionView).text as android.text.Spannable
+            selectedText.setSpan(android.text.style.ForegroundColorSpan(Color.MAGENTA), 0, selectedText.length, 0)
+            val after = render(second)
+            assertTrue("Another view mutated shared prepared content", before.sameAs(after))
+            assertEquals("Root inherited explicit", requireNotNull(second.displayView.resolveLayout(360)).text.toString())
+            assertEquals(0, text.getSpans(0, text.length, android.text.style.ForegroundColorSpan::class.java).size)
+            before.recycle()
+            after.recycle()
+        }
+    }
+
+    @Test
     fun drawStyleUpdatesReuseLayoutAndMatchFreshRendering() {
         InstrumentationRegistry.getInstrumentation().runOnMainSync {
-            val prepared = RNTextEngineBindings.buildTextViewDisplayData(
+            val prepared = RNTextEngineBindings.prepareTextViewContent(
                 text = "Visible text wraps across several lines.",
                 textTransform = null,
                 color = Color.BLACK,
@@ -344,7 +419,7 @@ class RNTextEngineBindingsInstrumentedTest {
                 tabularNumbers = false,
                 textBreakStrategy = "highQuality",
             )
-            fun createView() = RNTextEngineAttributedTextDisplayView(application).apply {
+            fun createView() = RNTextEngineAttributedTextDisplayView(application, nativeLineSpacing = true).apply {
                 setPreparedText(prepared)
                 layout(0, 0, 320, 240)
             }
@@ -364,7 +439,7 @@ class RNTextEngineBindingsInstrumentedTest {
             updates.forEachIndexed { index, update ->
                 update(view)
                 assertSame("Draw-only update $index rebuilt text layout", layout, view.resolveLayout(320))
-                assertEquals(0, prepared.textPaint.flags and (android.graphics.Paint.UNDERLINE_TEXT_FLAG or android.graphics.Paint.STRIKE_THRU_TEXT_FLAG))
+                assertEquals(0, prepared.style.textPaint.flags and (android.graphics.Paint.UNDERLINE_TEXT_FLAG or android.graphics.Paint.STRIKE_THRU_TEXT_FLAG))
                 val reference = createView()
                 updates.take(index + 1).forEach { it(reference) }
                 val actual = render(view)
@@ -390,10 +465,10 @@ class RNTextEngineBindingsInstrumentedTest {
                     false, false, false, null,
                 )
                 try {
-                    val prepared = requireNotNull(RNTextEngineBindings.resolvePreparedTextViewData(handle))
+                    val prepared = requireNotNull(RNTextEngineBindings.preparedText(handle))
                     for (width in listOf(80.0, 160.0)) {
                         for (maxLines in listOf(0, 2)) {
-                            val view = RNTextEngineAttributedTextDisplayView(application).apply {
+                            val view = RNTextEngineAttributedTextDisplayView(application, nativeLineSpacing = false).apply {
                                 setPreparedText(prepared)
                                 numberOfLines = maxLines
                                 ellipsizeMode = "tail"
@@ -605,7 +680,7 @@ class RNTextEngineBindingsInstrumentedTest {
             )
 
         try {
-            val prepared = requireNotNull(RNTextEngineBindings.resolvePreparedTextViewData(handle))
+            val prepared = requireNotNull(RNTextEngineBindings.preparedText(handle))
             val intrinsicWidthDp = RNTextEngineBindings.measurePreparedWidth(handle)
             var widthDp = max(1.0, intrinsicWidthDp * 0.5)
             var layout = buildEllipsizedSingleLineLayout(prepared, widthDp)
@@ -698,16 +773,16 @@ class RNTextEngineBindingsInstrumentedTest {
             for (allowFontScaling in booleanArrayOf(true, false)) {
                 parent.measureAllowFontScaling = allowFontScaling
                 val handle = resolvePreparedHandle(parent)
-                val prepared = requireNotNull(RNTextEngineBindings.resolvePreparedTextViewData(handle))
+                val prepared = requireNotNull(RNTextEngineBindings.preparedText(handle))
                 val measurement = measurePreparedAutoSizeText(handle, 0f, YogaMeasureMode.UNDEFINED, 0f, YogaMeasureMode.UNDEFINED, 0, null, false)
                 val multiplier = if (allowFontScaling) 1.5f else 1f
 
-                assertEquals("Parent child", prepared.text.toString())
-                assertEquals(PixelUtil.toPixelFromDIP(16f * multiplier), prepared.textPaint.textSize, 0.001f)
+                assertEquals("Parent child", prepared.displayText(false).toString())
+                assertEquals(PixelUtil.toPixelFromDIP(16f * multiplier), prepared.style.textPaint.textSize, 0.001f)
                 assertEquals(PixelUtil.toPixelFromDIP(24f * multiplier), measurement.heightPx, 0.001f)
                 assertEquals(
                     PixelUtil.toPixelFromDIP(2f * multiplier),
-                    prepared.textPaint.letterSpacing * prepared.textPaint.textSize,
+                    prepared.style.textPaint.letterSpacing * prepared.style.textPaint.textSize,
                     0.001f,
                 )
             }
@@ -1236,15 +1311,15 @@ class RNTextEngineBindingsInstrumentedTest {
     }
 
     private fun buildEllipsizedSingleLineLayout(
-        prepared: RNTextEngineBindings.PreparedTextViewData,
+        prepared: RNTextEngineBindings.PreparedText,
         widthDp: Double,
     ): Layout {
         val widthPx = ceil(PixelUtil.toPixelFromDIP(widthDp.toFloat()).toDouble()).toInt()
         return buildStaticLayoutCompat(
-            text = prepared.text,
-            paint = TextPaint(prepared.textPaint),
+            text = prepared.displayText(false),
+            paint = TextPaint(prepared.style.textPaint),
             widthPx = widthPx,
-            includeFontPadding = prepared.includeFontPadding,
+            includeFontPadding = prepared.style.includeFontPadding,
             breakStrategy = Layout.BREAK_STRATEGY_HIGH_QUALITY,
             hyphenationFrequency = Layout.HYPHENATION_FREQUENCY_NORMAL,
             maxLines = 1,

@@ -11,11 +11,11 @@ import androidx.core.widget.TextViewCompat
 import kotlin.math.floor
 import kotlin.math.roundToInt
 
-internal open class RNTextEngineTextContainer(context: Context) : FrameLayout(context) {
-    val displayView = RNTextEngineAttributedTextDisplayView(context)
+internal open class RNTextEngineTextContainer(context: Context, private val nativeLineSpacing: Boolean) : FrameLayout(context) {
+    val displayView = RNTextEngineAttributedTextDisplayView(context, nativeLineSpacing)
     var selectionView: AppCompatTextView? = null
         private set
-    private var preparedData: RNTextEngineBindings.PreparedTextViewData? = null
+    private var preparedText: RNTextEngineBindings.PreparedText? = null
 
     private val activeSelectionView: AppCompatTextView?
         get() = selectionView?.takeIf { it.parent === this }
@@ -46,11 +46,11 @@ internal open class RNTextEngineTextContainer(context: Context) : FrameLayout(co
 
     protected open fun prepareTextForLayout() = Unit
 
-    protected fun setPreparedText(prepared: RNTextEngineBindings.PreparedTextViewData?) {
-        if (preparedData === prepared) return
-        preparedData = prepared
+    protected fun setPreparedText(prepared: RNTextEngineBindings.PreparedText?) {
+        if (preparedText === prepared) return
+        preparedText = prepared
         displayView.setPreparedText(prepared)
-        activeSelectionView?.let { applyPreparedTextViewData(it, prepared) }
+        activeSelectionView?.let { applyPreparedText(it, prepared, nativeLineSpacing) }
         requestTextLayout()
     }
 
@@ -117,7 +117,7 @@ internal open class RNTextEngineTextContainer(context: Context) : FrameLayout(co
             }
             view.setTextIsSelectable(true)
             view.isFocusable = true
-            applyPreparedTextViewData(view, preparedData)
+            applyPreparedText(view, preparedText, nativeLineSpacing)
             displayView.applySelectionLayout(view)
             displayView.applyDrawingStyle(view)
             addInternalChild(view)

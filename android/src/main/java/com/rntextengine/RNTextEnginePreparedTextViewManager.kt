@@ -68,9 +68,9 @@ internal class RNTextEnginePreparedTextViewManager :
         view.finishUpdates()
     }
 
-    internal class RNTextEnginePreparedTextView(context: Context) : RNTextEngineTextContainer(context) {
+    internal class RNTextEnginePreparedTextView(context: Context) : RNTextEngineTextContainer(context, nativeLineSpacing = false) {
         fun setPreparedHandle(handle: Long) {
-            setPreparedText(RNTextEngineBindings.resolvePreparedTextViewData(handle))
+            setPreparedText(RNTextEngineBindings.preparedText(handle))
         }
     }
 

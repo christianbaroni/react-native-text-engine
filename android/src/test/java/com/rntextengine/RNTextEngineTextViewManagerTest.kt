@@ -555,8 +555,8 @@ class RNTextEngineTextViewManagerTest {
                 tabularNumbers = false,
                 textBreakStrategy = null,
             )
-        val prepared = requireNotNull(RNTextEngineBindings.resolvePreparedTextViewData(handle))
-        val intrinsicWidthPx = referencePlainTextWidthPx(prepared.text, TextPaint(prepared.textPaint))
+        val prepared = requireNotNull(RNTextEngineBindings.preparedText(handle))
+        val intrinsicWidthPx = referencePlainTextWidthPx(prepared.displayText(false), TextPaint(prepared.style.textPaint))
         val measurement =
             measurePreparedAutoSizeText(
                 handle = handle,
@@ -591,8 +591,8 @@ class RNTextEngineTextViewManagerTest {
                 tabularNumbers = false,
                 textBreakStrategy = null,
             )
-        val prepared = requireNotNull(RNTextEngineBindings.resolvePreparedTextViewData(handle))
-        val intrinsicWidthPx = referencePlainTextWidthPx(prepared.text, TextPaint(prepared.textPaint))
+        val prepared = requireNotNull(RNTextEngineBindings.preparedText(handle))
+        val intrinsicWidthPx = referencePlainTextWidthPx(prepared.displayText(false), TextPaint(prepared.style.textPaint))
         val measurement =
             measurePreparedAutoSizeText(
                 handle = handle,
@@ -627,12 +627,12 @@ class RNTextEngineTextViewManagerTest {
                 tabularNumbers = false,
                 textBreakStrategy = null,
             )
-        val prepared = requireNotNull(RNTextEngineBindings.resolvePreparedTextViewData(handle))
+        val prepared = requireNotNull(RNTextEngineBindings.preparedText(handle))
         val textView = AppCompatTextView(application)
 
-        applyPreparedTextViewData(textView, prepared)
+        applyPreparedText(textView, prepared, nativeLineSpacing = false)
 
-        assertEquals(RNTextEngineBindings.TextMountMode.SPANNABLE, prepared.mountMode)
+        assertEquals(0f, prepared.lineSpacingAdd(false), 0f)
         assertTrue(textView.text is Spanned)
         assertEquals("EXACT ROW", textView.text.toString())
         assertEquals(0f, textView.lineSpacingExtra, 0.0001f)
@@ -669,10 +669,10 @@ class RNTextEngineTextViewManagerTest {
                 runLineHeights = doubleArrayOf(0.0),
                 runTabularNumbers = booleanArrayOf(false),
             )
-        val prepared = requireNotNull(RNTextEngineBindings.resolvePreparedTextViewData(handle))
+        val prepared = requireNotNull(RNTextEngineBindings.preparedText(handle))
         val textView = AppCompatTextView(application)
 
-        applyPreparedTextViewData(textView, prepared)
+        applyPreparedText(textView, prepared, nativeLineSpacing = false)
 
         assertTrue(textView.text is Spanned)
         assertEquals(0f, textView.lineSpacingExtra, 0.0001f)

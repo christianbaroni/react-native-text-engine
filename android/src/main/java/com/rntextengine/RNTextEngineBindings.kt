@@ -9,6 +9,7 @@ import android.text.BoringLayout
 import android.text.Layout
 import android.text.Spannable
 import android.text.SpannableString
+import android.text.SpannedString
 import android.text.StaticLayout
 import android.text.TextPaint
 import android.text.TextUtils
@@ -39,27 +40,23 @@ internal object RNTextEngineBindings {
     private val lineBreakerConstraints = ThreadLocal<LineBreaker.ParagraphConstraints>()
     private val lineBreakerScratchBuffers = ThreadLocal<LineBreakerScratchBuffers>()
 
-    private data class ResolvedTextStyle(
+    internal data class ResolvedTextStyle(
         val fallbackLineHeight: Double,
         val includeFontPadding: Boolean,
         val lineHeightPx: Float?,
         val textBreakStrategy: Int,
-        val textColor: Int?,
         val textPaint: TextPaint,
     )
 
     private data class TextStyleConfig(
         val allowFontScaling: Boolean,
-        val color: String?,
         val fontFamily: String?,
         val fontSize: Double,
         val fontStyle: String?,
         val fontWeight: String?,
-        val includeFontPadding: Boolean,
         val letterSpacing: Double,
         val lineHeight: Double,
         val tabularNumbers: Boolean,
-        val textBreakStrategy: String?,
     )
 
     private data class TextMeasureRunStyle(
@@ -87,19 +84,60 @@ internal object RNTextEngineBindings {
         val style: TextMeasureRunStyle,
     )
 
-    private data class PreparedTextData(
+    internal class PreparedText(
         val hasInlineStyleRuns: Boolean,
-        @Volatile var cachedLayoutText: CharSequence? = null,
-        @Volatile var layoutQueryOwner: LayoutQueryOwner? = null,
-        @Volatile var plainNextLineOwner: PlainNextLineOwner? = null,
         val style: ResolvedTextStyle,
         val text: String,
         val textWithLineHeight: CharSequence,
-        val uniformCapHeightPx: Float?,
-    )
+    ) {
+        @Volatile var cachedLayoutText: CharSequence? = null
+        @Volatile private var cachedCapHeights: CapHeights? = null
 
-    private class LayoutQueryOwner {
-        val layoutsByKey = LongSparseArray<LayoutInfo>()
+        fun displayText(nativeLineSpacing: Boolean): CharSequence {
+            return if (nativeLineSpacing && !hasInlineStyleRuns) text else resolvePreparedLayoutText(this)
+        }
+
+        fun lineSpacingAdd(nativeLineSpacing: Boolean): Float {
+            if (!nativeLineSpacing || hasInlineStyleRuns) return 0f
+            val lineHeight = style.lineHeightPx ?: return 0f
+            val metrics = style.textPaint.fontMetricsInt
+            return max(0f, lineHeight - (metrics.descent - metrics.ascent))
+        }
+
+        val capHeights: CapHeights
+            get() {
+                cachedCapHeights?.let { return it }
+                return synchronized(this) {
+                    cachedCapHeights ?: run {
+                        val base = measureCapHeightPx(style.textPaint)
+                        CapHeights(base, if (hasInlineStyleRuns) resolveUniformCapHeightPx(textWithLineHeight, base) else base)
+                    }.also { cachedCapHeights = it }
+                }
+            }
+    }
+
+    internal data class CapHeights(val base: Float, val uniform: Float?)
+
+    private class PreparedTextData(val content: PreparedText) {
+        private var layoutsByKey: LongSparseArray<LayoutInfo>? = null
+        @Volatile var plainNextLineOwner: PlainNextLineOwner? = null
+
+        fun layout(width: Double, maxLines: Int, ellipsize: TextUtils.TruncateAt?, anchorToCapHeight: Boolean): LayoutInfo {
+            val density = currentDensity()
+            val widthPx = max(1, ceil(max(0.0, width) * density).toInt())
+            val cacheKey = resolveLayoutCacheKey(widthPx, maxLines, ellipsize, anchorToCapHeight)
+            synchronized(this) {
+                layoutsByKey?.get(cacheKey)?.let { return it }
+            }
+            val result = buildLayout(content, width, maxLines, ellipsize, anchorToCapHeight, includeLines = false, density = density)
+            if (content.text.isNotEmpty()) {
+                synchronized(this) {
+                    val layouts = layoutsByKey ?: LongSparseArray<LayoutInfo>().also { layoutsByKey = it }
+                    layouts.put(cacheKey, result)
+                }
+            }
+            return result
+        }
     }
 
     private data class PlainLineInfo(
@@ -109,7 +147,6 @@ internal object RNTextEngineBindings {
 
     private class PlainNextLineOwner {
         val linesByKey = LongSparseArray<PlainLineInfo>()
-        @Volatile var capHeightPx = Float.NaN
         @Volatile var measurementChars: CharArray? = null
     }
 
@@ -135,21 +172,6 @@ internal object RNTextEngineBindings {
             }
         }
     }
-
-    internal enum class TextMountMode {
-        NATIVE,
-        SPANNABLE,
-    }
-
-    internal data class PreparedTextViewData(
-        val baseCapHeightPx: Float,
-        val includeFontPadding: Boolean,
-        val lineHeightPx: Float?,
-        val mountMode: TextMountMode,
-        val text: CharSequence,
-        val textPaint: TextPaint,
-        val uniformCapHeightPx: Float?,
-    )
 
     internal data class GlyphFieldVariantData(
         val paletteWidths: FloatArray? = null,
@@ -434,7 +456,7 @@ internal object RNTextEngineBindings {
             textBreakStrategy = textBreakStrategy,
         )
         val handle = nextHandle.getAndIncrement()
-        preparedTexts[handle] = buildPreparedText(text, style)
+        preparedTexts[handle] = PreparedTextData(buildPreparedText(text, style))
         return handle
     }
 
@@ -468,7 +490,7 @@ internal object RNTextEngineBindings {
             textBreakStrategy = textBreakStrategy,
         )
         val handle = nextHandle.getAndIncrement()
-        preparedTexts[handle] = buildPreparedTextForTextView(text, textTransform, style)
+        preparedTexts[handle] = PreparedTextData(buildPreparedTextForTextView(text, textTransform, style))
         return handle
     }
 
@@ -503,7 +525,7 @@ internal object RNTextEngineBindings {
 
         return LongArray(texts.size) { index ->
             val handle = nextHandle.getAndIncrement()
-            preparedTexts[handle] = buildPreparedText(texts[index], style)
+            preparedTexts[handle] = PreparedTextData(buildPreparedText(texts[index], style))
             handle
         }
     }
@@ -537,16 +559,13 @@ internal object RNTextEngineBindings {
         val baseConfig =
             TextStyleConfig(
                 allowFontScaling = allowFontScaling,
-                color = color,
                 fontFamily = fontFamily,
                 fontSize = fontSize,
                 fontStyle = fontStyle,
                 fontWeight = fontWeight,
-                includeFontPadding = includeFontPadding,
                 letterSpacing = letterSpacing,
                 lineHeight = lineHeight,
                 tabularNumbers = tabularNumbers,
-                textBreakStrategy = textBreakStrategy,
             )
         val baseStyle = resolveTextStyle(
             color = color,
@@ -579,7 +598,9 @@ internal object RNTextEngineBindings {
 
         val handle = nextHandle.getAndIncrement()
         preparedTexts[handle] =
-            buildPreparedText(text, baseStyle, runs) { runStyle -> resolveRunTextStyle(baseStyle, baseConfig, runStyle) }
+            PreparedTextData(
+                buildPreparedText(text, baseStyle, runs) { runStyle -> resolveRunTextStyle(baseStyle, baseConfig, runStyle) },
+            )
         return handle
     }
 
@@ -613,16 +634,13 @@ internal object RNTextEngineBindings {
         val baseConfig =
             TextStyleConfig(
                 allowFontScaling = allowFontScaling,
-                color = color,
                 fontFamily = fontFamily,
                 fontSize = fontSize,
                 fontStyle = fontStyle,
                 fontWeight = fontWeight,
-                includeFontPadding = includeFontPadding,
                 letterSpacing = letterSpacing,
                 lineHeight = lineHeight,
                 tabularNumbers = tabularNumbers,
-                textBreakStrategy = textBreakStrategy,
             )
         val baseStyle = resolveTextStyle(
             color = color,
@@ -655,9 +673,11 @@ internal object RNTextEngineBindings {
 
         val handle = nextHandle.getAndIncrement()
         preparedTexts[handle] =
-            buildPreparedTextForTextView(text, textTransform, baseStyle, runs) { runStyle ->
-                resolveRunTextStyle(baseStyle, baseConfig, runStyle)
-            }
+            PreparedTextData(
+                buildPreparedTextForTextView(text, textTransform, baseStyle, runs) { runStyle ->
+                    resolveRunTextStyle(baseStyle, baseConfig, runStyle)
+                },
+            )
         return handle
     }
 
@@ -691,16 +711,13 @@ internal object RNTextEngineBindings {
         val baseConfig =
             TextStyleConfig(
                 allowFontScaling = allowFontScaling,
-                color = color,
                 fontFamily = fontFamily,
                 fontSize = fontSize,
                 fontStyle = fontStyle,
                 fontWeight = fontWeight,
-                includeFontPadding = includeFontPadding,
                 letterSpacing = letterSpacing,
                 lineHeight = lineHeight,
                 tabularNumbers = tabularNumbers,
-                textBreakStrategy = textBreakStrategy,
             )
         val baseStyle = resolveTextStyle(
             color = color,
@@ -735,9 +752,11 @@ internal object RNTextEngineBindings {
         return LongArray(texts.size) { index ->
             val handle = nextHandle.getAndIncrement()
             preparedTexts[handle] =
-                buildPreparedText(texts[index], baseStyle, runsByText[index]) { runStyle ->
-                    resolveRunTextStyle(baseStyle, baseConfig, runStyle)
-                }
+                PreparedTextData(
+                    buildPreparedText(texts[index], baseStyle, runsByText[index]) { runStyle ->
+                        resolveRunTextStyle(baseStyle, baseConfig, runStyle)
+                    },
+                )
             handle
         }
     }
@@ -756,7 +775,7 @@ internal object RNTextEngineBindings {
 
     @JvmStatic
     fun measurePreparedWidth(handle: Long): Double {
-        return measureIntrinsicWidth(requirePrepared(handle))
+        return measureIntrinsicWidth(requirePrepared(handle).content)
     }
 
     @JvmStatic
@@ -820,16 +839,13 @@ internal object RNTextEngineBindings {
         val baseConfig =
             TextStyleConfig(
                 allowFontScaling = allowFontScaling,
-                color = color,
                 fontFamily = fontFamily,
                 fontSize = fontSize,
                 fontStyle = fontStyle,
                 fontWeight = fontWeight,
-                includeFontPadding = includeFontPadding,
                 letterSpacing = letterSpacing,
                 lineHeight = lineHeight,
                 tabularNumbers = tabularNumbers,
-                textBreakStrategy = textBreakStrategy,
             )
         val baseStyle = resolveTextStyle(
             color = color,
@@ -933,16 +949,13 @@ internal object RNTextEngineBindings {
         val baseConfig =
             TextStyleConfig(
                 allowFontScaling = allowFontScaling,
-                color = color,
                 fontFamily = fontFamily,
                 fontSize = fontSize,
                 fontStyle = fontStyle,
                 fontWeight = fontWeight,
-                includeFontPadding = includeFontPadding,
                 letterSpacing = letterSpacing,
                 lineHeight = lineHeight,
                 tabularNumbers = tabularNumbers,
-                textBreakStrategy = textBreakStrategy,
             )
         val baseStyle = resolveTextStyle(
             color = color,
@@ -1057,16 +1070,13 @@ internal object RNTextEngineBindings {
         val baseConfig =
             TextStyleConfig(
                 allowFontScaling = allowFontScaling,
-                color = color,
                 fontFamily = fontFamily,
                 fontSize = fontSize,
                 fontStyle = fontStyle,
                 fontWeight = fontWeight,
-                includeFontPadding = includeFontPadding,
                 letterSpacing = letterSpacing,
                 lineHeight = lineHeight,
                 tabularNumbers = tabularNumbers,
-                textBreakStrategy = textBreakStrategy,
             )
         val baseStyle = resolveTextStyle(
             color = color,
@@ -1119,7 +1129,7 @@ internal object RNTextEngineBindings {
     @JvmStatic
     fun measureTextView(handle: Long, width: Double, maxLines: Int, ellipsizeMode: Int, anchorToCapHeight: Boolean): Long {
         val ellipsize = resolveEllipsize(ellipsizeMode, maxLines)
-        val layout = buildLayout(requirePrepared(handle), width, maxLines, ellipsize, anchorToCapHeight, includeLines = false)
+        val layout = requirePrepared(handle).layout(width, maxLines, ellipsize, anchorToCapHeight)
         val widthBits = layout.width.toFloat().toRawBits().toLong()
         // Sign-extending a negative height would overwrite the packed width.
         val heightBits = layout.height.toFloat().toRawBits().toLong() and 0xFFFFFFFFL
@@ -1130,7 +1140,7 @@ internal object RNTextEngineBindings {
     fun layout(handle: Long, width: Double, maxLines: Int, ellipsizeMode: String?, anchorToCapHeight: Boolean): DoubleArray {
         val prepared = requirePrepared(handle)
         val ellipsize = resolveEllipsize(ellipsizeMode, maxLines)
-        return packLayout(buildLayout(prepared, width, maxLines, ellipsize, anchorToCapHeight, includeLines = false))
+        return packLayout(prepared.layout(width, maxLines, ellipsize, anchorToCapHeight))
     }
 
     @JvmStatic
@@ -1141,7 +1151,7 @@ internal object RNTextEngineBindings {
             packLayoutInto(
                 packed,
                 index * PACKED_LAYOUT_SIZE,
-                buildLayout(requirePrepared(handle), width, maxLines, ellipsize, anchorToCapHeight, includeLines = false),
+                requirePrepared(handle).layout(width, maxLines, ellipsize, anchorToCapHeight),
             )
         }
         return packed
@@ -1149,17 +1159,18 @@ internal object RNTextEngineBindings {
 
     @JvmStatic
     fun layoutLines(handle: Long, width: Double, maxLines: Int, ellipsizeMode: String?, anchorToCapHeight: Boolean): DoubleArray {
-        val prepared = requirePrepared(handle)
+        val prepared = requirePrepared(handle).content
         val ellipsize = resolveEllipsize(ellipsizeMode, maxLines)
         return packLayoutWithLines(buildLayout(prepared, width, maxLines, ellipsize, anchorToCapHeight, includeLines = true))
     }
 
     @JvmStatic
     fun layoutNextLine(handle: Long, start: Int, width: Double, anchorToCapHeight: Boolean): DoubleArray? {
-        val prepared = requirePrepared(handle)
+        val preparedData = requirePrepared(handle)
+        val prepared = preparedData.content
         val queryStart = resolveNextLineStart(prepared.text, start)
         if (queryStart < 0) return null
-        resolvePlainNextLine(prepared, queryStart, width, anchorToCapHeight)?.let { return it }
+        resolvePlainNextLine(preparedData, queryStart, width, anchorToCapHeight)?.let { return it }
 
         val text: CharSequence = if (prepared.hasInlineStyleRuns) prepared.textWithLineHeight else prepared.text
         if (queryStart >= text.length) return null
@@ -1184,12 +1195,12 @@ internal object RNTextEngineBindings {
 
         val capHeightTopInsetPx =
             if (anchorToCapHeight) {
-                val defaultCapHeightPx = measureCapHeightPx(paint)
+                val capHeights = prepared.capHeights
                 resolveCapHeightInsetsPx(
                     layout = layout,
                     text = text,
-                    defaultCapHeightPx = defaultCapHeightPx,
-                    uniformCapHeightPx = prepared.uniformCapHeightPx ?: resolveUniformCapHeightPx(text, defaultCapHeightPx),
+                    defaultCapHeightPx = capHeights.base,
+                    uniformCapHeightPx = capHeights.uniform,
                 ).top
             } else {
                 0f
@@ -1216,17 +1227,18 @@ internal object RNTextEngineBindings {
     }
 
     private fun resolvePlainNextLine(
-        prepared: PreparedTextData,
+        preparedData: PreparedTextData,
         start: Int,
         width: Double,
         anchorToCapHeight: Boolean,
     ): DoubleArray? {
+        val prepared = preparedData.content
         if (prepared.hasInlineStyleRuns || prepared.style.includeFontPadding) return null
         if (start < 0 || start >= prepared.text.length) return null
 
         val density = currentDensity()
         val widthPx = max(1, ceil(max(0.0, width) * density).toInt())
-        val nextLineOwner = resolvePlainNextLineOwner(prepared)
+        val nextLineOwner = resolvePlainNextLineOwner(preparedData)
         val cacheKey = resolvePlainNextLineKey(widthPx, start)
         val cachedLine = synchronized(nextLineOwner) { nextLineOwner.linesByKey[cacheKey] } ?: run {
             val measurementChars = resolvePlainMeasurementChars(nextLineOwner, prepared.text)
@@ -1249,7 +1261,7 @@ internal object RNTextEngineBindings {
         }
         val lineBottomPx =
             if (anchorToCapHeight) {
-                resolvePlainCapHeightPx(nextLineOwner, prepared.style.textPaint)
+                prepared.capHeights.base
             } else {
                 prepared.style.lineHeightPx ?: (prepared.style.fallbackLineHeight * density).toFloat()
             }
@@ -1363,20 +1375,6 @@ internal object RNTextEngineBindings {
         val target = scratchBuffers.resolve(text.length)
         text.toCharArray(target, 0, 0, text.length)
         return target
-    }
-
-    private fun resolvePlainCapHeightPx(nextLineOwner: PlainNextLineOwner, textPaint: TextPaint): Float {
-        val cached = nextLineOwner.capHeightPx
-        if (!cached.isNaN()) return cached
-
-        return synchronized(nextLineOwner) {
-            val measured = nextLineOwner.capHeightPx
-            if (!measured.isNaN()) {
-                measured
-            } else {
-                measureCapHeightPx(textPaint).also { nextLineOwner.capHeightPx = it }
-            }
-        }
     }
 
     private fun resolveNextLineStart(text: String, start: Int): Int {
@@ -1890,7 +1888,6 @@ internal object RNTextEngineBindings {
             includeFontPadding = includeFontPadding,
             lineHeightPx = if (lineHeight.isNaN()) null else scale(lineHeight, allowFontScaling, defaultValue = lineHeight),
             textBreakStrategy = resolveTextBreakStrategy(textBreakStrategy),
-            textColor = resolvedColor,
             textPaint = textPaint,
         )
     }
@@ -1900,7 +1897,6 @@ internal object RNTextEngineBindings {
         baseConfig: TextStyleConfig,
         runStyle: TextMeasureRunStyle,
     ): ResolvedTextStyle {
-        val color = if (runStyle.hasColor) runStyle.color else baseConfig.color
         val fontFamily = if (runStyle.hasFontFamily) runStyle.fontFamily else baseConfig.fontFamily
         val fontSize = if (runStyle.hasFontSize) runStyle.fontSize else baseConfig.fontSize
         val fontWeight = if (runStyle.hasFontWeight) runStyle.fontWeight else baseConfig.fontWeight
@@ -1910,9 +1906,8 @@ internal object RNTextEngineBindings {
         val tabularNumbers = if (runStyle.hasTabularNumbers) runStyle.tabularNumbers else baseConfig.tabularNumbers
 
         val textPaint = TextPaint(baseStyle.textPaint)
-        val resolvedTextColor = if (runStyle.hasColor) resolveTextColor(color) else baseStyle.textColor
         if (runStyle.hasColor) {
-            textPaint.color = resolvedTextColor ?: defaultTextPaintColor
+            textPaint.color = resolveTextColor(runStyle.color) ?: defaultTextPaintColor
         }
 
         val shouldResolveTypeface = runStyle.hasFontFamily || runStyle.hasFontWeight || runStyle.hasFontStyle
@@ -1959,20 +1954,16 @@ internal object RNTextEngineBindings {
             includeFontPadding = baseStyle.includeFontPadding,
             lineHeightPx = lineHeightPx,
             textBreakStrategy = baseStyle.textBreakStrategy,
-            textColor = resolvedTextColor,
             textPaint = textPaint,
         )
     }
 
-    private fun buildPreparedText(text: String, style: ResolvedTextStyle): PreparedTextData {
-        return PreparedTextData(
-            cachedLayoutText = null,
+    private fun buildPreparedText(text: String, style: ResolvedTextStyle): PreparedText {
+        return PreparedText(
             hasInlineStyleRuns = false,
-            plainNextLineOwner = null,
             style = style,
             text = text,
             textWithLineHeight = text,
-            uniformCapHeightPx = null,
         )
     }
 
@@ -1980,7 +1971,7 @@ internal object RNTextEngineBindings {
         text: String,
         textTransform: String?,
         style: ResolvedTextStyle,
-    ): PreparedTextData {
+    ): PreparedText {
         return buildPreparedText(applyTextTransform(text, textTransform), style)
     }
 
@@ -1989,22 +1980,19 @@ internal object RNTextEngineBindings {
         style: ResolvedTextStyle,
         runs: List<TextMeasureRun>,
         resolveRunStyle: (TextMeasureRunStyle) -> ResolvedTextStyle,
-    ): PreparedTextData {
+    ): PreparedText {
         val styledText =
             if (text.isEmpty()) {
-                StyledTextData(text = text, uniformCapHeightPx = null)
+                text
             } else {
                 buildStyledText(text, style, runs, resolveRunStyle)
             }
 
-        return PreparedTextData(
-            cachedLayoutText = styledText.text,
+        return PreparedText(
             hasInlineStyleRuns = runs.isNotEmpty(),
-            plainNextLineOwner = null,
             style = style,
             text = text,
-            textWithLineHeight = styledText.text,
-            uniformCapHeightPx = styledText.uniformCapHeightPx,
+            textWithLineHeight = styledText,
         )
     }
 
@@ -2014,7 +2002,7 @@ internal object RNTextEngineBindings {
         style: ResolvedTextStyle,
         runs: List<TextMeasureRun>,
         resolveRunStyle: (TextMeasureRunStyle) -> ResolvedTextStyle,
-    ): PreparedTextData {
+    ): PreparedText {
         if (runs.isEmpty()) return buildPreparedTextForTextView(text, textTransform, style)
 
         val boundaries = ArrayList<Int>(runs.size * 2)
@@ -2034,7 +2022,7 @@ internal object RNTextEngineBindings {
         return buildPreparedText(transformed.text, style, transformedRuns, resolveRunStyle)
     }
 
-    private fun resolvePreparedLayoutText(prepared: PreparedTextData): CharSequence {
+    private fun resolvePreparedLayoutText(prepared: PreparedText): CharSequence {
         if (prepared.hasInlineStyleRuns) return prepared.textWithLineHeight
         if (prepared.style.lineHeightPx == null || prepared.text.isEmpty()) return prepared.text
         prepared.cachedLayoutText?.let { return it }
@@ -2048,7 +2036,7 @@ internal object RNTextEngineBindings {
                         prepared.text.length,
                         Spannable.SPAN_INCLUSIVE_INCLUSIVE,
                     )
-                }.also { prepared.cachedLayoutText = it }
+                }.let(::SpannedString).also { prepared.cachedLayoutText = it }
         }
     }
 
@@ -2057,7 +2045,7 @@ internal object RNTextEngineBindings {
         baseStyle: ResolvedTextStyle,
         runs: List<TextMeasureRun>,
         resolveRunStyle: (TextMeasureRunStyle) -> ResolvedTextStyle,
-    ): StyledTextData {
+    ): CharSequence {
         val styledText = SpannableString(text)
 
         if (baseStyle.lineHeightPx != null) {
@@ -2067,7 +2055,7 @@ internal object RNTextEngineBindings {
         runs.forEach { run ->
             val runStyle = resolveRunStyle(run.style)
             styledText.setSpan(
-                RNTextEngineTextPaintSpan(runStyle.textPaint),
+                RNTextEngineTextPaintSpan(runStyle.textPaint, run.style.hasColor),
                 run.start,
                 run.end,
                 Spannable.SPAN_EXCLUSIVE_EXCLUSIVE,
@@ -2083,10 +2071,7 @@ internal object RNTextEngineBindings {
             }
         }
 
-        return StyledTextData(
-            text = styledText,
-            uniformCapHeightPx = null,
-        )
+        return SpannedString(styledText)
     }
 
     private fun applyBaseLineHeightSpans(
@@ -2311,10 +2296,7 @@ internal object RNTextEngineBindings {
         val width: Double,
     )
 
-    private data class StyledTextData(
-        val text: CharSequence,
-        val uniformCapHeightPx: Float?,
-    )
+
 
     private data class OneShotPlainLayoutContext(
         val density: Double,
@@ -2336,13 +2318,13 @@ internal object RNTextEngineBindings {
     }
 
     private fun buildLayout(
-        prepared: PreparedTextData,
+        prepared: PreparedText,
         width: Double,
         maxLines: Int,
         ellipsize: TextUtils.TruncateAt?,
         anchorToCapHeight: Boolean,
         includeLines: Boolean,
-        baseOffset: Int = 0,
+        density: Double = currentDensity(),
     ): LayoutInfo {
         if (prepared.text.isEmpty()) {
             return LayoutInfo(
@@ -2354,16 +2336,8 @@ internal object RNTextEngineBindings {
             )
         }
 
-        val density = currentDensity()
         val layoutWidth = max(0.0, width) * density
         val textWidthPx = max(1, ceil(layoutWidth).toInt())
-        if (!includeLines) {
-            val layoutQueryOwner = resolveLayoutQueryOwner(prepared)
-            val cacheKey = resolveLayoutCacheKey(textWidthPx, maxLines, ellipsize, anchorToCapHeight)
-            synchronized(layoutQueryOwner) {
-                layoutQueryOwner.layoutsByKey[cacheKey]?.let { return it }
-            }
-        }
         val usesPlainTextLineHeightMetrics = !prepared.hasInlineStyleRuns && prepared.style.lineHeightPx != null && !anchorToCapHeight
         val charSequence = if (usesPlainTextLineHeightMetrics) prepared.text else resolvePreparedLayoutText(prepared)
         val paint = TextPaint(prepared.style.textPaint)
@@ -2383,12 +2357,12 @@ internal object RNTextEngineBindings {
         val actualLineCount = min(layout.lineCount, effectiveMaxLines)
         val capHeightInsets =
             if (anchorToCapHeight) {
-                val defaultCapHeightPx = measureCapHeightPx(paint)
+                val capHeights = prepared.capHeights
                 resolveCapHeightInsetsPx(
                     layout = layout,
                     text = charSequence,
-                    defaultCapHeightPx = defaultCapHeightPx,
-                    uniformCapHeightPx = prepared.uniformCapHeightPx ?: resolveUniformCapHeightPx(charSequence, defaultCapHeightPx),
+                    defaultCapHeightPx = capHeights.base,
+                    uniformCapHeightPx = capHeights.uniform,
                 )
             } else {
                 null
@@ -2430,8 +2404,8 @@ internal object RNTextEngineBindings {
                 (lines as ArrayList).add(
                     LineInfo(
                         bottom = lineBottom,
-                        end = (baseOffset + lineEnd).toDouble(),
-                        start = (baseOffset + lineStart).toDouble(),
+                        end = lineEnd.toDouble(),
+                        start = lineStart.toDouble(),
                         width = lineWidth,
                     ),
                 )
@@ -2442,23 +2416,13 @@ internal object RNTextEngineBindings {
             widestLine = max(widestLine, layout.width.toDouble() / density)
         }
 
-        val layoutInfo =
-            LayoutInfo(
+        return LayoutInfo(
             height = measuredHeight,
             lastLineWidth = lastLineWidth,
             lineCount = actualLineCount.toDouble(),
             lines = lines,
             width = widestLine,
         )
-        if (!includeLines) {
-            val layoutQueryOwner = resolveLayoutQueryOwner(prepared)
-            val cacheKey = resolveLayoutCacheKey(textWidthPx, maxLines, ellipsize, anchorToCapHeight)
-            synchronized(layoutQueryOwner) {
-                layoutQueryOwner.layoutsByKey.put(cacheKey, layoutInfo)
-            }
-        }
-
-        return layoutInfo
     }
 
     private fun resolveOneShotPlainLayoutContext(
@@ -2694,12 +2658,6 @@ internal object RNTextEngineBindings {
         }
     }
 
-    private fun resolveLayoutQueryOwner(prepared: PreparedTextData): LayoutQueryOwner {
-        prepared.layoutQueryOwner?.let { return it }
-        return synchronized(prepared) {
-            prepared.layoutQueryOwner ?: LayoutQueryOwner().also { prepared.layoutQueryOwner = it }
-        }
-    }
 
     private fun resolveLayoutCacheKey(widthPx: Int, maxLines: Int, ellipsize: TextUtils.TruncateAt?, anchorToCapHeight: Boolean): Long {
         val ellipsizeCode = (ellipsize?.ordinal ?: -1) + 1
@@ -2708,7 +2666,7 @@ internal object RNTextEngineBindings {
         return (widthPx.toLong() shl 32) or options
     }
 
-    private fun measureIntrinsicWidth(prepared: PreparedTextData): Double {
+    private fun measureIntrinsicWidth(prepared: PreparedText): Double {
         if (prepared.text.isEmpty()) return 0.0
 
         val text = resolvePreparedLayoutText(prepared)
@@ -2833,13 +2791,9 @@ internal object RNTextEngineBindings {
         return preparedTexts[handle] ?: error("RNTextEngine: attempted to use an invalid prepared text handle.")
     }
 
-    @JvmStatic
-    internal fun resolvePreparedTextViewData(handle: Long): PreparedTextViewData? {
-        val prepared = preparedTexts[handle] ?: return null
-        return resolvePreparedTextViewData(prepared, mountPlainTextNatively = false)
-    }
+    internal fun preparedText(handle: Long): PreparedText? = preparedTexts[handle]?.content
 
-    internal fun buildTextViewDisplayData(
+    internal fun prepareTextViewContent(
         text: String,
         textTransform: String?,
         color: Int?,
@@ -2854,22 +2808,8 @@ internal object RNTextEngineBindings {
         tabularNumbers: Boolean,
         textBreakStrategy: String?,
         runs: List<RNTextEngineTextRun> = emptyList(),
-    ): PreparedTextViewData {
+    ): PreparedText {
         val colorString = color?.toColorString()
-        val baseConfig =
-            TextStyleConfig(
-                allowFontScaling = allowFontScaling,
-                color = colorString,
-                fontFamily = fontFamily,
-                fontSize = fontSize,
-                fontStyle = fontStyle,
-                fontWeight = fontWeight,
-                includeFontPadding = includeFontPadding,
-                letterSpacing = letterSpacing,
-                lineHeight = lineHeight,
-                tabularNumbers = tabularNumbers,
-                textBreakStrategy = textBreakStrategy,
-            )
         val baseStyle =
             resolveTextStyle(
                 color = colorString,
@@ -2884,57 +2824,49 @@ internal object RNTextEngineBindings {
                 tabularNumbers = tabularNumbers,
                 textBreakStrategy = textBreakStrategy,
             )
-        val prepared =
-            if (runs.isEmpty()) {
-                buildPreparedTextForTextView(text, textTransform, baseStyle)
-            } else {
-                val measureRuns =
-                    runs.map { run ->
-                        TextMeasureRun(
-                            end = run.end,
-                            start = run.start,
-                            style =
-                                TextMeasureRunStyle(
-                                    color = run.style.color,
-                                    fontFamily = run.style.fontFamily,
-                                    fontSize = run.style.fontSize,
-                                    fontStyle = run.style.fontStyle,
-                                    fontWeight = run.style.fontWeight,
-                                    hasColor = run.style.hasColor,
-                                    hasFontFamily = run.style.hasFontFamily,
-                                    hasFontSize = run.style.hasFontSize,
-                                    hasFontStyle = run.style.hasFontStyle,
-                                    hasFontWeight = run.style.hasFontWeight,
-                                    hasLetterSpacing = run.style.hasLetterSpacing,
-                                    hasLineHeight = run.style.hasLineHeight,
-                                    hasTabularNumbers = run.style.hasTabularNumbers,
-                                    letterSpacing = run.style.letterSpacing,
-                                    lineHeight = run.style.lineHeight,
-                                    tabularNumbers = run.style.tabularNumbers,
-                                ),
-                        )
-                    }
+        if (runs.isEmpty()) return buildPreparedTextForTextView(text, textTransform, baseStyle)
 
-                buildPreparedTextForTextView(text, textTransform, baseStyle, measureRuns) { runStyle ->
-                    resolveRunTextStyle(baseStyle, baseConfig, runStyle)
-                }
+        val baseConfig =
+            TextStyleConfig(
+                allowFontScaling = allowFontScaling,
+                fontFamily = fontFamily,
+                fontSize = fontSize,
+                fontStyle = fontStyle,
+                fontWeight = fontWeight,
+                letterSpacing = letterSpacing,
+                lineHeight = lineHeight,
+                tabularNumbers = tabularNumbers,
+            )
+        val measureRuns =
+            runs.map { run ->
+                TextMeasureRun(
+                    end = run.end,
+                    start = run.start,
+                    style =
+                        TextMeasureRunStyle(
+                            color = run.style.color,
+                            fontFamily = run.style.fontFamily,
+                            fontSize = run.style.fontSize,
+                            fontStyle = run.style.fontStyle,
+                            fontWeight = run.style.fontWeight,
+                            hasColor = run.style.hasColor,
+                            hasFontFamily = run.style.hasFontFamily,
+                            hasFontSize = run.style.hasFontSize,
+                            hasFontStyle = run.style.hasFontStyle,
+                            hasFontWeight = run.style.hasFontWeight,
+                            hasLetterSpacing = run.style.hasLetterSpacing,
+                            hasLineHeight = run.style.hasLineHeight,
+                            hasTabularNumbers = run.style.hasTabularNumbers,
+                            letterSpacing = run.style.letterSpacing,
+                            lineHeight = run.style.lineHeight,
+                            tabularNumbers = run.style.tabularNumbers,
+                        ),
+                )
             }
 
-        return resolvePreparedTextViewData(prepared, mountPlainTextNatively = runs.isEmpty())
-    }
-
-    private fun resolvePreparedTextViewData(prepared: PreparedTextData, mountPlainTextNatively: Boolean): PreparedTextViewData {
-        val baseCapHeightPx = measureCapHeightPx(TextPaint(prepared.style.textPaint))
-        val mountNatively = mountPlainTextNatively && !prepared.hasInlineStyleRuns
-        return PreparedTextViewData(
-            baseCapHeightPx = baseCapHeightPx,
-            includeFontPadding = prepared.style.includeFontPadding,
-            lineHeightPx = if (mountNatively) prepared.style.lineHeightPx else null,
-            mountMode = if (mountNatively) TextMountMode.NATIVE else TextMountMode.SPANNABLE,
-            text = if (mountNatively) prepared.text else SpannableString.valueOf(resolvePreparedLayoutText(prepared)),
-            textPaint = TextPaint(prepared.style.textPaint),
-            uniformCapHeightPx = prepared.uniformCapHeightPx ?: resolveUniformCapHeightPx(resolvePreparedLayoutText(prepared), baseCapHeightPx),
-        )
+        return buildPreparedTextForTextView(text, textTransform, baseStyle, measureRuns) { runStyle ->
+            resolveRunTextStyle(baseStyle, baseConfig, runStyle)
+        }
     }
 
     @JvmStatic

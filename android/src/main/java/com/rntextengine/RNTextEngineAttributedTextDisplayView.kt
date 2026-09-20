@@ -16,11 +16,11 @@ import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
 
-internal class RNTextEngineAttributedTextDisplayView(context: Context) : View(context) {
+internal class RNTextEngineAttributedTextDisplayView(context: Context, private val nativeLineSpacing: Boolean) : View(context) {
     private var cachedLayout: Layout? = null
     private var cachedLayoutWidth = -1
     private var layoutDirty = true
-    private var preparedText: RNTextEngineBindings.PreparedTextViewData? = null
+    private var preparedText: RNTextEngineBindings.PreparedText? = null
     private var textAlign: String? = null
     private var decorationFlags = 0
     private var textShadowColor: Int? = null
@@ -54,7 +54,7 @@ internal class RNTextEngineAttributedTextDisplayView(context: Context) : View(co
         setBackgroundColor(Color.TRANSPARENT)
     }
 
-    fun setPreparedText(value: RNTextEngineBindings.PreparedTextViewData?) {
+    fun setPreparedText(value: RNTextEngineBindings.PreparedText?) {
         if (preparedText === value) return
         preparedText = value
         invalidateLayout()
@@ -121,11 +121,12 @@ internal class RNTextEngineAttributedTextDisplayView(context: Context) : View(co
     fun resolveCapHeightInsets(width: Int): RNTextEngineCapHeightInsetsPx {
         val prepared = preparedText ?: return RNTextEngineCapHeightInsetsPx(bottom = 0f, top = 0f)
         val layout = ensureLayout(width) ?: return RNTextEngineCapHeightInsetsPx(bottom = 0f, top = 0f)
+        val capHeights = prepared.capHeights
         return resolveCapHeightInsetsPx(
             layout = layout,
-            text = prepared.text,
-            defaultCapHeightPx = prepared.baseCapHeightPx,
-            uniformCapHeightPx = prepared.uniformCapHeightPx,
+            text = prepared.displayText(nativeLineSpacing),
+            defaultCapHeightPx = capHeights.base,
+            uniformCapHeightPx = capHeights.uniform,
         )
     }
 
@@ -164,25 +165,19 @@ internal class RNTextEngineAttributedTextDisplayView(context: Context) : View(co
         if (!layoutDirty && cachedLayoutWidth == contentWidth) return cachedLayout
 
         val maxLines = if (numberOfLines > 0) numberOfLines else Int.MAX_VALUE
-        val lineSpacingAdd =
-            if (prepared.mountMode == RNTextEngineBindings.TextMountMode.NATIVE) {
-                resolveNativeLineSpacingAddPx(prepared)
-            } else {
-                0f
-            }
         cachedLayout =
             buildStaticLayoutCompat(
-                text = prepared.text,
-                paint = TextPaint(prepared.textPaint).also(::applyDrawingStyle),
+                text = prepared.displayText(nativeLineSpacing),
+                paint = TextPaint(prepared.style.textPaint).also(::applyDrawingStyle),
                 widthPx = max(1, contentWidth),
-                includeFontPadding = prepared.includeFontPadding,
+                includeFontPadding = prepared.style.includeFontPadding,
                 breakStrategy = Layout.BREAK_STRATEGY_HIGH_QUALITY,
                 hyphenationFrequency = Layout.HYPHENATION_FREQUENCY_NORMAL,
                 maxLines = maxLines,
                 ellipsize = resolveEllipsize(maxLines, ellipsizeMode),
                 alignment = resolveAlignment(textAlign),
                 justificationMode = resolveJustificationMode(textAlign),
-                lineSpacingAdd = lineSpacingAdd,
+                lineSpacingAdd = prepared.lineSpacingAdd(nativeLineSpacing),
             )
         cachedLayoutWidth = contentWidth
         layoutDirty = false
@@ -204,15 +199,6 @@ internal class RNTextEngineAttributedTextDisplayView(context: Context) : View(co
     private fun applyDrawingStyle(paint: TextPaint) {
         paint.flags = (paint.flags and Paint.UNDERLINE_TEXT_FLAG.inv() and Paint.STRIKE_THRU_TEXT_FLAG.inv()) or decorationFlags
         paint.setShadowLayer(textShadowRadiusPx, textShadowOffsetWidthPx, textShadowOffsetHeightPx, textShadowColor ?: Color.TRANSPARENT)
-    }
-
-    private fun resolveNativeLineSpacingAddPx(prepared: RNTextEngineBindings.PreparedTextViewData): Float {
-        val lineHeightPx = prepared.lineHeightPx
-        if (lineHeightPx == null || lineHeightPx.isNaN()) return 0f
-
-        val metrics = prepared.textPaint.fontMetricsInt
-        val fontHeight = (-metrics.ascent + metrics.descent).toFloat()
-        return max(0f, lineHeightPx - fontHeight)
     }
 
     private fun resolveAlignment(value: String?): Layout.Alignment {

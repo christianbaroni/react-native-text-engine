@@ -207,9 +207,11 @@ internal fun isSameCapHeightPx(left: Float, right: Float): Boolean {
     return abs(left - right) <= RN_TEXT_ENGINE_CAP_HEIGHT_EPSILON_PX
 }
 
-internal class RNTextEngineTextPaintSpan(textPaint: TextPaint, resolvedCapHeightPx: Float? = null) : MetricAffectingSpan() {
-    private val spanPaint = TextPaint(textPaint)
-    private var capHeightPx = resolvedCapHeightPx ?: Float.NaN
+internal class RNTextEngineTextPaintSpan(
+    private val spanPaint: TextPaint,
+    private val hasColor: Boolean,
+) : MetricAffectingSpan() {
+    @Volatile private var capHeightPx = Float.NaN
 
     override fun updateMeasureState(textPaint: TextPaint) {
         apply(textPaint)
@@ -217,20 +219,21 @@ internal class RNTextEngineTextPaintSpan(textPaint: TextPaint, resolvedCapHeight
 
     override fun updateDrawState(textPaint: TextPaint) {
         apply(textPaint)
+        if (hasColor) textPaint.color = spanPaint.color
     }
 
     fun resolveCapHeightPx(): Float {
-        if (capHeightPx.isNaN()) {
-            capHeightPx = measureCapHeightPx(spanPaint)
+        if (!capHeightPx.isNaN()) return capHeightPx
+        return synchronized(this) {
+            if (capHeightPx.isNaN()) capHeightPx = measureCapHeightPx(spanPaint)
+            capHeightPx
         }
-        return capHeightPx
     }
 
     private fun apply(textPaint: TextPaint) {
         textPaint.typeface = spanPaint.typeface
         textPaint.textSize = spanPaint.textSize
         textPaint.letterSpacing = spanPaint.letterSpacing
-        textPaint.color = spanPaint.color
         textPaint.fontFeatureSettings = spanPaint.fontFeatureSettings
     }
 }

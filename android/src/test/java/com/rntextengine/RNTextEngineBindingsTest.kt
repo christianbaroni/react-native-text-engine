@@ -164,15 +164,15 @@ class RNTextEngineBindingsTest {
                 RNTextEngineBindings.layout(singleBeta, 120.0, 0, null, false)
 
         assertArrayEquals(singleLayout, batchLayout, 0.0001)
-        assertEquals("Alpha beta gamma", RNTextEngineBindings.resolvePreparedTextViewData(singleAlpha)?.text?.toString())
-        assertNotNull(RNTextEngineBindings.resolvePreparedTextViewData(singleBeta))
+        assertEquals("Alpha beta gamma", RNTextEngineBindings.preparedText(singleAlpha)?.text?.toString())
+        assertNotNull(RNTextEngineBindings.preparedText(singleBeta))
 
         RNTextEngineBindings.releaseMany(batch)
         RNTextEngineBindings.release(singleAlpha)
         RNTextEngineBindings.release(singleBeta)
 
-        assertNull(RNTextEngineBindings.resolvePreparedTextViewData(singleAlpha))
-        assertNull(RNTextEngineBindings.resolvePreparedTextViewData(singleBeta))
+        assertNull(RNTextEngineBindings.preparedText(singleAlpha))
+        assertNull(RNTextEngineBindings.preparedText(singleBeta))
     }
 
     @Test
@@ -242,8 +242,8 @@ class RNTextEngineBindingsTest {
                 tabularNumbers = false,
                 textBreakStrategy = null,
             )
-        val prepared = requireNotNull(RNTextEngineBindings.resolvePreparedTextViewData(handle))
-        val expectedWidthDp = measureReactTextWidth(prepared.text, prepared.textPaint, prepared.includeFontPadding)
+        val prepared = requireNotNull(RNTextEngineBindings.preparedText(handle))
+        val expectedWidthDp = measureReactTextWidth(prepared.displayText(false), prepared.style.textPaint, prepared.style.includeFontPadding)
         val measuredWidthDp = RNTextEngineBindings.measurePreparedWidth(handle)
 
         assertEquals(expectedWidthDp, measuredWidthDp, 0.0001)
@@ -254,7 +254,7 @@ class RNTextEngineBindingsTest {
     @Test
     fun sharedTextViewDisplayDataKeepsTypographyInSyncWithPreparedTextViewOwner() {
         val direct =
-            RNTextEngineBindings.buildTextViewDisplayData(
+            RNTextEngineBindings.prepareTextViewContent(
                 text = "exact row",
                 textTransform = "uppercase",
                 color = null,
@@ -284,22 +284,22 @@ class RNTextEngineBindingsTest {
                 tabularNumbers = true,
                 textBreakStrategy = null,
             )
-        val prepared = requireNotNull(RNTextEngineBindings.resolvePreparedTextViewData(handle))
+        val prepared = requireNotNull(RNTextEngineBindings.preparedText(handle))
 
-        assertEquals(prepared.text.toString(), direct.text.toString())
-        assertEquals(prepared.textPaint.textSize, direct.textPaint.textSize, 0.0001f)
-        assertEquals(prepared.textPaint.letterSpacing, direct.textPaint.letterSpacing, 0.0001f)
-        assertEquals(prepared.textPaint.fontFeatureSettings, direct.textPaint.fontFeatureSettings)
-        assertEquals(prepared.textPaint.color, direct.textPaint.color)
-        assertEquals(prepared.includeFontPadding, direct.includeFontPadding)
-        assertEquals(prepared.baseCapHeightPx, direct.baseCapHeightPx, 0.0001f)
-        assertEquals(prepared.uniformCapHeightPx, direct.uniformCapHeightPx)
+        assertEquals(prepared.displayText(false).toString(), direct.displayText(true).toString())
+        assertEquals(prepared.style.textPaint.textSize, direct.style.textPaint.textSize, 0.0001f)
+        assertEquals(prepared.style.textPaint.letterSpacing, direct.style.textPaint.letterSpacing, 0.0001f)
+        assertEquals(prepared.style.textPaint.fontFeatureSettings, direct.style.textPaint.fontFeatureSettings)
+        assertEquals(prepared.style.textPaint.color, direct.style.textPaint.color)
+        assertEquals(prepared.style.includeFontPadding, direct.style.includeFontPadding)
+        assertEquals(prepared.capHeights.base, direct.capHeights.base, 0.0001f)
+        assertEquals(prepared.capHeights.uniform, direct.capHeights.uniform)
 
         RNTextEngineBindings.release(handle)
     }
 
     @Test
-    fun plainPreparedTextViewDataKeepsTheExactPreparedMountedTextPath() {
+    fun preparedTextUsesSpanLineHeightForPreparedViews() {
         val handle =
             RNTextEngineBindings.prepareTextView(
                 text = "exact row",
@@ -316,12 +316,12 @@ class RNTextEngineBindingsTest {
                 tabularNumbers = false,
                 textBreakStrategy = null,
             )
-        val prepared = requireNotNull(RNTextEngineBindings.resolvePreparedTextViewData(handle))
+        val prepared = requireNotNull(RNTextEngineBindings.preparedText(handle))
 
-        assertEquals(RNTextEngineBindings.TextMountMode.SPANNABLE, prepared.mountMode)
-        assertTrue(prepared.text is Spanned)
-        assertEquals("EXACT ROW", prepared.text.toString())
-        assertEquals(null, prepared.lineHeightPx)
+        assertEquals(0f, prepared.lineSpacingAdd(false), 0f)
+        assertTrue(prepared.displayText(false) is Spanned)
+        assertEquals("EXACT ROW", prepared.displayText(false).toString())
+        assertEquals(PixelUtil.toPixelFromDIP(24f), prepared.style.lineHeightPx ?: Float.NaN, 0.0001f)
 
         RNTextEngineBindings.release(handle)
     }
@@ -329,7 +329,7 @@ class RNTextEngineBindingsTest {
     @Test
     fun plainTextViewDisplayDataKeepsTheNativeMountedTextPath() {
         val direct =
-            RNTextEngineBindings.buildTextViewDisplayData(
+            RNTextEngineBindings.prepareTextViewContent(
                 text = "exact row",
                 textTransform = "uppercase",
                 color = null,
@@ -344,14 +344,13 @@ class RNTextEngineBindingsTest {
                 textBreakStrategy = null,
             )
 
-        assertEquals(RNTextEngineBindings.TextMountMode.NATIVE, direct.mountMode)
-        assertFalse(direct.text is Spanned)
-        assertEquals("EXACT ROW", direct.text.toString())
-        assertEquals(PixelUtil.toPixelFromDIP(24f), direct.lineHeightPx ?: Float.NaN, 0.0001f)
+        assertFalse(direct.displayText(true) is Spanned)
+        assertEquals("EXACT ROW", direct.displayText(true).toString())
+        assertEquals(PixelUtil.toPixelFromDIP(24f), direct.style.lineHeightPx ?: Float.NaN, 0.0001f)
     }
 
     @Test
-    fun inlineRunPreparedTextViewDataKeepsTheStyledMountedTextPath() {
+    fun inlineTextKeepsSpanGeometry() {
         val handle =
             RNTextEngineBindings.prepareTextViewWithRuns(
                 text = "Alpha beta",
@@ -379,10 +378,10 @@ class RNTextEngineBindingsTest {
                 runLineHeights = doubleArrayOf(0.0),
                 runTabularNumbers = booleanArrayOf(false),
             )
-        val prepared = requireNotNull(RNTextEngineBindings.resolvePreparedTextViewData(handle))
+        val prepared = requireNotNull(RNTextEngineBindings.preparedText(handle))
 
-        assertEquals(RNTextEngineBindings.TextMountMode.SPANNABLE, prepared.mountMode)
-        assertTrue(prepared.text is Spanned)
+        assertEquals(0f, prepared.lineSpacingAdd(false), 0f)
+        assertTrue(prepared.displayText(false) is Spanned)
 
         RNTextEngineBindings.release(handle)
     }
@@ -404,9 +403,9 @@ class RNTextEngineBindingsTest {
                 tabularNumbers = false,
                 textBreakStrategy = null,
             )
-        val prepared = requireNotNull(RNTextEngineBindings.resolvePreparedTextViewData(handle))
-        val widthDp = measureReactTextWidth(prepared.text, prepared.textPaint, prepared.includeFontPadding)
-        val expectedWidthDp = measureReactTextLayoutWidth(prepared.text, prepared.textPaint, prepared.includeFontPadding, widthDp)
+        val prepared = requireNotNull(RNTextEngineBindings.preparedText(handle))
+        val widthDp = measureReactTextWidth(prepared.displayText(false), prepared.style.textPaint, prepared.style.includeFontPadding)
+        val expectedWidthDp = measureReactTextLayoutWidth(prepared.displayText(false), prepared.style.textPaint, prepared.style.includeFontPadding, widthDp)
         val measuredWidthDp = RNTextEngineBindings.layout(handle, widthDp, 0, null, false)[0]
 
         assertEquals(expectedWidthDp, measuredWidthDp, 0.0001)
@@ -432,8 +431,8 @@ class RNTextEngineBindingsTest {
                 tabularNumbers = false,
                 textBreakStrategy = null,
             )
-        val prepared = requireNotNull(RNTextEngineBindings.resolvePreparedTextViewData(handle))
-        val intrinsicWidthDp = measureReactTextWidth(prepared.text, prepared.textPaint, prepared.includeFontPadding)
+        val prepared = requireNotNull(RNTextEngineBindings.preparedText(handle))
+        val intrinsicWidthDp = measureReactTextWidth(prepared.displayText(false), prepared.style.textPaint, prepared.style.includeFontPadding)
         var widthDp = max(1.0, intrinsicWidthDp * 0.5)
         var layout = buildEllipsizedSingleLineLayout(prepared, widthDp)
 
@@ -478,11 +477,11 @@ class RNTextEngineBindingsTest {
                 runTabularNumbers = booleanArrayOf(false),
             )
 
-        val prepared = RNTextEngineBindings.resolvePreparedTextViewData(handle)
+        val prepared = RNTextEngineBindings.preparedText(handle)
         assertNotNull(prepared)
         assertEquals("SSB", prepared?.text?.toString())
 
-        val text = prepared?.text as android.text.Spanned
+        val text = prepared?.displayText(false) as android.text.Spanned
         val spans = text.getSpans(0, text.length, RNTextEngineTextPaintSpan::class.java)
         assertEquals(1, spans.size)
         assertEquals(2, text.getSpanStart(spans[0]))
@@ -689,7 +688,7 @@ class RNTextEngineBindingsTest {
                     tabularNumbers = false,
                     textBreakStrategy = "highQuality",
                 )
-            val prepared = requireNotNull(RNTextEngineBindings.resolvePreparedTextViewData(handle))
+            val prepared = requireNotNull(RNTextEngineBindings.preparedText(handle))
 
             try {
                 widths.forEach { width ->
@@ -775,8 +774,8 @@ class RNTextEngineBindingsTest {
         RNTextEngineBindings.cleanup()
         val current = prepare("After cleanup")
         RNTextEngineBindings.release(stale)
-        assertNull(RNTextEngineBindings.resolvePreparedTextViewData(stale))
-        assertEquals("After cleanup", requireNotNull(RNTextEngineBindings.resolvePreparedTextViewData(current)).text.toString())
+        assertNull(RNTextEngineBindings.preparedText(stale))
+        assertEquals("After cleanup", requireNotNull(RNTextEngineBindings.preparedText(current)).text.toString())
         RNTextEngineBindings.release(current)
     }
 
@@ -1004,7 +1003,7 @@ class RNTextEngineBindingsTest {
     }
 
     private fun assertNextLineMatchesReference(
-        prepared: RNTextEngineBindings.PreparedTextViewData,
+        prepared: RNTextEngineBindings.PreparedText,
         handle: Long,
         widthDp: Double,
         anchorToCapHeight: Boolean,
@@ -1022,7 +1021,7 @@ class RNTextEngineBindingsTest {
 
             val resolved = requireNotNull(actual)
             val context =
-                "text=${prepared.text} widthDp=$widthDp anchor=$anchorToCapHeight start=$start expected=$expected actual=${resolved.contentToString()}"
+                "text=${prepared.displayText(false)} widthDp=$widthDp anchor=$anchorToCapHeight start=$start expected=$expected actual=${resolved.contentToString()}"
             assertEquals(context, expected.start, resolved[0], 0.0001)
             assertEquals(context, expected.end, resolved[1], 0.0001)
             assertEquals(context, expected.width, resolved[2], 0.0001)
@@ -1035,20 +1034,20 @@ class RNTextEngineBindingsTest {
     }
 
     private fun resolveReferenceNextLine(
-        prepared: RNTextEngineBindings.PreparedTextViewData,
+        prepared: RNTextEngineBindings.PreparedText,
         start: Int,
         widthDp: Double,
         anchorToCapHeight: Boolean,
     ): PackedLine? {
-        val text = prepared.text
+        val text = prepared.displayText(false)
         if (start < 0 || start >= text.length) return null
 
         val widthPx = max(1, ceil(PixelUtil.toPixelFromDIP(widthDp.toFloat()).toDouble()).toInt())
-        val paint = TextPaint(prepared.textPaint)
+        val paint = TextPaint(prepared.style.textPaint)
         val layout =
             StaticLayout.Builder.obtain(text, start, text.length, paint, widthPx)
                 .setAlignment(Layout.Alignment.ALIGN_NORMAL)
-                .setIncludePad(prepared.includeFontPadding)
+                .setIncludePad(prepared.style.includeFontPadding)
                 .setBreakStrategy(Layout.BREAK_STRATEGY_HIGH_QUALITY)
                 .setHyphenationFrequency(Layout.HYPHENATION_FREQUENCY_NORMAL)
                 .setMaxLines(1)
@@ -1179,14 +1178,14 @@ class RNTextEngineBindingsTest {
     }
 
     private fun buildEllipsizedSingleLineLayout(
-        prepared: RNTextEngineBindings.PreparedTextViewData,
+        prepared: RNTextEngineBindings.PreparedText,
         widthDp: Double,
     ): StaticLayout {
         val widthPx = ceil(PixelUtil.toPixelFromDIP(widthDp.toFloat()).toDouble()).toInt()
-        return StaticLayout.Builder.obtain(prepared.text, 0, prepared.text.length, TextPaint(prepared.textPaint), widthPx)
+        return StaticLayout.Builder.obtain(prepared.displayText(false), 0, prepared.displayText(false).length, TextPaint(prepared.style.textPaint), widthPx)
             .setAlignment(Layout.Alignment.ALIGN_NORMAL)
             .setLineSpacing(0f, 1f)
-            .setIncludePad(prepared.includeFontPadding)
+            .setIncludePad(prepared.style.includeFontPadding)
             .setBreakStrategy(Layout.BREAK_STRATEGY_HIGH_QUALITY)
             .setHyphenationFrequency(Layout.HYPHENATION_FREQUENCY_NORMAL)
             .setMaxLines(1)

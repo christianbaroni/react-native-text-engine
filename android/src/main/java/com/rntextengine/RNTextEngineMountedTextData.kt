@@ -1,10 +1,10 @@
 package com.rntextengine
 
 import android.graphics.Color
+import android.text.Spanned
 import android.util.TypedValue
 import android.widget.TextView
 import android.widget.TextView.BufferType
-import kotlin.math.max
 
 internal data class RNTextEngineTextRunStyle(
     val color: String?,
@@ -31,9 +31,10 @@ internal data class RNTextEngineTextRun(
     val style: RNTextEngineTextRunStyle,
 )
 
-internal fun applyPreparedTextViewData(
+internal fun applyPreparedText(
     textView: TextView,
-    prepared: RNTextEngineBindings.PreparedTextViewData?,
+    prepared: RNTextEngineBindings.PreparedText?,
+    nativeLineSpacing: Boolean,
 ) {
     if (prepared == null) {
         textView.setText("", BufferType.NORMAL)
@@ -47,30 +48,16 @@ internal fun applyPreparedTextViewData(
         return
     }
 
+    val paint = prepared.style.textPaint
     textView.paintFlags = textView.paintFlags or RN_TEXT_ENGINE_SHAPING_FLAGS
-    textView.includeFontPadding = prepared.includeFontPadding
-    textView.typeface = prepared.textPaint.typeface
-    textView.setTextSize(TypedValue.COMPLEX_UNIT_PX, prepared.textPaint.textSize)
-    textView.letterSpacing = prepared.textPaint.letterSpacing
-    textView.setTextColor(prepared.textPaint.color)
-    textView.fontFeatureSettings = prepared.textPaint.fontFeatureSettings
+    textView.includeFontPadding = prepared.style.includeFontPadding
+    textView.typeface = paint.typeface
+    textView.setTextSize(TypedValue.COMPLEX_UNIT_PX, paint.textSize)
+    textView.letterSpacing = paint.letterSpacing
+    textView.setTextColor(paint.color)
+    textView.fontFeatureSettings = paint.fontFeatureSettings
 
-    if (prepared.mountMode == RNTextEngineBindings.TextMountMode.SPANNABLE) {
-        textView.setLineSpacing(0f, 1f)
-        textView.setText(prepared.text, BufferType.SPANNABLE)
-    } else {
-        applyNativeLineHeight(textView, prepared.lineHeightPx)
-        textView.setText(prepared.text, BufferType.NORMAL)
-    }
-}
-
-private fun applyNativeLineHeight(textView: TextView, lineHeightPx: Float?) {
-    if (lineHeightPx == null || lineHeightPx.isNaN()) {
-        textView.setLineSpacing(0f, 1f)
-        return
-    }
-
-    val metrics = textView.paint.fontMetricsInt
-    val fontHeight = (-metrics.ascent + metrics.descent).toFloat()
-    textView.setLineSpacing(max(0f, lineHeightPx - fontHeight), 1f)
+    textView.setLineSpacing(prepared.lineSpacingAdd(nativeLineSpacing), 1f)
+    val text = prepared.displayText(nativeLineSpacing)
+    textView.setText(text, if (text is Spanned) BufferType.SPANNABLE else BufferType.NORMAL)
 }
