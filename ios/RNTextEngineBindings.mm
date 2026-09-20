@@ -1560,31 +1560,57 @@ NSInteger resolveVisibleEnd(NSString *text, NSRange range) {
   return end;
 }
 
-CGFloat resolveAttributedLineHeight(NSAttributedString *attributedText, NSRange range, CGFloat fallbackLineHeight) {
-  if (range.length == 0) return fallbackLineHeight;
+struct CoreTextLineContext {
+  NSUInteger end;
+  NSUInteger contentEnd;
+  CGFloat lineHeight;
+};
 
-  __block CGFloat lineHeight = 0;
-  [attributedText enumerateAttributesInRange:range
-                                     options:0
-                                  usingBlock:^(NSDictionary<NSAttributedStringKey, id> *attributes, NSRange, BOOL *) {
-    CGFloat candidate = 0;
+CoreTextLineContext resolveCoreTextLineContext(NSAttributedString *text, NSUInteger start) {
+  NSRange range = NSMakeRange(start, 0);
+  CoreTextLineContext context;
+  [text.string getLineStart:nil end:&context.end contentsEnd:&context.contentEnd forRange:range];
+  NSUInteger paragraphStart = 0;
+  [text.string getParagraphStart:&paragraphStart end:nil contentsEnd:nil forRange:range];
+  NSParagraphStyle *style = [text attribute:NSParagraphStyleAttributeName atIndex:paragraphStart effectiveRange:nil];
+  context.lineHeight = MAX(style.maximumLineHeight, style.minimumLineHeight);
+  return context;
+}
 
-    NSParagraphStyle *paragraphStyle = attributes[NSParagraphStyleAttributeName];
-    if ([paragraphStyle isKindOfClass:[NSParagraphStyle class]]) {
-      candidate = MAX(paragraphStyle.maximumLineHeight, paragraphStyle.minimumLineHeight);
-    }
+struct CoreTextLineMetrics {
+  CGFloat width;
+  CGFloat height;
+  CGFloat descent;
+};
 
-    if (candidate <= 0) {
-      UIFont *font = attributes[NSFontAttributeName];
-      if ([font isKindOfClass:[UIFont class]]) {
-        candidate = font.lineHeight;
-      }
-    }
+CoreTextLineMetrics resolveCoreTextLineMetrics(
+    CTLineRef line,
+    NSRange range,
+    const CoreTextLineContext &context,
+    CGFloat fallbackLineHeight,
+    bool anchorToCapHeight) {
+  CGFloat width = CTLineGetTypographicBounds(line, nullptr, nullptr, nullptr);
+  width = MAX(0, width - CTLineGetTrailingWhitespaceWidth(line));
+  if (context.lineHeight > 0 && !anchorToCapHeight) return {width, context.lineHeight, 0};
 
-    lineHeight = MAX(lineHeight, candidate);
-  }];
-
-  return lineHeight > 0 ? lineHeight : fallbackLineHeight;
+  // A separator contributes metrics only when it occupies an otherwise empty line.
+  NSUInteger metricsEnd = context.contentEnd > range.location
+      ? MIN(context.contentEnd, NSMaxRange(range)) : NSMaxRange(range);
+  CGFloat ascent = 0;
+  CGFloat descent = 0;
+  CGFloat leading = 0;
+  CFArrayRef runs = CTLineGetGlyphRuns(line);
+  for (CFIndex index = 0; index < CFArrayGetCount(runs); ++index) {
+    CTRunRef run = static_cast<CTRunRef>(CFArrayGetValueAtIndex(runs, index));
+    if (CTRunGetStringRange(run).location >= metricsEnd) continue;
+    NSDictionary *attributes = (__bridge NSDictionary *)CTRunGetAttributes(run);
+    CTFontRef font = (__bridge CTFontRef)attributes[(id)kCTFontAttributeName];
+    ascent = MAX(ascent, CTFontGetAscent(font));
+    descent = MAX(descent, CTFontGetDescent(font));
+    leading = MAX(leading, CTFontGetLeading(font));
+  }
+  CGFloat height = context.lineHeight > 0 ? context.lineHeight : ascent + descent + leading;
+  return {width, height > 0 ? height : fallbackLineHeight, descent};
 }
 
 CGFloat resolveVisibleLineWidth(
@@ -1615,17 +1641,17 @@ CGFloat resolveVisibleLineWidth(
   return MAX(0, trailingGlyphLocation.x - leadingOverhang);
 }
 
-NSRange resolveNextLineCharacterRange(CTTypesetterRef typesetter, NSInteger start, CGFloat width, NSInteger textLength) {
+NSRange resolveNextLineCharacterRange(CTTypesetterRef typesetter, NSInteger start, CGFloat width, NSUInteger lineEnd) {
   CGFloat constrainedWidth = MAX(width, 0);
   CFIndex count = CTTypesetterSuggestLineBreak(typesetter, start, constrainedWidth);
-  if (count == 0 && start < textLength) {
+  if (count == 0 && start < lineEnd) {
     count = CTTypesetterSuggestClusterBreak(typesetter, start, constrainedWidth);
   }
-  if (count == 0 && start < textLength) {
+  if (count == 0 && start < lineEnd) {
     count = 1;
   }
 
-  NSInteger clampedCount = MIN(static_cast<NSInteger>(count), textLength - start);
+  NSInteger clampedCount = MIN(static_cast<NSInteger>(count), static_cast<NSInteger>(lineEnd) - start);
   return NSMakeRange(start, MAX(0, clampedCount));
 }
 
@@ -1653,38 +1679,11 @@ std::shared_ptr<PreparedQueryOwner> resolvePreparedQueryOwner(Handle handle) {
   return queryOwner;
 }
 
-CGFloat resolveNextLineWidth(CTLineRef line) {
-  CGFloat width = static_cast<CGFloat>(CTLineGetTypographicBounds(line, nullptr, nullptr, nullptr));
-  CGFloat trailingWhitespaceWidth = CTLineGetTrailingWhitespaceWidth(line);
-  return MAX(0, width - trailingWhitespaceWidth);
-}
-
 CGFloat resolveCoreTextOpticalWidth(CTLineRef line) {
   if (line == nullptr) return 0;
   CGRect bounds = CTLineGetBoundsWithOptions(line, kCTLineBoundsUseOpticalBounds);
   CGFloat leadingOverhang = MIN(0, CGRectGetMinX(bounds));
   return MAX(0, CGRectGetMaxX(bounds) - leadingOverhang);
-}
-
-CGFloat resolveCTLineMaxCapHeight(CTLineRef line) {
-  if (line == nullptr) return 0;
-
-  CFArrayRef glyphRuns = CTLineGetGlyphRuns(line);
-  if (glyphRuns == nullptr) return 0;
-
-  CGFloat maxCapHeight = 0;
-  CFIndex runCount = CFArrayGetCount(glyphRuns);
-  for (CFIndex index = 0; index < runCount; index += 1) {
-    CTRunRef run = static_cast<CTRunRef>(CFArrayGetValueAtIndex(glyphRuns, index));
-    if (run == nullptr) continue;
-
-    NSDictionary *attributes = (__bridge NSDictionary *)CTRunGetAttributes(run);
-    CTFontRef font = (__bridge CTFontRef)attributes[(id)kCTFontAttributeName];
-    if (font == nullptr) continue;
-    maxCapHeight = MAX(maxCapHeight, CTFontGetCapHeight(font));
-  }
-
-  return maxCapHeight;
 }
 
 Object buildNextLineObject(
@@ -1721,24 +1720,26 @@ Value buildNextLineValue(
   }
 
   CTTypesetterRef typesetter = resolvePreparedTypesetter(prepared);
-  NSRange charRange = resolveNextLineCharacterRange(typesetter, start, width, textLength);
+  auto lineContext = resolveCoreTextLineContext(prepared.attributedText, start);
+  NSRange charRange = resolveNextLineCharacterRange(typesetter, start, width, lineContext.end);
   if (charRange.length == 0) return Value::null();
 
   CTLineRef ctLine = CTTypesetterCreateLine(typesetter, CFRangeMake(charRange.location, charRange.length));
   if (ctLine == nullptr) return Value::null();
 
   NSInteger visibleEnd = resolveVisibleEnd(prepared.text, charRange);
-  CGFloat lineWidth = resolveNextLineWidth(ctLine);
-  CGFloat lineBottom =
-      anchorToCapHeight
-          ? (prepared.uniformCapHeight > 0 ? prepared.uniformCapHeight : resolveCTLineMaxCapHeight(ctLine))
-          : resolveAttributedLineHeight(prepared.attributedText, charRange, prepared.fallbackLineHeight);
+  CoreTextLineMetrics metrics = resolveCoreTextLineMetrics(ctLine, charRange, lineContext, prepared.fallbackLineHeight, anchorToCapHeight);
+  CGFloat lineBottom = metrics.height;
+  if (anchorToCapHeight) {
+    CGFloat capHeight = prepared.uniformCapHeight > 0 ? prepared.uniformCapHeight : RNTextEngineMaxCapHeightForRange(prepared.attributedText, charRange);
+    lineBottom = MAX(0, MIN(capHeight, metrics.height - metrics.descent));
+  }
 
   CFRelease(ctLine);
   PreparedNextLineMeasurement measurement {
     .end = visibleEnd,
     .bottom = lineBottom,
-    .width = lineWidth,
+    .width = metrics.width,
   };
   {
     std::lock_guard<std::mutex> lock(queryOwner->mutex);
@@ -1878,67 +1879,55 @@ bool canUsePreparedCoreTextLayout(const LayoutOptions& options, bool includeLine
   return !includeLines && !shouldTruncatePreparedLayout(options) && !options.ellipsizeMode.has_value();
 }
 
+TextLayoutMeasurement measureCoreTextLayout(
+    CTTypesetterRef typesetter,
+    NSAttributedString *attributedText,
+    CGFloat fallbackLineHeight,
+    CGFloat uniformCapHeight,
+    const LayoutOptions& options) {
+  NSString *text = attributedText.string;
+  if (text.length == 0 || typesetter == nullptr) {
+    return TextLayoutMeasurement {.height = fallbackLineHeight};
+  }
+
+  TextLayoutMeasurement measurement;
+  NSInteger start = 0;
+  CGFloat cumulativeLineHeight = 0;
+  CGFloat topInset = 0;
+  CoreTextLineContext lineContext{};
+  while (start < text.length) {
+    if (start >= lineContext.end) lineContext = resolveCoreTextLineContext(attributedText, start);
+    NSRange range = resolveNextLineCharacterRange(typesetter, start, options.width, lineContext.end);
+    if (range.length == 0) break;
+    CTLineRef line = CTTypesetterCreateLine(typesetter, CFRangeMake(range.location, range.length));
+    if (line == nullptr) break;
+
+    CoreTextLineMetrics metrics = resolveCoreTextLineMetrics(line, range, lineContext, fallbackLineHeight, options.anchorToCapHeight);
+    CGFloat baseline = cumulativeLineHeight + metrics.height - metrics.descent;
+    if (options.anchorToCapHeight && measurement.lineCount == 0) {
+      CGFloat capHeight = uniformCapHeight > 0 ? uniformCapHeight : RNTextEngineMaxCapHeightForRange(attributedText, range);
+      topInset = MAX(0, baseline - capHeight);
+    }
+    cumulativeLineHeight += metrics.height;
+    measurement.width = MAX(measurement.width, metrics.width);
+    measurement.height = options.anchorToCapHeight ? MAX(0, baseline - topInset) : cumulativeLineHeight;
+    measurement.lastLineWidth = metrics.width;
+    measurement.lineCount += 1;
+    start = NSMaxRange(range);
+    CFRelease(line);
+  }
+  return measurement;
+}
+
 TextLayoutMeasurement measurePreparedTextLayoutWithCoreText(
     RNTextEnginePreparedText *prepared,
     const LayoutOptions& options) {
-  NSInteger textLength = prepared.text.length;
-  if (textLength == 0) {
-    return TextLayoutMeasurement {
-      .height = prepared.fallbackLineHeight,
-    };
-  }
-
-  CTTypesetterRef typesetter = resolvePreparedTypesetter(prepared);
-  NSInteger start = 0;
-  NSInteger lineCount = 0;
-  CGFloat constrainedWidth = MAX(options.width, 0);
-  TextLayoutMeasurement measurement;
-  CGFloat measuredWidth = 0;
-  CGFloat measuredHeight = 0;
-  CGFloat lastLineWidth = 0;
-  CGFloat cumulativeLineHeight = 0;
-  CGFloat firstLineBottom = 0;
-
-  while (start < textLength) {
-    NSRange charRange = resolveNextLineCharacterRange(typesetter, start, constrainedWidth, textLength);
-    if (charRange.length == 0) break;
-
-    CTLineRef naturalLine = CTTypesetterCreateLine(typesetter, CFRangeMake(charRange.location, charRange.length));
-    if (naturalLine == nullptr) break;
-
-    CGFloat naturalLineWidth = resolveNextLineWidth(naturalLine);
-    CGFloat lineHeight = resolveAttributedLineHeight(prepared.attributedText, charRange, prepared.fallbackLineHeight);
-    CGFloat lineWidth = naturalLineWidth;
-    CTLineRef line = naturalLine;
-    CGFloat lineBottom = 0;
-
-    if (options.anchorToCapHeight) {
-      if (lineCount == 0) {
-        firstLineBottom =
-            prepared.uniformCapHeight > 0 ? prepared.uniformCapHeight : resolveCTLineMaxCapHeight(line);
-        lineBottom = firstLineBottom;
-      } else {
-        lineBottom = firstLineBottom + cumulativeLineHeight;
-      }
-    } else {
-      lineBottom = cumulativeLineHeight + lineHeight;
-    }
-
-    measuredWidth = MAX(measuredWidth, lineWidth);
-    measuredHeight = lineBottom;
-    lastLineWidth = lineWidth;
-
-    cumulativeLineHeight += lineHeight;
-    lineCount += 1;
-    start = NSMaxRange(charRange);
-    CFRelease(naturalLine);
-  }
-
-  measurement.width = measuredWidth;
-  measurement.height = measuredHeight;
-  measurement.lineCount = lineCount;
-  measurement.lastLineWidth = lastLineWidth;
-  return measurement;
+  return measureCoreTextLayout(
+      prepared.text.length > 0 ? resolvePreparedTypesetter(prepared) : nullptr,
+      prepared.attributedText,
+      prepared.fallbackLineHeight,
+      prepared.uniformCapHeight,
+      options);
 }
 
 TextLayoutMeasurement resolvePreparedLayoutMeasurement(
@@ -1977,66 +1966,12 @@ TextLayoutMeasurement measureUniformTextLayoutWithCoreText(
     CGFloat fallbackLineHeight,
     CGFloat uniformCapHeight,
     const LayoutOptions& options) {
-  NSInteger textLength = text.length;
-  if (textLength == 0) {
-    return TextLayoutMeasurement {
-      .height = fallbackLineHeight,
-    };
-  }
-
-  CTTypesetterRef typesetter = CTTypesetterCreateWithAttributedString((CFAttributedStringRef)attributedText);
-  if (typesetter == nullptr) {
-    return TextLayoutMeasurement {
-      .height = fallbackLineHeight,
-    };
-  }
-
-  NSInteger start = 0;
-  NSInteger lineCount = 0;
-  CGFloat constrainedWidth = MAX(options.width, 0);
-  TextLayoutMeasurement measurement;
-  CGFloat measuredWidth = 0;
-  CGFloat measuredHeight = 0;
-  CGFloat lastLineWidth = 0;
-  CGFloat cumulativeLineHeight = 0;
-  CGFloat firstLineBottom = 0;
-
-  while (start < textLength) {
-    NSRange charRange = resolveNextLineCharacterRange(typesetter, start, constrainedWidth, textLength);
-    if (charRange.length == 0) break;
-
-    CTLineRef line = CTTypesetterCreateLine(typesetter, CFRangeMake(charRange.location, charRange.length));
-    if (line == nullptr) break;
-
-    CGFloat lineWidth = resolveNextLineWidth(line);
-    CGFloat lineBottom = 0;
-
-    if (options.anchorToCapHeight) {
-      if (lineCount == 0) {
-        firstLineBottom = uniformCapHeight > 0 ? uniformCapHeight : resolveCTLineMaxCapHeight(line);
-        lineBottom = firstLineBottom;
-      } else {
-        lineBottom = firstLineBottom + cumulativeLineHeight;
-      }
-    } else {
-      lineBottom = cumulativeLineHeight + fallbackLineHeight;
-    }
-
-    measuredWidth = MAX(measuredWidth, lineWidth);
-    measuredHeight = lineBottom;
-    lastLineWidth = lineWidth;
-
-    cumulativeLineHeight += fallbackLineHeight;
-    lineCount += 1;
-    start = NSMaxRange(charRange);
-    CFRelease(line);
-  }
-
-  CFRelease(typesetter);
-  measurement.width = measuredWidth;
-  measurement.height = measuredHeight;
-  measurement.lineCount = lineCount;
-  measurement.lastLineWidth = lastLineWidth;
+  CTTypesetterRef typesetter = text.length > 0
+      ? CTTypesetterCreateWithAttributedString((CFAttributedStringRef)attributedText)
+      : nullptr;
+  TextLayoutMeasurement measurement =
+      measureCoreTextLayout(typesetter, attributedText, fallbackLineHeight, uniformCapHeight, options);
+  if (typesetter != nullptr) CFRelease(typesetter);
   return measurement;
 }
 

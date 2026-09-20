@@ -1575,6 +1575,133 @@ static void AssertDisplayViewUsesBoundsGeometry(UIView *displayView, UIView *hos
   XCTAssertGreaterThan(wrappedSize.height, intrinsicSize.height);
 }
 
+- (void)testPreparedMeasurementMatchesRenderedFontFallbackHeight
+{
+  RunOnMainSync(^{
+    NSArray<NSString *> *texts = @[
+      @"Hello", @"🙂", @"Hello 🙂 world", @"日本語の短い文章", @"বাংলা ভাষা", @"देवनागरी पाठ",
+      @"Hello বাংলা ভাষা", @"Hello\nदेवनागरी पाठ"
+    ];
+    for (NSString *text in texts) {
+      NSData *encodedText = [NSJSONSerialization dataWithJSONObject:text options:NSJSONWritingFragmentsAllowed error:nil];
+      std::string jsText = [[NSString alloc] initWithData:encodedText encoding:NSUTF8StringEncoding].UTF8String;
+      for (NSNumber *fontSizeValue in @[@14, @17, @32]) {
+        for (NSNumber *lineHeightValue in @[@0, @24]) {
+          for (NSNumber *widthValue in @[@48, @160]) {
+            CGFloat fontSize = fontSizeValue.doubleValue;
+            CGFloat lineHeight = lineHeightValue.doubleValue;
+            CGFloat width = widthValue.doubleValue;
+            uint64_t handle = CreateTextViewMeasurementHandle(text, fontSize, lineHeight);
+            NSAttributedString *attributedText = preparedAttributedTextForHandle(handle);
+            std::string style = "{allowFontScaling:false,fontSize:" + std::to_string(fontSize) +
+                (lineHeight > 0 ? ",lineHeight:" + std::to_string(lineHeight) : "") + "}";
+            for (NSNumber *anchorValue in @[@NO, @YES]) {
+              BOOL anchor = anchorValue.boolValue;
+              CGFloat renderedHeight = anchor
+                  ? ExpectedCapHeightMetrics(attributedText, CGSizeMake(width, CGFLOAT_MAX), 0).height
+                  : ExpectedLayoutMetricsForAttributedText(attributedText, CGSizeMake(width, CGFLOAT_MAX), 0, nil).height;
+              CGSize measured = measurePreparedTextLayoutForHandle(handle, width, 0, nil, anchor);
+              NSString *context = [NSString stringWithFormat:@"Text %@, font %.1f, line height %.1f, width %.1f, anchored %d",
+                  text, fontSize, lineHeight, width, anchor];
+              XCTAssertEqualWithAccuracy(measured.height, renderedHeight, 1.0 / UIScreen.mainScreen.scale, @"%@", context);
+              std::string options = "{width:" + std::to_string(width) + ",anchorToCapHeight:" + (anchor ? "true" : "false") + "}";
+              NSDictionary *oneShot = [self evaluateJSONExpression:"__RNTextEngineMeasure(" + jsText + "," + style + "," + options + ")"];
+              NSDictionary *prepared = [self evaluateJSONExpression:"__RNTextEngineLayout(" + std::to_string(handle) + "," + options + ")"];
+              XCTAssertEqualWithAccuracy([oneShot[@"height"] doubleValue], renderedHeight, 1.0 / UIScreen.mainScreen.scale, @"%@", context);
+              XCTAssertEqualWithAccuracy([prepared[@"height"] doubleValue], renderedHeight, 1.0 / UIScreen.mainScreen.scale, @"%@", context);
+              NSDictionary *lines = [self evaluateJSONExpression:"__RNTextEngineLayoutLines(" + std::to_string(handle) + "," + options + ")"];
+              NSDictionary *firstLine = [lines[@"lines"] firstObject];
+              NSDictionary *nextLine = [self evaluateJSONExpression:"__RNTextEngineLayoutNextLine(" + std::to_string(handle) + ",0," + std::to_string(width) + "," + (anchor ? "true" : "false") + ")"];
+              XCTAssertEqualWithAccuracy([nextLine[@"bottom"] doubleValue], [firstLine[@"bottom"] doubleValue], 1.0 / UIScreen.mainScreen.scale, @"%@", context);
+            }
+            releasePreparedTextHandle(handle);
+          }
+        }
+      }
+    }
+  });
+}
+
+- (void)testPreparedRunMeasurementMatchesRenderedFallbackBaselines
+{
+  RunOnMainSync(^{
+    for (NSString *text in @[@"বাংলা ভাষা", @"देवनागरी पाठ", @"Hello বাংলা ভাষা"]) {
+      for (NSNumber *mask in @[@1, @4]) {
+        uint64_t handle = CreateTextViewMeasurementHandleWithRunFontSizes(
+            text, 17, 0, @[@0], @[@(text.length)], @[mask], @[@32]);
+        NSAttributedString *attributedText = preparedAttributedTextForHandle(handle);
+        for (NSNumber *widthValue in @[@48, @160]) {
+          CGFloat width = widthValue.doubleValue;
+          for (NSNumber *anchorValue in @[@NO, @YES]) {
+            BOOL anchored = anchorValue.boolValue;
+            CGFloat expected = anchored
+                ? ExpectedCapHeightMetrics(attributedText, CGSizeMake(width, CGFLOAT_MAX), 0).height
+                : ExpectedLayoutMetricsForAttributedText(attributedText, CGSizeMake(width, CGFLOAT_MAX), 0, nil).height;
+            CGSize measured = measurePreparedTextLayoutForHandle(handle, width, 0, nil, anchored);
+            XCTAssertEqualWithAccuracy(measured.height, expected, 1.0 / UIScreen.mainScreen.scale,
+                @"Text %@, run mask %@, width %@, anchored %@", text, mask, widthValue, anchorValue);
+          }
+        }
+        releasePreparedTextHandle(handle);
+      }
+    }
+  });
+}
+
+- (void)testMixedFontRunsMatchRenderedBaselines
+{
+  RunOnMainSync(^{
+    XCTAssertNotNil([UIFont fontWithName:@"TestTiemposText-Regular" size:17]);
+    XCTAssertNotNil([UIFont fontWithName:@"TestEpiceneDisplay-Regular" size:17]);
+    for (NSString *text in @[@"A A\nA A", @"A A\r\nA A", @"A A\u2028A A", @"A A\u2029A A", @"A A\n\nA A", @"A A\n \nA A"]) {
+      NSData *encodedText = [NSJSONSerialization dataWithJSONObject:text options:NSJSONWritingFragmentsAllowed error:nil];
+      std::string jsText = [[NSString alloc] initWithData:encodedText encoding:NSUTF8StringEncoding].UTF8String;
+      for (const std::string &baseHeight : {"", ",lineHeight:24"}) {
+        for (const std::string &runHeight : {"", ",lineHeight:40"}) {
+          for (int runStart : {0, 2}) {
+            std::string source = "__RNTextEnginePrepare(" + jsText +
+                ",{fontFamily:\"TestTiemposText-Regular\",fontSize:17,allowFontScaling:false" + baseHeight + "},[" +
+                "{start:" + std::to_string(runStart) + ",end:" + std::to_string(runStart + 1) +
+                ",style:{fontFamily:\"TestEpiceneDisplay-Regular\"" + runHeight + "}}," +
+                "{start:" + std::to_string(text.length - 3) + ",end:" + std::to_string(text.length - 2) +
+                ",style:{fontFamily:\"TestEpiceneDisplay-Regular\"}}])";
+            uint64_t handle = static_cast<uint64_t>([self evaluateNumber:source]);
+            NSAttributedString *attributedText = preparedAttributedTextForHandle(handle);
+            for (NSNumber *width in @[@12, @160]) {
+              for (NSNumber *anchor in @[@NO, @YES]) {
+                CGFloat expected = anchor.boolValue
+                    ? ExpectedCapHeightMetrics(attributedText, CGSizeMake(width.doubleValue, CGFLOAT_MAX), 0).height
+                    : ExpectedLayoutMetricsForAttributedText(attributedText, CGSizeMake(width.doubleValue, CGFLOAT_MAX), 0, nil).height;
+                CGSize measured = measurePreparedTextLayoutForHandle(handle, width.doubleValue, 0, nil, anchor.boolValue);
+                XCTAssertEqualWithAccuracy(measured.height, expected, 1.0 / UIScreen.mainScreen.scale,
+                    @"Text %@, width %@, anchored %@, base height %s, run height %s, run start %d",
+                    text, width, anchor, baseHeight.c_str(), runHeight.c_str(), runStart);
+                std::string jsHandle = std::to_string(handle);
+                std::string options = "{width:" + std::to_string(width.doubleValue) + ",anchorToCapHeight:" + (anchor.boolValue ? "true" : "false") + "}";
+                NSDictionary *layout = [self evaluateJSONExpression:"__RNTextEngineLayout(" + jsHandle + "," + options + ")"];
+                NSDictionary *layoutLines = [self evaluateJSONExpression:"__RNTextEngineLayoutLines(" + jsHandle + "," + options + ")"];
+                NSArray<NSDictionary *> *lines = layoutLines[@"lines"];
+                XCTAssertEqual([layout[@"lineCount"] unsignedIntegerValue], lines.count);
+                for (NSDictionary *line in lines) {
+                  NSDictionary *next = [self evaluateJSONExpression:"__RNTextEngineLayoutNextLine(" + jsHandle + "," +
+                      std::to_string([line[@"start"] integerValue]) + "," + std::to_string(width.doubleValue) + "," +
+                      (anchor.boolValue ? "true" : "false") + ")"];
+                  XCTAssertEqualObjects(next[@"start"], line[@"start"]);
+                  XCTAssertEqualObjects(next[@"end"], line[@"end"]);
+                  if (line == lines.firstObject) {
+                    XCTAssertEqualWithAccuracy([next[@"bottom"] doubleValue], [line[@"bottom"] doubleValue], 1.0 / UIScreen.mainScreen.scale);
+                  }
+                }
+              }
+            }
+            releasePreparedTextHandle(handle);
+          }
+        }
+      }
+    }
+  });
+}
+
 - (void)testTextViewPreparedMeasurementHandleRespectsNumberOfLines
 {
   NSString *text = @"One two three four five six seven eight nine ten.";
