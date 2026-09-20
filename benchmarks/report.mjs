@@ -10,8 +10,19 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const scenarios = new Map([
   ['fabric_chat_shadow_tree_layout', { label: 'Chat list layout', operations: 512 }],
   ['cold_uniform_chat_layout', { label: 'Plain text creation and layout', operations: 512 }],
-  ['cached_uniform_layout_queries', { label: 'Cached layout', operations: 98304 }],
-  ['cached_truncated_layout_queries', { label: 'Cached layout, two-line limit', operations: 98304 }],
+  [
+    'cached_uniform_layout_queries',
+    { label: 'Cached layout', operations: 98304, androidLabel: 'Repeated manager queries', androidOperations: 6144 },
+  ],
+  [
+    'cached_truncated_layout_queries',
+    {
+      label: 'Cached layout, two-line limit',
+      operations: 98304,
+      androidLabel: 'Repeated manager queries, two-line limit',
+      androidOperations: 6144,
+    },
+  ],
   ['cold_rich_inline_layout', { label: 'Styled text creation and layout', operations: 384 }],
 ]);
 const implementations = ['RN Text', 'TextView'];
@@ -53,7 +64,9 @@ export function parseRun(log, run, platform = 'ios') {
     assert.match(meta.sdk, /^(iphoneos|iphonesimulator)\d+(\.\d+)*$/, 'Missing iOS build SDK');
   } else {
     assert.equal(meta.platform, 'android');
-    assert.equal(meta.rnLayoutCacheEnabled, true);
+    assert.equal(typeof meta.enablePreparedTextLayout, 'boolean');
+    assert.equal(meta.disableTextLayoutManagerCacheAndroid, false);
+    assert.equal(meta.preparedTextCacheSize, 200);
     assert(Number.isInteger(meta.apiLevel) && meta.apiLevel > 0);
     assert(Number.isFinite(meta.density) && meta.density > 0);
     assert(typeof meta.abi === 'string' && meta.abi.length > 0);
@@ -69,7 +82,9 @@ export function parseRun(log, run, platform = 'ios') {
     const key = `${record.scenario}/${record.implementation}`;
     assert(!seen.has(key), `Duplicate result: ${key}`);
     seen.add(key);
-    assert.equal(record.operations, scenarios.get(record.scenario).operations, `Incorrect operation count: ${key}`);
+    const scenario = scenarios.get(record.scenario);
+    const operations = platform === 'android' ? (scenario.androidOperations ?? scenario.operations) : scenario.operations;
+    assert.equal(record.operations, operations, `Incorrect operation count: ${key}`);
     assert(Array.isArray(record.samplesMs) && record.samplesMs.length === 9, `Incomplete samples: ${key}`);
     assert(
       record.samplesMs.every(value => Number.isFinite(value) && value > 0),
@@ -86,10 +101,10 @@ const median = values => {
 };
 
 export function renderComparison(metadata, logs) {
-  assert.equal(logs.length, 3, 'Three fresh processes are required');
   const platform = metadata.platform ?? 'ios';
-  const runs = logs.map((log, index) => parseRun(log, index + 1, platform));
-  assert.equal(new Set(runs.map(run => run.meta.pid)).size, 3, 'Each run must use a fresh process');
+  assert.equal(logs.length, platform === 'android' ? 6 : 3, 'Three fresh processes per configuration are required');
+  const runs = logs.map((log, index) => parseRun(log, (index % 3) + 1, platform));
+  assert.equal(new Set(runs.map(run => run.meta.pid)).size, runs.length, 'Each run must use a fresh process');
   assert.equal(new Set(runs.map(run => `${run.meta.deviceName}/${run.meta.osVersion}`)).size, 1, 'Runs used different devices');
   if (platform === 'android') {
     assert.equal(
@@ -97,6 +112,13 @@ export function renderComparison(metadata, logs) {
       1,
       'Android configuration changed'
     );
+    for (const prepared of [false, true]) {
+      assert.deepEqual(
+        runs.filter(run => run.meta.enablePreparedTextLayout === prepared).map(run => run.meta.run),
+        [1, 2, 3],
+        'Each Android configuration requires runs 1, 2, and 3'
+      );
+    }
     assert.equal(metadata.compilation, 'speed');
     assert.match(metadata.apkSha256, /^[a-f0-9]{64}$/);
   } else {
@@ -115,23 +137,29 @@ export function renderComparison(metadata, logs) {
       ? `${date}. ${runs[0].meta.deviceName}, Android ${runs[0].meta.osVersion} (API ${runs[0].meta.apiLevel}). React Native ${metadata.reactNativeVersion}, Text Engine ${metadata.textEngineVersion}, Release build.`
       : `${date}. ${runs[0].meta.deviceName}${runs[0].meta.sdk.startsWith('iphonesimulator') ? ' simulator' : ''}, iOS ${runs[0].meta.osVersion}. React Native ${metadata.reactNativeVersion}, Text Engine ${metadata.textEngineVersion}, Release build.`,
     '',
-    '| Test | Operations/sample | RN Text (ms) | TextView (ms) | TextView / RN |',
-    '| --- | ---: | ---: | ---: | ---: |',
   ];
-  for (const [scenario, { label, operations }] of scenarios) {
-    const stats = implementations.map(implementation => {
-      const values = runs.map(run =>
-        median(run.records.find(record => record.scenario === scenario && record.implementation === implementation).samplesMs)
+  const configurations = platform === 'android' ? [false, true] : [false];
+  for (const prepared of configurations) {
+    const group = platform === 'android' ? runs.filter(run => run.meta.enablePreparedTextLayout === prepared) : runs;
+    if (platform === 'android') lines.push(`### RN Text${prepared ? ' with prepared layout' : ' with default layout'}`, '');
+    lines.push('| Test | Operations/sample | RN Text (ms) | TextView (ms) | TextView / RN |', '| --- | ---: | ---: | ---: | ---: |');
+    for (const [scenario, definition] of scenarios) {
+      const label = platform === 'android' ? (definition.androidLabel ?? definition.label) : definition.label;
+      const operations = platform === 'android' ? (definition.androidOperations ?? definition.operations) : definition.operations;
+      const stats = implementations.map(implementation => {
+        const values = group.map(run =>
+          median(run.records.find(record => record.scenario === scenario && record.implementation === implementation).samplesMs)
+        );
+        const value = median(values);
+        return { median: value, mad: median(values.map(sample => Math.abs(sample - value))) };
+      });
+      lines.push(
+        `| ${label} | ${operations.toLocaleString('en-US')} | ${stats[0].median.toFixed(3)} ± ${stats[0].mad.toFixed(3)} | ${stats[1].median.toFixed(3)} ± ${stats[1].mad.toFixed(3)} | ${(stats[1].median / stats[0].median).toFixed(3)}× |`
       );
-      const value = median(values);
-      return { median: value, mad: median(values.map(sample => Math.abs(sample - value))) };
-    });
-    lines.push(
-      `| ${label} | ${operations.toLocaleString('en-US')} | ${stats[0].median.toFixed(3)} ± ${stats[0].mad.toFixed(3)} | ${stats[1].median.toFixed(3)} ± ${stats[1].mad.toFixed(3)} | ${(stats[1].median / stats[0].median).toFixed(3)}× |`
-    );
+    }
+    lines.push('');
   }
   lines.push(
-    '',
     '<details>',
     '<summary>Run details and samples</summary>',
     '',
@@ -140,6 +168,7 @@ export function renderComparison(metadata, logs) {
     ...(platform === 'android'
       ? [
           `- Device: ${runs[0].meta.abi}, density ${runs[0].meta.density}; ART compilation: ${metadata.compilation}`,
+          '- RN defaults: measurement cache 1,024 entries; prepared layout cache 200 entries. Each repeated-query workload visits 768 text/width combinations.',
           `- Toolchain: ${metadata.java}; Gradle ${metadata.gradle}; Node ${metadata.node}`,
           `- APK SHA256: \`${metadata.apkSha256}\``,
         ]
@@ -150,14 +179,18 @@ export function renderComparison(metadata, logs) {
     '',
     'Each row lists nine samples from one app process, in measurement order. All samples are included.',
     '',
-    '| Test | Implementation | Run | Samples (ms) |',
-    '| --- | --- | ---: | --- |'
+    `| Test | Implementation | ${platform === 'android' ? 'RN configuration | ' : ''}Run | Samples (ms) |`,
+    `| --- | --- | ${platform === 'android' ? '--- | ' : ''}---: | --- |`
   );
-  for (const [scenario, { label }] of scenarios) {
+  for (const [scenario, definition] of scenarios) {
+    const label = platform === 'android' ? (definition.androidLabel ?? definition.label) : definition.label;
     for (const implementation of implementations) {
-      runs.forEach((run, index) => {
+      runs.forEach(run => {
         const record = run.records.find(item => item.scenario === scenario && item.implementation === implementation);
-        lines.push(`| ${label} | ${implementation} | ${index + 1} | ${record.samplesMs.map(value => value.toFixed(6)).join(', ')} |`);
+        const configuration = platform === 'android' ? `${run.meta.enablePreparedTextLayout ? 'Prepared' : 'Default'} | ` : '';
+        lines.push(
+          `| ${label} | ${implementation} | ${configuration}${run.meta.run} | ${record.samplesMs.map(value => value.toFixed(6)).join(', ')} |`
+        );
       });
     }
   }
@@ -308,7 +341,11 @@ function main() {
         'Benchmark APK changed during the run'
       );
     }
-    const logs = [1, 2, 3].map(run => readFileSync(join(runDirectory, `run-${run}.log`), 'utf8'));
+    const names =
+      platform === 'android'
+        ? ['default', 'prepared'].flatMap(mode => [1, 2, 3].map(run => `run-${run}-${mode}.log`))
+        : [1, 2, 3].map(run => `run-${run}.log`);
+    const logs = names.map(name => readFileSync(join(runDirectory, name), 'utf8'));
     const section = renderComparison(metadata, logs);
     updateResults(join(root, 'benchmarks/rn-text/results.md'), section, platform);
     console.log('Updated benchmarks/rn-text/results.md.');

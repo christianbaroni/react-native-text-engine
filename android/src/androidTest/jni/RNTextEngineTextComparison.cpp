@@ -397,8 +397,13 @@ Size MeasureTextView(uint64_t handle, double width, int maxLines) {
 
 Size MeasureRN(const TextLayoutManager &manager, const AttributedStringBox &input,
     double width, int maxLines, float density) {
-  auto measurement = manager.measure(input, BuildParagraphAttributes(maxLines),
-      BuildTextLayoutContext(density), BuildLayoutConstraints(width));
+  auto attributes = BuildParagraphAttributes(maxLines);
+  auto context = BuildTextLayoutContext(density);
+  auto constraints = BuildLayoutConstraints(width);
+  auto measurement = ReactNativeFeatureFlags::enablePreparedTextLayout()
+      ? manager.measurePreparedLayout(manager.prepareLayout(input.getValue(), attributes, context, constraints),
+            context, constraints)
+      : manager.measure(input, attributes, context, constraints);
   sink = sink + measurement.size.width + measurement.size.height;
   return measurement.size;
 }
@@ -407,46 +412,82 @@ void CheckSizes(Size rn, Size textView, double width, float density, const std::
   double tolerance = 1.0 / density;
   for (auto size : {rn, textView}) {
     Require(std::isfinite(size.width) && std::isfinite(size.height) && size.width > 0 &&
-        size.height > 0 && size.width <= width + tolerance, "Invalid geometry: " + name);
+        size.height > 0 && size.width <= width + tolerance, "Invalid geometry: " + name +
+            "; constraint=" + std::to_string(width) + "; RN=" + std::to_string(rn.width) +
+            "x" + std::to_string(rn.height) + "; TextView=" + std::to_string(textView.width) +
+            "x" + std::to_string(textView.height));
   }
   Require(std::abs(rn.height - textView.height) <= tolerance,
       "Height mismatch: " + name + "; RN=" + std::to_string(rn.height) + "; TextView=" + std::to_string(textView.height));
 }
 
+class JAndroidLayout : public jni::JavaClass<JAndroidLayout> {
+ public:
+  static constexpr auto kJavaDescriptor = "Landroid/text/Layout;";
+};
+
 void CheckLines(const TextLayoutManager &manager, const AttributedStringBox &input,
     uint64_t handle, const std::string &text, double width, float density) {
-  auto lines = manager.measureLines(input, BuildParagraphAttributes(0),
-      {.width = static_cast<Float>(width), .height = 10000});
   static auto bindings = jni::findClassStatic("com/rntextengine/RNTextEngineBindings");
   static auto layoutLines = bindings->getStaticMethod<jni::JArrayDouble::javaobject(
       jlong, jdouble, jint, jstring, jboolean)>("layoutLines");
   auto packed = layoutLines(bindings, static_cast<jlong>(handle), width, 0, nullptr, false);
   std::vector<double> values(packed->size());
   packed->getRegion(0, values.size(), values.data());
-  Require(values.size() >= 4 && values[2] == lines.size() && values.size() == 4 + lines.size() * 4,
-      "Line count mismatch at width " + std::to_string(width));
+  auto checkCount = [&](size_t count) {
+    Require(values.size() >= 4 && values[2] == count && values.size() == 4 + count * 4,
+        "Line count mismatch at width " + std::to_string(width));
+    if (width == 10000) Require(count == 1, "Unconstrained text must fit on one line: " + text);
+  };
   auto trim = [](std::string value) {
     while (!value.empty() && value.back() == ' ') value.pop_back();
     return value;
   };
-  for (size_t i = 0; i < lines.size(); ++i) {
-    int start = static_cast<int>(values[4 + i * 4]);
-    int end = static_cast<int>(values[5 + i * 4]);
+  auto checkLine = [&](size_t index, const std::string &rnText, double rnWidth) {
+    int start = static_cast<int>(values[4 + index * 4]);
+    int end = static_cast<int>(values[5 + index * 4]);
     Require(start >= 0 && end >= start && end <= text.size(), "Invalid line range");
-    Require(trim(lines[i].text) == trim(text.substr(start, end - start)),
+    Require(trim(rnText) == trim(text.substr(start, end - start)),
         "Line break mismatch at width " + std::to_string(width) + ": " + text);
-  }
-  if (width == 10000) {
-    Require(lines.size() == 1, "Unconstrained text must fit on one line: " + text);
-    Require(std::abs(lines[0].frame.size.width - values[6]) <= 1.0 / density,
-        "Single-line glyph width mismatch: " + text + "; RN=" +
-            std::to_string(lines[0].frame.size.width) +
-            "; TextView=" + std::to_string(values[6]) + "; density=" + std::to_string(density));
+    if (width == 10000) {
+      Require(std::abs(rnWidth - values[6]) <= 1.0 / density,
+          "Single-line glyph width mismatch: " + text + "; RN=" + std::to_string(rnWidth) +
+              "; TextView=" + std::to_string(values[6]) + "; density=" + std::to_string(density));
+    }
+  };
+  size_t lineCount;
+  if (ReactNativeFeatureFlags::enablePreparedTextLayout()) {
+    static auto getLayout = JPreparedLayout::javaClassStatic()->getMethod<JAndroidLayout::javaobject()>("getLayout");
+    static auto layoutClass = JAndroidLayout::javaClassStatic();
+    static auto getLineCount = layoutClass->getMethod<jint()>("getLineCount");
+    static auto getLineStart = layoutClass->getMethod<jint(jint)>("getLineStart");
+    static auto getLineEnd = layoutClass->getMethod<jint(jint)>("getLineEnd");
+    static auto getLineWidth = layoutClass->getMethod<jfloat(jint)>("getLineWidth");
+    auto prepared = manager.prepareLayout(input.getValue(), BuildParagraphAttributes(0),
+        BuildTextLayoutContext(density), BuildLayoutConstraints(width));
+    auto layout = getLayout(prepared.get());
+    const int count = getLineCount(layout.get());
+    lineCount = count;
+    checkCount(lineCount);
+    for (int index = 0; index < count; ++index) {
+      const int start = getLineStart(layout.get(), index);
+      const int end = getLineEnd(layout.get(), index);
+      Require(start >= 0 && end >= start && end <= text.size(), "Invalid prepared line range");
+      checkLine(index, text.substr(start, end - start), getLineWidth(layout.get(), index) / density);
+    }
+  } else {
+    auto lines = manager.measureLines(input, BuildParagraphAttributes(0),
+        {.width = static_cast<Float>(width), .height = 10000});
+    lineCount = lines.size();
+    checkCount(lineCount);
+    for (size_t index = 0; index < lines.size(); ++index) {
+      checkLine(index, lines[index].text, lines[index].frame.size.width);
+    }
   }
   auto truncated = layoutLines(bindings, static_cast<jlong>(handle), width, 2, jni::make_jstring("tail").get(), false);
   double header[4];
   truncated->getRegion(0, 4, header);
-  Require(header[2] == std::min<size_t>(2, lines.size()), "Invalid two-line limit");
+  Require(header[2] == std::min<size_t>(2, lineCount), "Invalid two-line limit");
 }
 
 struct Samples {
@@ -480,9 +521,10 @@ Samples MeasurePair(const std::function<void()> &rn, const std::function<void()>
   return samples;
 }
 
-std::string RunComparison(const jni::global_ref<jobject> &fabricManager, float density, int run) {
+std::string RunComparison(const jni::global_ref<jobject> &fabricManager, float density, int run, bool prepared) {
+  Require(ReactNativeFeatureFlags::enablePreparedTextLayout() == prepared, "RN prepared mode does not match the request");
   Require(!ReactNativeFeatureFlags::disableTextLayoutManagerCacheAndroid() &&
-      !ReactNativeFeatureFlags::enablePreparedTextLayout(), "RN layout cache configuration changed");
+      ReactNativeFeatureFlags::preparedTextCacheSize() == 200, "RN layout cache defaults changed");
   const auto chatTexts = ChatTexts();
   const std::string richText = "Prepared text performance should cover inline emphasis, quoted insertions, editorial spans, tabular 1234567890, and a final weighted phrase while preserving one coherent source string.";
   std::vector<std::string> richTexts;
@@ -528,7 +570,7 @@ std::string RunComparison(const jni::global_ref<jobject> &fabricManager, float d
       for (int maxLines : {0, 2}) {
         for (double width : widths) {
           CheckSizes(MeasureRN(manager, input, width, maxLines, density),
-              MeasureTextView(handle, width, maxLines), width, density, text);
+              MeasureTextView(handle, width, maxLines), width, density, "Direct maxLines=" + std::to_string(maxLines) + ": " + text);
         }
       }
       rntextengine::releasePreparedTextMeasurementHandle(handle);
@@ -549,9 +591,11 @@ std::string RunComparison(const jni::global_ref<jobject> &fabricManager, float d
     Require(rnRoot->layoutIfNeeded() && tvRoot->layoutIfNeeded(), "Fabric tree did not lay out");
     Require(rnRoot->getChildren().size() == 128 && tvRoot->getChildren().size() == 128, "Incomplete Fabric tree");
     for (size_t i = 0; i < chatTexts.size(); ++i) {
-      auto rn = static_cast<const ParagraphShadowNode &>(*rnRoot->getChildren()[i]).getLayoutMetrics().frame;
+      const auto &rnNode = static_cast<const ParagraphShadowNode &>(*rnRoot->getChildren()[i]);
+      Require(rnNode.getStateData().attributedString.getString() == chatTexts[i], "Fabric paragraph lost its input text");
+      auto rn = rnNode.getLayoutMetrics().frame;
       auto tv = static_cast<const RNTextEngineTextViewShadowNode &>(*tvRoot->getChildren()[i]).getLayoutMetrics().frame;
-      CheckSizes(rn.size, tv.size, 256, density, chatTexts[i]);
+      CheckSizes(rn.size, tv.size, 256, density, "Fabric child " + std::to_string(i) + ": " + chatTexts[i]);
       Require(std::abs(rn.size.width - tv.size.width) <= 1.0 / density &&
           std::abs(rn.origin.x - tv.origin.x) <= 1.0 / density &&
           std::abs(rn.origin.y - tv.origin.y) <= 1.0 / density, "Fabric frame mismatch: " + std::to_string(i));
@@ -607,12 +651,12 @@ std::string RunComparison(const jni::global_ref<jobject> &fabricManager, float d
   }
   for (int maxLines : {0, 2}) {
     TextLayoutManager manager(context);
-    record(maxLines == 0 ? "cached_uniform_layout_queries" : "cached_truncated_layout_queries", 98304,
+    record(maxLines == 0 ? "cached_uniform_layout_queries" : "cached_truncated_layout_queries", 6144,
         MeasurePair([&] {
           for (double width : widths) for (const auto &input : inputs) MeasureRN(manager, input, width, maxLines, density);
         }, [&] {
           for (double width : widths) for (auto handle : handles) MeasureTextView(handle, width, maxLines);
-        }, 128, run));
+        }, 8, run));
   }
   for (auto handle : handles) rntextengine::releasePreparedTextMeasurementHandle(handle);
 
@@ -638,9 +682,9 @@ std::string RunComparison(const jni::global_ref<jobject> &fabricManager, float d
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_rntextengine_RNTextEngineTextComparisonBenchmark_runNativeComparison(
-    JNIEnv *env, jobject, jobject manager, jfloat density, jint run) {
+    JNIEnv *env, jobject, jobject manager, jfloat density, jint run, jboolean prepared) {
   try {
-    return env->NewStringUTF(RunComparison(jni::make_global(manager), density, run).c_str());
+    return env->NewStringUTF(RunComparison(jni::make_global(manager), density, run, prepared).c_str());
   } catch (const std::exception &error) {
     env->ThrowNew(env->FindClass("java/lang/RuntimeException"), error.what());
     return nullptr;

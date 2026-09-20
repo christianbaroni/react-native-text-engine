@@ -10,7 +10,10 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.facebook.react.fabric.FabricUIManager
 import com.facebook.react.internal.ChoreographerProvider
+import com.facebook.react.internal.featureflags.ReactNativeFeatureFlags
+import com.facebook.react.internal.featureflags.ReactNativeFeatureFlagsDefaults
 import com.facebook.react.modules.core.ReactChoreographer
+import com.facebook.react.shell.MainReactPackage
 import com.facebook.react.soloader.OpenSourceMergedSoMapping
 import com.facebook.react.uimanager.DisplayMetricsHolder
 import com.facebook.react.uimanager.ViewManagerRegistry
@@ -25,7 +28,7 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class RNTextEngineTextComparisonBenchmark {
-    private external fun runNativeComparison(manager: FabricUIManager, density: Float, run: Int): String
+    private external fun runNativeComparison(manager: FabricUIManager, density: Float, run: Int, prepared: Boolean): String
 
     @Test
     fun compareTextLayout() {
@@ -33,11 +36,15 @@ class RNTextEngineTextComparisonBenchmark {
         val arguments = InstrumentationRegistry.getArguments()
         assumeTrue("Run with yarn perf:compare:android", arguments.getString("rnteComparison") == "true")
         val run = requireNotNull(arguments.getString("rnteRun")).toInt()
+        val prepared = requireNotNull(arguments.getString("rntePreparedTextLayout")).toBooleanStrict()
         require(run in 1..3)
         val application = ApplicationProvider.getApplicationContext<Application>()
         SoLoader.init(application, OpenSourceMergedSoMapping)
-        DisplayMetricsHolder.initDisplayMetricsIfNotInitialized(application)
         System.loadLibrary("rnte-text-comparison")
+        ReactNativeFeatureFlags.override(object : ReactNativeFeatureFlagsDefaults() {
+            override fun enablePreparedTextLayout() = prepared
+        })
+        DisplayMetricsHolder.initDisplayMetricsIfNotInitialized(application)
         val context = BenchmarkReactApplicationContext(application)
         RNTextEngineBindings.initialize(context)
         RNTextEngineBindings.cleanup()
@@ -50,12 +57,13 @@ class RNTextEngineTextComparisonBenchmark {
                     override fun removeFrameCallback(callback: Choreographer.FrameCallback) = choreographer.removeFrameCallback(callback)
                 }
             })
-            manager = FabricUIManager(context, ViewManagerRegistry(listOf(ReactTextViewManager()))) {}
+            val textManager = requireNotNull(MainReactPackage().createViewManager(context, ReactTextViewManager.REACT_CLASS))
+            manager = FabricUIManager(context, ViewManagerRegistry(listOf(textManager))) {}
         }
         try {
             val density = application.resources.displayMetrics.density
             // Native validation precedes all timing; an exception prevents result emission.
-            val results = JSONArray(runNativeComparison(manager, density, run))
+            val results = JSONArray(runNativeComparison(manager, density, run, prepared))
             assertTrue(results.length() == 10)
             val meta = JSONObject()
                 .put("platform", "android")
@@ -71,7 +79,9 @@ class RNTextEngineTextComparisonBenchmark {
                 .put("geometryValidated", true)
                 .put("warmups", 10)
                 .put("samples", 9)
-                .put("rnLayoutCacheEnabled", true)
+                .put("enablePreparedTextLayout", ReactNativeFeatureFlags.enablePreparedTextLayout())
+                .put("disableTextLayoutManagerCacheAndroid", ReactNativeFeatureFlags.disableTextLayoutManagerCacheAndroid())
+                .put("preparedTextCacheSize", ReactNativeFeatureFlags.preparedTextCacheSize())
             emit("RNTEXT_BENCHMARK_META", meta)
             for (index in 0 until results.length()) {
                 emit("RNTEXT_BENCHMARK_RESULT", results.getJSONObject(index))
