@@ -757,6 +757,40 @@ static std::shared_ptr<RootShadowNode> BuildTextViewTree(
 
 #endif
 
+- (void)testTextViewMeasurementCacheDistinguishesAdjacentWidths
+{
+#ifdef RCT_NEW_ARCH_ENABLED
+  auto registry = BuildBenchmarkComponentDescriptorRegistry();
+  const auto context = BuildFabricLayoutContext();
+  const auto makeNode = [&] {
+    return BuildBenchmarkShadowNode(registry, Element<RNTextEngineTextViewShadowNode>()
+        .props(BuildTextViewProps("Word word word word word word word word", {.fontSize = 17, .lineHeight = 24}, 160)));
+  };
+  const auto heightAt = [&](Float width) {
+    return makeNode()->measureContent(context, BuildLayoutConstraints(width)).height;
+  };
+  Float low = 20;
+  Float high = 160;
+  const Float lowerHeight = heightAt(low);
+  XCTAssertNotEqual(lowerHeight, heightAt(high));
+  while (std::nextafter(low, high) < high) {
+    const Float midpoint = low + (high - low) / 2;
+    if (heightAt(midpoint) == lowerHeight) low = midpoint;
+    else high = midpoint;
+  }
+  XCTAssertLessThan(high - low, 0.005);
+  XCTAssertNotEqual(heightAt(low), heightAt(high));
+  for (bool reverse : {false, true}) {
+    auto retained = makeNode();
+    for (Float width : {reverse ? high : low, reverse ? low : high}) {
+      const auto expected = makeNode()->measureContent(context, BuildLayoutConstraints(width));
+      const auto actual = retained->measureContent(context, BuildLayoutConstraints(width));
+      XCTAssertEqual(actual.height, expected.height, @"width=%.9g reverse=%d", width, reverse);
+    }
+  }
+#endif
+}
+
 - (void)testConcurrentTextViewMeasurements
 {
 #ifdef RCT_NEW_ARCH_ENABLED
