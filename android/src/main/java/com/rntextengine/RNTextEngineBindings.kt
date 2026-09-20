@@ -977,7 +977,8 @@ internal object RNTextEngineBindings {
             )
         val prepared =
             buildPreparedText(text, baseStyle, runs) { runStyle -> resolveRunTextStyle(baseStyle, baseConfig, runStyle) }
-        return packLayout(buildLayout(prepared, width, maxLines, ellipsizeMode, anchorToCapHeight, includeLines = false))
+        val ellipsize = resolveEllipsize(ellipsizeMode, maxLines)
+        return packLayout(buildLayout(prepared, width, maxLines, ellipsize, anchorToCapHeight, includeLines = false))
     }
 
     @JvmStatic
@@ -1099,6 +1100,7 @@ internal object RNTextEngineBindings {
                 runLineHeights = runLineHeights,
                 runTabularNumbers = runTabularNumbers,
             )
+        val ellipsize = resolveEllipsize(ellipsizeMode, maxLines)
         val packed = DoubleArray(texts.size * PACKED_LAYOUT_SIZE)
         texts.forEachIndexed { index, text ->
             packLayoutInto(
@@ -1108,7 +1110,7 @@ internal object RNTextEngineBindings {
                     buildPreparedText(text, baseStyle, runsByText[index]) { runStyle -> resolveRunTextStyle(baseStyle, baseConfig, runStyle) },
                     width,
                     maxLines,
-                    ellipsizeMode,
+                    ellipsize,
                     anchorToCapHeight,
                     includeLines = false,
                 ),
@@ -1118,19 +1120,31 @@ internal object RNTextEngineBindings {
     }
 
     @JvmStatic
+    fun measureTextView(handle: Long, width: Double, maxLines: Int, ellipsizeMode: Int, anchorToCapHeight: Boolean): Long {
+        val ellipsize = resolveEllipsize(ellipsizeMode, maxLines)
+        val layout = buildLayout(requirePrepared(handle), width, maxLines, ellipsize, anchorToCapHeight, includeLines = false)
+        val widthBits = layout.width.toFloat().toRawBits().toLong()
+        // Sign-extending a negative height would overwrite the packed width.
+        val heightBits = layout.height.toFloat().toRawBits().toLong() and 0xFFFFFFFFL
+        return (widthBits shl 32) or heightBits
+    }
+
+    @JvmStatic
     fun layout(handle: Long, width: Double, maxLines: Int, ellipsizeMode: String?, anchorToCapHeight: Boolean): DoubleArray {
         val prepared = requirePrepared(handle)
-        return packLayout(buildLayout(prepared, width, maxLines, ellipsizeMode, anchorToCapHeight, includeLines = false))
+        val ellipsize = resolveEllipsize(ellipsizeMode, maxLines)
+        return packLayout(buildLayout(prepared, width, maxLines, ellipsize, anchorToCapHeight, includeLines = false))
     }
 
     @JvmStatic
     fun layoutBatch(handles: LongArray, width: Double, maxLines: Int, ellipsizeMode: String?, anchorToCapHeight: Boolean): DoubleArray {
+        val ellipsize = resolveEllipsize(ellipsizeMode, maxLines)
         val packed = DoubleArray(handles.size * PACKED_LAYOUT_SIZE)
         handles.forEachIndexed { index, handle ->
             packLayoutInto(
                 packed,
                 index * PACKED_LAYOUT_SIZE,
-                buildLayout(requirePrepared(handle), width, maxLines, ellipsizeMode, anchorToCapHeight, includeLines = false),
+                buildLayout(requirePrepared(handle), width, maxLines, ellipsize, anchorToCapHeight, includeLines = false),
             )
         }
         return packed
@@ -1139,7 +1153,8 @@ internal object RNTextEngineBindings {
     @JvmStatic
     fun layoutLines(handle: Long, width: Double, maxLines: Int, ellipsizeMode: String?, anchorToCapHeight: Boolean): DoubleArray {
         val prepared = requirePrepared(handle)
-        return packLayoutWithLines(buildLayout(prepared, width, maxLines, ellipsizeMode, anchorToCapHeight, includeLines = true))
+        val ellipsize = resolveEllipsize(ellipsizeMode, maxLines)
+        return packLayoutWithLines(buildLayout(prepared, width, maxLines, ellipsize, anchorToCapHeight, includeLines = true))
     }
 
     @JvmStatic
@@ -2327,7 +2342,7 @@ internal object RNTextEngineBindings {
         prepared: PreparedTextData,
         width: Double,
         maxLines: Int,
-        ellipsizeMode: String?,
+        ellipsize: TextUtils.TruncateAt?,
         anchorToCapHeight: Boolean,
         includeLines: Boolean,
         baseOffset: Int = 0,
@@ -2347,7 +2362,7 @@ internal object RNTextEngineBindings {
         val textWidthPx = max(1, ceil(layoutWidth).toInt())
         if (!includeLines) {
             val layoutQueryOwner = resolveLayoutQueryOwner(prepared)
-            val cacheKey = resolveLayoutCacheKey(textWidthPx, maxLines, ellipsizeMode, anchorToCapHeight)
+            val cacheKey = resolveLayoutCacheKey(textWidthPx, maxLines, ellipsize, anchorToCapHeight)
             synchronized(layoutQueryOwner) {
                 layoutQueryOwner.layoutsByKey[cacheKey]?.let { return it }
             }
@@ -2356,7 +2371,6 @@ internal object RNTextEngineBindings {
         val charSequence = if (usesPlainTextLineHeightMetrics) prepared.text else resolvePreparedLayoutText(prepared)
         val paint = TextPaint(prepared.style.textPaint)
         val effectiveMaxLines = if (maxLines > 0) maxLines else Int.MAX_VALUE
-        val ellipsize = resolveEllipsize(ellipsizeMode, effectiveMaxLines)
 
         val layout =
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -2453,7 +2467,7 @@ internal object RNTextEngineBindings {
         )
         if (!includeLines) {
             val layoutQueryOwner = resolveLayoutQueryOwner(prepared)
-            val cacheKey = resolveLayoutCacheKey(textWidthPx, maxLines, ellipsizeMode, anchorToCapHeight)
+            val cacheKey = resolveLayoutCacheKey(textWidthPx, maxLines, ellipsize, anchorToCapHeight)
             synchronized(layoutQueryOwner) {
                 layoutQueryOwner.layoutsByKey.put(cacheKey, layoutInfo)
             }
@@ -2714,14 +2728,8 @@ internal object RNTextEngineBindings {
         }
     }
 
-    private fun resolveLayoutCacheKey(widthPx: Int, maxLines: Int, ellipsizeMode: String?, anchorToCapHeight: Boolean): Long {
-        val ellipsizeCode =
-            when (ellipsizeMode) {
-                "clip" -> 1
-                "head" -> 2
-                "middle" -> 3
-                else -> if (ellipsizeMode == null) 0 else 4
-            }
+    private fun resolveLayoutCacheKey(widthPx: Int, maxLines: Int, ellipsize: TextUtils.TruncateAt?, anchorToCapHeight: Boolean): Long {
+        val ellipsizeCode = (ellipsize?.ordinal ?: -1) + 1
         val normalizedMaxLines = if (maxLines > 0) maxLines else 0
         val options = ((normalizedMaxLines.toLong() and 0x0FFFFFFFL) shl 4) or ((ellipsizeCode.toLong() and 0x7L) shl 1) or if (anchorToCapHeight) 1L else 0L
         return (widthPx.toLong() shl 32) or options
@@ -3002,11 +3010,22 @@ internal object RNTextEngineBindings {
     }
 
     private fun resolveEllipsize(mode: String?, maxLines: Int): TextUtils.TruncateAt? {
+        val code = when (mode) {
+            "clip" -> 0
+            "head" -> 1
+            "middle" -> 2
+            else -> 3
+        }
+        return resolveEllipsize(code, maxLines)
+    }
+
+    // The Fabric size call uses these codes instead of allocating a Java mode string.
+    private fun resolveEllipsize(mode: Int, maxLines: Int): TextUtils.TruncateAt? {
         if (maxLines <= 0 || maxLines == Int.MAX_VALUE) return null
         return when (mode) {
-            "clip" -> null
-            "head" -> TextUtils.TruncateAt.START
-            "middle" -> TextUtils.TruncateAt.MIDDLE
+            0 -> null
+            1 -> TextUtils.TruncateAt.START
+            2 -> TextUtils.TruncateAt.MIDDLE
             else -> TextUtils.TruncateAt.END
         }
     }

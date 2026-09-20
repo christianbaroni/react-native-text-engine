@@ -1,6 +1,6 @@
 # Library benchmark results
 
-Recorded on April 24, 2026. See the [benchmark guide](README.md) for workloads and run instructions.
+Latest measurements for each platform. See the [benchmark guide](README.md) for workloads and run instructions.
 
 Each time covers the full repetition count in its row. Chat tests use batches of 128 messages; glyph tests use an 80 × 24 field. Low churn changes a small number of cells; high churn changes the whole field.
 
@@ -8,7 +8,7 @@ Each time covers the full repetition count in its row. Chat tests use batches of
 
 - iPhone 17 Pro simulator, iOS 26.2
 - Xcode 26.3 (`17C529`), Release
-- Recorded at 21:38 EDT
+- Recorded April 24, 2026, at 21:38 EDT
 
 XCTest elapsed time, averaged over ten samples. Each sample follows an untimed warm-up pass. Handle creation and release are both timed in the preparation tests.
 
@@ -73,65 +73,66 @@ testLayoutNextLineVariableWidthSequenceAnchoredToCapHeight
 
 ## Android
 
+- Recorded September 19, 2026, 21:48–21:53 EDT
 - Pixel 8 Pro emulator (`Pixel_8_Pro`, `sdk_gphone64_arm64`), Android 14 / API 34
-- Release instrumentation tests, AndroidX Benchmark
-- Recorded at 21:39–21:46 EDT after a cold boot, with system animations disabled
+- React Native 0.87.1, Text Engine 0.2.0, Release instrumentation tests, AndroidX Benchmark
+- Cold boot, system animations disabled; all ten benchmarks passed
 
-Times and allocations are reported by AndroidX Benchmark. Handle release is excluded from the preparation timings.
+Times and allocations use AndroidX Benchmark’s console summary: minimum values, truncated to whole units. Handle release is excluded from the preparation timings.
 
 ### Prepared text
 
 | Operation                  | Repetitions |          Time | Allocations |
 | -------------------------- | ----------: | ------------: | ----------: |
-| Batch preparation          |        2048 |  9,986,905 ns |     823,298 |
-| Prepared batch layout      |          24 |     68,416 ns |          48 |
-| One-shot batch measurement |           2 |  7,985,854 ns |       2,864 |
-| Styled text preparation    |        4096 | 17,044,198 ns |     548,866 |
+| Batch preparation          |        2048 | 10,577,249 ns |     823,295 |
+| Prepared batch layout      |          24 |     73,714 ns |          48 |
+| One-shot batch measurement |           2 |  8,704,411 ns |       2,864 |
+| Styled text preparation    |        4096 | 20,901,595 ns |     548,863 |
 
 ### Glyph fields and text flow
 
 | Operation                              | Repetitions |       Time | Allocations |
 | -------------------------------------- | ----------: | ---------: | ----------: |
-| Glyph indices, low churn               |          64 | 136,745 ns |          64 |
-| Glyph buffers, low churn               |          64 | 740,289 ns |          64 |
-| Glyph strings, low churn               |          64 |  91,101 ns |          64 |
-| Glyph strings, high churn              |          64 |  89,156 ns |          64 |
-| Variable-width flow                    |           6 |  37,462 ns |         870 |
-| Variable-width flow, cap-height anchor |           6 |  36,879 ns |         870 |
+| Glyph indices, low churn               |          64 | 141,102 ns |          64 |
+| Glyph buffers, low churn               |          64 | 799,739 ns |          64 |
+| Glyph strings, low churn               |          64 |  95,217 ns |          64 |
+| Glyph strings, high churn              |          64 | 100,338 ns |          64 |
+| Variable-width flow                    |           6 |  38,483 ns |         870 |
+| Variable-width flow, cap-height anchor |           6 |  38,572 ns |         870 |
 
 <details>
 <summary>Android benchmark output</summary>
 
 ```text
 preparedBatchCreateChatLifecycle
-9,986,905 ns   823,298 allocs
+10,577,249 ns   823,295 allocs
 
 preparedBatchLayoutReuseChat
-68,416 ns   48 allocs
+73,714 ns   48 allocs
 
 oneShotMeasureBatchChat
-7,985,854 ns   2,864 allocs
+8,704,411 ns   2,864 allocs
 
 prepareInlineRunsLifecycle
-17,044,198 ns   548,866 allocs
+20,901,595 ns   548,863 allocs
 
 glyphFieldIndicesLowChurn
-136,745 ns   64 allocs
+141,102 ns   64 allocs
 
 glyphFieldBufferCommitLowChurn
-740,289 ns   64 allocs
+799,739 ns   64 allocs
 
 glyphFieldStringLowChurn
-91,101 ns   64 allocs
+95,217 ns   64 allocs
 
 glyphFieldStringHighChurn
-89,156 ns   64 allocs
+100,338 ns   64 allocs
 
 layoutNextLineVariableWidthSequence
-37,462 ns   870 allocs
+38,483 ns   870 allocs
 
 layoutNextLineVariableWidthSequenceAnchoredToCapHeight
-36,879 ns   870 allocs
+38,572 ns   870 allocs
 ```
 
 </details>

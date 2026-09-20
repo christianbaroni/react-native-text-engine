@@ -23,6 +23,7 @@ import com.facebook.react.turbomodule.core.interfaces.CallInvokerHolder
 import com.facebook.react.uimanager.DisplayMetricsHolder
 import com.facebook.react.uimanager.PixelUtil
 import com.facebook.yoga.YogaMeasureMode
+import com.facebook.yoga.YogaMeasureOutput
 import com.facebook.soloader.SoLoader
 import kotlin.math.abs
 import kotlin.math.ceil
@@ -32,6 +33,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertThrows
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -118,6 +120,41 @@ class RNTextEngineBindingsInstrumentedTest {
     @After
     fun tearDown() {
         RNTextEngineBindings.cleanup()
+    }
+
+    @Test
+    fun nativeSizePreservesSignedMetricsAndHandleLifetime() {
+        for (text in listOf("", "A")) {
+            for (lineHeight in listOf(23.7, -1.0, -0.0)) {
+                val handle = RNTextEngineBindings.prepare(
+                    text = text,
+                    color = null,
+                    fontFamily = null,
+                    fontSize = 17.3,
+                    fontWeight = null,
+                    fontStyle = null,
+                    letterSpacing = 0.15,
+                    lineHeight = lineHeight,
+                    allowFontScaling = false,
+                    includeFontPadding = false,
+                    tabularNumbers = false,
+                    textBreakStrategy = null,
+                )
+                try {
+                    for ((mode, code) in listOf(null to 3, "clip" to 0, "head" to 1, "middle" to 2, "tail" to 3)) {
+                        val expected = RNTextEngineBindings.layout(handle, 80.25, 2, mode, false)
+                        val actual = RNTextEngineBindings.measureTextView(handle, 80.25, 2, code, false)
+                        assertEquals(expected[0].toFloat().toRawBits(), YogaMeasureOutput.getWidth(actual).toRawBits())
+                        assertEquals(expected[1].toFloat().toRawBits(), YogaMeasureOutput.getHeight(actual).toRawBits())
+                    }
+                } finally {
+                    RNTextEngineBindings.release(handle)
+                }
+                assertThrows(IllegalStateException::class.java) {
+                    RNTextEngineBindings.measureTextView(handle, 80.25, 2, 3, false)
+                }
+            }
+        }
     }
 
     @Test

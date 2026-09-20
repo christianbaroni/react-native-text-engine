@@ -34,11 +34,6 @@ struct TextViewMeasurementRuns {
   std::vector<bool> tabularNumbers;
 };
 
-struct PreparedTextLayoutMeasurement {
-  double height{0};
-  double width{0};
-};
-
 uint64_t prepareTextViewMeasurementHandle(
     const std::string& text,
     const std::string& textTransform,
@@ -52,7 +47,7 @@ uint64_t prepareTextViewMeasurementHandle(
     bool tabularNumbers,
     const TextViewMeasurementRuns& runs);
 double measurePreparedTextMeasurementWidth(uint64_t handle);
-PreparedTextLayoutMeasurement measurePreparedTextMeasurementLayout(
+facebook::react::Size measurePreparedTextMeasurementLayout(
     uint64_t handle,
     double width,
     int maxLines,
@@ -137,7 +132,7 @@ class RNTextEngineTextViewShadowNode final : public ConcreteViewShadowNode<
     std::string ellipsizeMode{};
     int maxLines{0};
     double width{0};
-    rntextengine::PreparedTextLayoutMeasurement measurement{};
+    Size measurement{};
   };
 
   struct MeasurementCache {

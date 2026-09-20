@@ -29,7 +29,7 @@ jmethodID prepareTextViewMethod_ = nullptr;
 jmethodID prepareTextViewWithRunsMethod_ = nullptr;
 jmethodID releaseMethod_ = nullptr;
 jmethodID measurePreparedWidthMethod_ = nullptr;
-jmethodID layoutMethod_ = nullptr;
+jmethodID measureTextViewMethod_ = nullptr;
 jmethodID transformTextWithBoundariesMethod_ = nullptr;
 
 constexpr auto kPrepareTextViewSignature =
@@ -99,15 +99,6 @@ jobjectArray toStringArray(JNIEnv* env, const std::vector<std::string>& values) 
   return array;
 }
 
-std::vector<double> toDoubleVector(JNIEnv* env, jdoubleArray array) {
-  if (array == nullptr) return {};
-
-  auto size = static_cast<size_t>(env->GetArrayLength(array));
-  std::vector<double> values(size);
-  env->GetDoubleArrayRegion(array, 0, static_cast<jsize>(size), values.data());
-  return values;
-}
-
 std::vector<int> toIntVector(JNIEnv* env, jintArray array) {
   if (array == nullptr) return {};
 
@@ -166,7 +157,7 @@ void initializeIfNeeded(JNIEnv* env) {
       kPrepareTextViewWithRunsSignature);
   releaseMethod_ = env->GetStaticMethodID(bindingsClass_, "release", "(J)V");
   measurePreparedWidthMethod_ = env->GetStaticMethodID(bindingsClass_, "measurePreparedWidth", "(J)D");
-  layoutMethod_ = env->GetStaticMethodID(bindingsClass_, "layout", "(JDILjava/lang/String;Z)[D");
+  measureTextViewMethod_ = env->GetStaticMethodID(bindingsClass_, "measureTextView", "(JDIIZ)J");
   transformTextWithBoundariesMethod_ = env->GetStaticMethodID(
       bindingsClass_,
       "transformTextWithBoundaries",
@@ -314,7 +305,7 @@ double measurePreparedTextMeasurementWidth(uint64_t handle) {
   return width;
 }
 
-PreparedTextLayoutMeasurement measurePreparedTextMeasurementLayout(
+facebook::react::Size measurePreparedTextMeasurementLayout(
     uint64_t handle,
     double width,
     int maxLines,
@@ -326,25 +317,23 @@ PreparedTextLayoutMeasurement measurePreparedTextMeasurementLayout(
     throw std::runtime_error("Unable to retrieve jni environment. Is the thread attached?");
   }
   initializeIfNeeded(env);
-  auto ellipsizeModeValue = toJString(env, ellipsizeMode);
-  auto packed = reinterpret_cast<jdoubleArray>(env->CallStaticObjectMethod(
+  jint truncation = 3;
+  if (ellipsizeMode == "clip") truncation = 0;
+  else if (ellipsizeMode == "head") truncation = 1;
+  else if (ellipsizeMode == "middle") truncation = 2;
+
+  const auto packed = env->CallStaticLongMethod(
       bindingsClass_,
-      layoutMethod_,
+      measureTextViewMethod_,
       static_cast<jlong>(handle),
       width,
       static_cast<jint>(maxLines),
-      ellipsizeModeValue,
-      anchorToCapHeight));
+      truncation,
+      anchorToCapHeight);
 
-  clearPendingException(env, "RNTextEngine: native TextView measurement layout() failed.");
-  auto values = toDoubleVector(env, packed);
-
-  cleanupLocalRef(env, ellipsizeModeValue);
-  cleanupLocalRef(env, packed);
+  const bool failed = clearPendingException(env, "RNTextEngine: native TextView measurement failed.");
   if (needsDetach) javaVm_->DetachCurrentThread();
-
-  if (values.size() < 4) return {};
-  return {.height = values[1], .width = values[0]};
+  return failed ? facebook::react::Size{} : facebook::react::yogaMeassureToSize(packed);
 }
 
 std::pair<std::string, std::vector<int>> transformTextWithBoundaries(
@@ -941,14 +930,14 @@ Size RNTextEngineTextViewShadowNode::measureContent(
     layoutIterator = std::prev(cache->layouts.end());
   }
 
-  auto measuredWidth = static_cast<Float>(layoutIterator->measurement.width);
+  auto measuredWidth = layoutIterator->measurement.width;
   if (hasExactWidth) measuredWidth = layoutConstraints.maximumSize.width;
   else if (hasBoundedWidth) {
     measuredWidth =
         std::min(measuredWidth, layoutConstraints.maximumSize.width);
   }
 
-  auto measuredHeight = static_cast<Float>(layoutIterator->measurement.height);
+  auto measuredHeight = layoutIterator->measurement.height;
   if (hasExactHeight) measuredHeight = layoutConstraints.maximumSize.height;
   else if (hasBoundedConstraint(layoutConstraints.maximumSize.height)) {
     measuredHeight =

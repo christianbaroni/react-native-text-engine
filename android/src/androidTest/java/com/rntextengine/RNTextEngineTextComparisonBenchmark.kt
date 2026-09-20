@@ -28,6 +28,7 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class RNTextEngineTextComparisonBenchmark {
+    private external fun checkNativeMeasurement(): String
     private external fun runNativeComparison(manager: FabricUIManager, density: Float, run: Int, prepared: Boolean): String
 
     @Test
@@ -63,6 +64,7 @@ class RNTextEngineTextComparisonBenchmark {
         try {
             val density = application.resources.displayMetrics.density
             // Native validation precedes all timing; an exception prevents result emission.
+            val measurementChecksum = checkNativeMeasurement()
             val results = JSONArray(runNativeComparison(manager, density, run, prepared))
             assertTrue(results.length() == 10)
             val meta = JSONObject()
@@ -82,6 +84,7 @@ class RNTextEngineTextComparisonBenchmark {
                 .put("enablePreparedTextLayout", ReactNativeFeatureFlags.enablePreparedTextLayout())
                 .put("disableTextLayoutManagerCacheAndroid", ReactNativeFeatureFlags.disableTextLayoutManagerCacheAndroid())
                 .put("preparedTextCacheSize", ReactNativeFeatureFlags.preparedTextCacheSize())
+                .put("measurementChecksum", measurementChecksum)
             emit("RNTEXT_BENCHMARK_META", meta)
             for (index in 0 until results.length()) {
                 emit("RNTEXT_BENCHMARK_RESULT", results.getJSONObject(index))

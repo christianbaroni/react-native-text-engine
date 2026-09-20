@@ -27,6 +27,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <functional>
 #include <iomanip>
 #include <limits>
@@ -395,6 +396,52 @@ Size MeasureTextView(uint64_t handle, double width, int maxLines) {
   return {static_cast<Float>(size.width), static_cast<Float>(size.height)};
 }
 
+uint64_t CheckTextViewMeasurement() {
+  static auto bindings = jni::findClassStatic("com/rntextengine/RNTextEngineBindings");
+  static auto layout = bindings->getStaticMethod<jni::JArrayDouble::javaobject(
+      jlong, jdouble, jint, jstring, jboolean)>("layout");
+  const TextStyleFixture style{.fontSize = 17.3, .letterSpacing = 0.15, .lineHeight = 23.7};
+  const std::vector<RunFixture> runs{{.start = 0, .end = 7,
+      .styleMask = kRunStyleHasFontSize | kRunStyleHasFontWeight,
+      .style = {.fontSize = 21.5, .fontWeight = "700"}}};
+  uint64_t checksum = 14695981039346656037ULL;
+
+  for (const std::string text : {"A", "Leading text with enough words to wrap.\nAnother line.",
+           "Leading text with Arabic العربية and CJK 中文."}) {
+    for (bool styled : {false, true}) {
+      if (styled && text.size() < 7) continue;
+      auto handle = PrepareText(text, style, styled ? TextViewRuns(runs) : rntextengine::TextViewMeasurementRuns{});
+      for (double width : {0.0, 0.125, 80.25, 256.125}) {
+        for (int maxLines : {-1, 0, 1, 2, std::numeric_limits<int>::max()}) {
+          for (const std::string mode : {"", "clip", "head", "middle", "tail", "unknown"}) {
+            for (bool anchor : {false, true}) {
+              auto javaMode = mode.empty() ? jni::local_ref<jni::JString>{} : jni::make_jstring(mode);
+              for (int repeat = 0; repeat < 2; ++repeat) {
+                auto measured = rntextengine::measurePreparedTextMeasurementLayout(handle, width, maxLines, mode, anchor);
+                auto packed = layout(bindings, static_cast<jlong>(handle), width, maxLines, javaMode.get(), anchor);
+                Require(packed->size() == 4, "Layout projection must retain all four public metrics");
+                double metrics[4];
+                packed->getRegion(0, 4, metrics);
+                Require(static_cast<Float>(measured.width) == static_cast<Float>(metrics[0]) &&
+                        static_cast<Float>(measured.height) == static_cast<Float>(metrics[1]),
+                    "Native measurement differs from public layout: mode=" + mode +
+                        "; lines=" + std::to_string(maxLines) + "; width=" + std::to_string(width));
+                for (double value : metrics) {
+                  uint64_t bits;
+                  std::memcpy(&bits, &value, sizeof(bits));
+                  checksum = (checksum ^ bits) * 1099511628211ULL;
+                }
+              }
+            }
+          }
+        }
+      }
+      rntextengine::releasePreparedTextMeasurementHandle(handle);
+    }
+  }
+  return checksum;
+}
+
 Size MeasureRN(const TextLayoutManager &manager, const AttributedStringBox &input,
     double width, int maxLines, float density) {
   auto attributes = BuildParagraphAttributes(maxLines);
@@ -679,6 +726,16 @@ std::string RunComparison(const jni::global_ref<jobject> &fabricManager, float d
 }
 
 } // namespace
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_rntextengine_RNTextEngineTextComparisonBenchmark_checkNativeMeasurement(JNIEnv *env, jobject) {
+  try {
+    return env->NewStringUTF(std::to_string(CheckTextViewMeasurement()).c_str());
+  } catch (const std::exception &error) {
+    env->ThrowNew(env->FindClass("java/lang/RuntimeException"), error.what());
+    return nullptr;
+  }
+}
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_rntextengine_RNTextEngineTextComparisonBenchmark_runNativeComparison(

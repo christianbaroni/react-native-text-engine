@@ -175,7 +175,6 @@ export function renderComparison(metadata, logs) {
       : [`- Toolchain: ${metadata.xcode.replaceAll('\n', ' / ')}; SDK ${runs[0].meta.sdk}; Node ${metadata.node}`]),
     `- Git HEAD: \`${metadata.revision}\``,
     `- Source checksum (SHA256): \`${metadata.sourceHash}\``,
-    `- Local logs: \`benchmarks/${metadata.relativeRunDirectory}\``,
     '',
     'Each row lists nine samples from one app process, in measurement order. All samples are included.',
     '',

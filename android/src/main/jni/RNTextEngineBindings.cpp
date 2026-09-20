@@ -150,7 +150,6 @@ jmethodID attachGlyphFieldBuffersMethod_ = nullptr;
 jmethodID commitGlyphFieldBuffersMethod_ = nullptr;
 jmethodID updateGlyphFieldMethod_ = nullptr;
 jmethodID updateGlyphFieldIndicesMethod_ = nullptr;
-jmethodID measurePreparedWidthMethod_ = nullptr;
 jmethodID measureWidthMethod_ = nullptr;
 jmethodID measureWidthWithRunsMethod_ = nullptr;
 jmethodID measureMethod_ = nullptr;
@@ -252,7 +251,6 @@ void initializeIfNeeded(JNIEnv* env, jobject context) {
   commitGlyphFieldBuffersMethod_ = env->GetStaticMethodID(bindingsClass_, "commitGlyphFieldBuffers", "(J)V");
   updateGlyphFieldMethod_ = env->GetStaticMethodID(bindingsClass_, "updateGlyphField", "(JLjava/lang/String;[B)V");
   updateGlyphFieldIndicesMethod_ = env->GetStaticMethodID(bindingsClass_, "updateGlyphFieldIndices", "(J[B[B)V");
-  measurePreparedWidthMethod_ = env->GetStaticMethodID(bindingsClass_, "measurePreparedWidth", "(J)D");
   measureWidthMethod_ = env->GetStaticMethodID(
       bindingsClass_,
       "measureWidth",
@@ -975,165 +973,6 @@ double currentFontScaleMultiplier() {
       "RNTextEngine: native font-scale multiplier lookup failed.");
   if (needsDetach) jvm_->DetachCurrentThread();
   return static_cast<double>(multiplier);
-}
-
-uint64_t prepareTextViewMeasurementHandle(
-    const std::string& text,
-    bool allowFontScaling,
-    const std::string& fontFamily,
-    double fontSize,
-    const std::string& fontWeight,
-    const std::string& fontStyle,
-    double letterSpacing,
-    double lineHeight,
-    bool tabularNumbers,
-    const TextViewMeasurementRuns& runs) {
-  bool needsDetach = false;
-  JNIEnv* env = getEnv(needsDetach);
-  if (env == nullptr) return 0;
-
-  initializeIfNeeded(env, nullptr);
-
-  jstring textValue = env->NewStringUTF(text.c_str());
-  jstring fontFamilyValue = toJString(env, fontFamily);
-  jstring fontWeightValue = toJString(env, fontWeight);
-  jstring fontStyleValue = toJString(env, fontStyle);
-
-  jlong handle = 0;
-  if (runs.starts.empty() || runs.ends.empty() || runs.styleMasks.empty()) {
-    handle = env->CallStaticLongMethod(
-        bindingsClass_,
-        prepareMethod_,
-        textValue,
-        nullptr,
-        fontFamilyValue,
-        fontSize,
-        fontWeightValue,
-        fontStyleValue,
-        letterSpacing,
-        lineHeight,
-        allowFontScaling,
-        false,
-        tabularNumbers,
-        nullptr);
-  } else {
-    jintArray runStarts = makeJavaIntArray(env, runs.starts);
-    jintArray runEnds = makeJavaIntArray(env, runs.ends);
-    jintArray runMasks = makeJavaIntArray(env, runs.styleMasks);
-    jobjectArray runColors = makeJavaOptionalStringArray(env, std::vector<std::string>(runs.starts.size()));
-    jobjectArray runFontFamilies = makeJavaOptionalStringArray(env, runs.fontFamilies);
-    jdoubleArray runFontSizes = makeJavaDoubleArray(env, runs.fontSizes);
-    jobjectArray runFontWeights = makeJavaOptionalStringArray(env, runs.fontWeights);
-    jobjectArray runFontStyles = makeJavaOptionalStringArray(env, runs.fontStyles);
-    jdoubleArray runLetterSpacings = makeJavaDoubleArray(env, runs.letterSpacings);
-    jdoubleArray runLineHeights = makeJavaDoubleArray(env, runs.lineHeights);
-    jbooleanArray runTabularNumbers = makeJavaBooleanArray(env, runs.tabularNumbers);
-
-    handle = env->CallStaticLongMethod(
-        bindingsClass_,
-        prepareWithRunsMethod_,
-        textValue,
-        nullptr,
-        fontFamilyValue,
-        fontSize,
-        fontWeightValue,
-        fontStyleValue,
-        letterSpacing,
-        lineHeight,
-        allowFontScaling,
-        false,
-        tabularNumbers,
-        nullptr,
-        runStarts,
-        runEnds,
-        runMasks,
-        runColors,
-        runFontFamilies,
-        runFontSizes,
-        runFontWeights,
-        runFontStyles,
-        runLetterSpacings,
-        runLineHeights,
-        runTabularNumbers);
-
-    env->DeleteLocalRef(runStarts);
-    env->DeleteLocalRef(runEnds);
-    env->DeleteLocalRef(runMasks);
-    env->DeleteLocalRef(runColors);
-    env->DeleteLocalRef(runFontFamilies);
-    env->DeleteLocalRef(runFontSizes);
-    env->DeleteLocalRef(runFontWeights);
-    env->DeleteLocalRef(runFontStyles);
-    env->DeleteLocalRef(runLetterSpacings);
-    env->DeleteLocalRef(runLineHeights);
-    env->DeleteLocalRef(runTabularNumbers);
-  }
-
-  clearPendingException(env, "RNTextEngine: native TextView measurement prepare() failed.");
-
-  env->DeleteLocalRef(textValue);
-  if (fontFamilyValue) env->DeleteLocalRef(fontFamilyValue);
-  if (fontWeightValue) env->DeleteLocalRef(fontWeightValue);
-  if (fontStyleValue) env->DeleteLocalRef(fontStyleValue);
-  if (needsDetach) jvm_->DetachCurrentThread();
-  return static_cast<uint64_t>(handle);
-}
-
-double measurePreparedTextMeasurementWidth(uint64_t handle) {
-  bool needsDetach = false;
-  JNIEnv* env = getEnv(needsDetach);
-  if (env == nullptr) return 0;
-
-  initializeIfNeeded(env, nullptr);
-  jdouble width = env->CallStaticDoubleMethod(bindingsClass_, measurePreparedWidthMethod_, static_cast<jlong>(handle));
-  clearPendingException(env, "RNTextEngine: native measurePreparedWidth() failed.");
-  if (needsDetach) jvm_->DetachCurrentThread();
-  return width;
-}
-
-PreparedTextLayoutMeasurement measurePreparedTextMeasurementLayout(
-    uint64_t handle,
-    double width,
-    int maxLines,
-    const std::string& ellipsizeMode,
-    bool anchorToCapHeight) {
-  bool needsDetach = false;
-  JNIEnv* env = getEnv(needsDetach);
-  if (env == nullptr) return {};
-
-  initializeIfNeeded(env, nullptr);
-  jstring ellipsizeModeValue = toJString(env, ellipsizeMode);
-  jdoubleArray packed = reinterpret_cast<jdoubleArray>(env->CallStaticObjectMethod(
-      bindingsClass_,
-      layoutMethod_,
-      static_cast<jlong>(handle),
-      width,
-      static_cast<jint>(maxLines),
-      ellipsizeModeValue,
-      anchorToCapHeight));
-
-  clearPendingException(env, "RNTextEngine: native TextView measurement layout() failed.");
-  std::vector<double> values = toDoubleVector(env, packed);
-
-  if (ellipsizeModeValue) env->DeleteLocalRef(ellipsizeModeValue);
-  if (packed) env->DeleteLocalRef(packed);
-  if (needsDetach) jvm_->DetachCurrentThread();
-
-  if (values.size() < PACKED_LAYOUT_SIZE) return {};
-  return {.height = values[1], .width = values[0]};
-}
-
-void releasePreparedTextMeasurementHandle(uint64_t handle) {
-  if (handle == 0) return;
-
-  bool needsDetach = false;
-  JNIEnv* env = getEnv(needsDetach);
-  if (env == nullptr) return;
-
-  initializeIfNeeded(env, nullptr);
-  env->CallStaticVoidMethod(bindingsClass_, releaseMethod_, static_cast<jlong>(handle));
-  clearPendingException(env, "RNTextEngine: native TextView measurement release() failed.");
-  if (needsDetach) jvm_->DetachCurrentThread();
 }
 
 void install(Runtime& runtime) {

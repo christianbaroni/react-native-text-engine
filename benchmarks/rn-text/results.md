@@ -24,7 +24,6 @@ September 20, 2026. iPhone18,1, iOS 26.6.2. React Native 0.87.1, Text Engine 0.2
 - Toolchain: Xcode 26.3 / Build version 17C529; SDK iphoneos26.2; Node v22.21.1
 - Git HEAD: `6a0896b92d03daf0f592e7317438dc5be2d0da34`
 - Source checksum (SHA256): `47ff9fd6b241820c783dd528b950d8192ec4096143bc30e37a5cb0da819d2e1f`
-- Local logs: `benchmarks/.results/ios-comparison-20260920T013311Z-cMr4wd`
 
 Each row lists nine samples from one app process, in measurement order. All samples are included.
 
@@ -71,98 +70,97 @@ September 20, 2026. Pixel 6, Android 14 (API 34). React Native 0.87.1, Text Engi
 
 | Test                                     | Operations/sample |    RN Text (ms) |   TextView (ms) | TextView / RN |
 | ---------------------------------------- | ----------------: | --------------: | --------------: | ------------: |
-| Chat list layout                         |               512 | 156.044 ± 0.155 | 103.555 ± 0.927 |        0.664× |
-| Plain text creation and layout           |               512 | 141.442 ± 1.777 |  95.037 ± 0.111 |        0.672× |
-| Repeated manager queries                 |             6,144 |   4.088 ± 0.010 |   3.110 ± 0.029 |        0.761× |
-| Repeated manager queries, two-line limit |             6,144 |   4.088 ± 0.012 |   4.149 ± 0.128 |        1.015× |
-| Styled text creation and layout          |               384 | 317.921 ± 0.684 | 189.335 ± 0.701 |        0.596× |
+| Chat list layout                         |               512 | 153.988 ± 0.150 | 102.212 ± 0.025 |        0.664× |
+| Plain text creation and layout           |               512 | 141.053 ± 0.231 |  95.206 ± 0.421 |        0.675× |
+| Repeated manager queries                 |             6,144 |   3.914 ± 0.021 |   1.501 ± 0.013 |        0.383× |
+| Repeated manager queries, two-line limit |             6,144 |   3.927 ± 0.020 |   1.713 ± 0.090 |        0.436× |
+| Styled text creation and layout          |               384 | 317.635 ± 0.718 | 190.156 ± 0.137 |        0.599× |
 
 ### RN Text with prepared layout
 
-| Test                                     | Operations/sample |      RN Text (ms) |   TextView (ms) | TextView / RN |
-| ---------------------------------------- | ----------------: | ----------------: | --------------: | ------------: |
-| Chat list layout                         |               512 |   158.804 ± 0.377 | 101.990 ± 0.092 |        0.642× |
-| Plain text creation and layout           |               512 |   144.779 ± 0.380 |  95.116 ± 0.108 |        0.657× |
-| Repeated manager queries                 |             6,144 | 1731.496 ± 10.104 |   3.005 ± 0.004 |        0.002× |
-| Repeated manager queries, two-line limit |             6,144 |  1805.019 ± 1.903 |   3.915 ± 0.003 |        0.002× |
-| Styled text creation and layout          |               384 |   297.870 ± 0.029 | 175.140 ± 0.664 |        0.588× |
+| Test                                     | Operations/sample |     RN Text (ms) |   TextView (ms) | TextView / RN |
+| ---------------------------------------- | ----------------: | ---------------: | --------------: | ------------: |
+| Chat list layout                         |               512 |  157.801 ± 0.126 | 102.159 ± 0.069 |        0.647× |
+| Plain text creation and layout           |               512 |  145.035 ± 0.153 |  95.307 ± 0.079 |        0.657× |
+| Repeated manager queries                 |             6,144 | 1742.709 ± 1.084 |   1.469 ± 0.001 |        0.001× |
+| Repeated manager queries, two-line limit |             6,144 | 1828.632 ± 2.282 |   1.632 ± 0.002 |        0.001× |
+| Styled text creation and layout          |               384 |  298.379 ± 0.126 | 177.608 ± 0.198 |        0.595× |
 
 <details>
 <summary>Run details and samples</summary>
 
-- Started: 2026-09-20T01:24:51.099Z
+- Started: 2026-09-20T01:46:08.639Z
 - Host: Apple M3 Max, Darwin 24.6.0, arm64
 - Device: arm64-v8a, density 2.625; ART compilation: speed
 - RN defaults: measurement cache 1,024 entries; prepared layout cache 200 entries. Each repeated-query workload visits 768 text/width combinations.
 - Toolchain: openjdk 17.0.11 2024-04-16 LTS; Gradle 9.4.1; Node v22.21.1
-- APK SHA256: `f1bd09d7c84848a25db4ebb8bd9c575679890eb76dde600600ebd7eb718054cf`
-- Git HEAD: `6a0896b92d03daf0f592e7317438dc5be2d0da34`
-- Source checksum (SHA256): `6ba191265860ee5723edecc8bbf794e3c0884dd88df5dab4caac1c2dc393ada2`
-- Local logs: `benchmarks/.results/android-comparison-20260920T012451Z-JTN5m7`
+- APK SHA256: `7dd7923f84e8e4a3fcad713e35a49785db764f1425f8252f5f6e974db2009130`
+- Git HEAD: `efe0398c2aff25108098328482746e54c4a5373a`
+- Source checksum (SHA256): `f8c83d04b61e23c7a99b12cf03584dcf372897fc9649eeb8999678114cb0fa43`
 
 Each row lists nine samples from one app process, in measurement order. All samples are included.
 
 | Test                                     | Implementation | RN configuration | Run | Samples (ms)                                                                                                        |
 | ---------------------------------------- | -------------- | ---------------- | --: | ------------------------------------------------------------------------------------------------------------------- |
-| Chat list layout                         | RN Text        | Default          |   1 | 185.553671, 156.085693, 157.427897, 378.704305, 402.731445, 234.617879, 157.292033, 156.472331, 156.443359          |
-| Chat list layout                         | RN Text        | Default          |   2 | 147.038086, 152.541097, 155.105184, 153.630453, 167.122802, 156.044434, 156.986450, 156.226318, 157.832601          |
-| Chat list layout                         | RN Text        | Default          |   3 | 156.361369, 154.374512, 153.244751, 155.844564, 155.889811, 160.150187, 157.145427, 153.327637, 156.186117          |
-| Chat list layout                         | RN Text        | Prepared         |   1 | 158.803630, 164.394734, 159.942709, 160.052205, 157.355673, 158.409912, 158.082316, 161.814087, 157.107137          |
-| Chat list layout                         | RN Text        | Prepared         |   2 | 157.658691, 159.461670, 159.895711, 158.785197, 159.619345, 162.864380, 159.873251, 159.384196, 167.938884          |
-| Chat list layout                         | RN Text        | Prepared         |   3 | 157.987589, 158.426880, 157.423665, 159.288900, 159.101359, 157.758789, 158.532389, 157.885010, 159.044271          |
-| Chat list layout                         | TextView       | Default          |   1 | 102.942058, 103.882161, 140.391399, 270.024903, 263.723023, 262.865438, 104.170207, 104.044393, 104.481975          |
-| Chat list layout                         | TextView       | Default          |   2 | 98.066854, 103.111247, 103.321899, 102.312296, 102.982707, 101.865234, 102.508789, 103.884928, 100.444173           |
-| Chat list layout                         | TextView       | Default          |   3 | 102.417562, 103.871745, 103.986694, 104.256389, 101.304525, 102.191406, 103.739502, 102.863281, 103.554687          |
-| Chat list layout                         | TextView       | Prepared         |   1 | 102.319865, 101.876262, 102.081950, 102.044068, 102.949056, 101.614380, 101.972494, 105.288575, 103.831136          |
-| Chat list layout                         | TextView       | Prepared         |   2 | 101.454183, 101.989909, 102.131267, 102.308594, 101.704793, 102.454101, 101.914714, 102.283244, 101.969320          |
-| Chat list layout                         | TextView       | Prepared         |   3 | 101.307210, 102.927816, 101.427165, 101.337728, 101.700724, 101.628703, 103.633951, 101.875814, 101.479045          |
-| Plain text creation and layout           | RN Text        | Default          |   1 | 134.512817, 134.977580, 134.491251, 134.805624, 136.835856, 135.318481, 134.453979, 135.237020, 137.239909          |
-| Plain text creation and layout           | RN Text        | Default          |   2 | 141.442220, 140.112142, 141.454631, 143.612915, 140.422241, 142.138347, 141.294840, 143.628296, 141.416300          |
-| Plain text creation and layout           | RN Text        | Default          |   3 | 141.976278, 144.229370, 143.152588, 141.419312, 144.268636, 144.608195, 145.192586, 143.219604, 141.033488          |
-| Plain text creation and layout           | RN Text        | Prepared         |   1 | 145.606405, 143.711345, 145.364665, 144.570842, 144.778971, 144.542928, 144.362915, 144.861125, 145.941650          |
-| Plain text creation and layout           | RN Text        | Prepared         |   2 | 146.706502, 145.159058, 148.509602, 143.972209, 144.627930, 145.379314, 144.688110, 144.438029, 145.274495          |
-| Plain text creation and layout           | RN Text        | Prepared         |   3 | 143.768554, 144.551269, 146.198324, 144.071819, 143.552775, 144.310710, 143.809163, 145.293782, 142.972616          |
-| Plain text creation and layout           | TextView       | Default          |   1 | 91.829387, 93.589804, 91.310669, 91.382162, 91.421102, 91.189942, 91.411092, 92.895060, 95.867839                   |
-| Plain text creation and layout           | TextView       | Default          |   2 | 95.134807, 93.055868, 94.947063, 95.111369, 92.885864, 95.261678, 104.856405, 95.037435, 94.944743                  |
-| Plain text creation and layout           | TextView       | Default          |   3 | 95.148438, 95.128663, 94.800171, 95.179810, 94.062174, 94.958577, 95.272990, 99.357707, 95.508992                   |
-| Plain text creation and layout           | TextView       | Prepared         |   1 | 97.014201, 96.252767, 94.091716, 95.207520, 95.008952, 95.200928, 94.421550, 94.858318, 95.116333                   |
-| Plain text creation and layout           | TextView       | Prepared         |   2 | 97.371867, 95.224283, 95.228027, 94.968669, 95.084025, 94.789958, 96.870483, 94.958903, 95.497681                   |
-| Plain text creation and layout           | TextView       | Prepared         |   3 | 94.626872, 94.506999, 94.998210, 94.832072, 94.570109, 93.607137, 94.616333, 94.713216, 94.596558                   |
-| Repeated manager queries                 | RN Text        | Default          |   1 | 4.076579, 4.722575, 4.078247, 4.403972, 4.039510, 4.440104, 4.048788, 4.573608, 4.042358                            |
-| Repeated manager queries                 | RN Text        | Default          |   2 | 4.427327, 3.959269, 4.414062, 3.947021, 4.390787, 3.939901, 4.340983, 4.016357, 4.349080                            |
-| Repeated manager queries                 | RN Text        | Default          |   3 | 4.080851, 4.474610, 4.087321, 4.493774, 4.055990, 4.533447, 4.071655, 4.521688, 4.087890                            |
-| Repeated manager queries                 | RN Text        | Prepared         |   1 | 1736.919231, 1730.806804, 1717.235922, 2677.476767, 1744.776205, 2517.862591, 1746.791587, 1757.072673, 1723.184774 |
-| Repeated manager queries                 | RN Text        | Prepared         |   2 | 1731.531617, 1732.135092, 1729.449260, 1727.361492, 1709.675782, 1816.917115, 2477.031861, 1731.496176, 1709.527996 |
-| Repeated manager queries                 | RN Text        | Prepared         |   3 | 1725.157268, 1720.662884, 1713.997478, 1721.392619, 1715.636313, 1727.084108, 1725.578940, 1720.774252, 1725.081218 |
-| Repeated manager queries                 | TextView       | Default          |   1 | 3.225585, 3.024659, 3.202515, 3.060913, 3.257121, 3.064942, 3.380615, 3.073445, 3.275798                            |
-| Repeated manager queries                 | TextView       | Default          |   2 | 3.078735, 3.196208, 3.072470, 3.196981, 3.075154, 3.156413, 3.081583, 3.186565, 3.069703                            |
-| Repeated manager queries                 | TextView       | Default          |   3 | 3.125325, 3.091838, 3.130696, 3.064534, 3.110189, 3.022746, 3.122639, 3.033488, 3.128540                            |
-| Repeated manager queries                 | TextView       | Prepared         |   1 | 3.016927, 2.991536, 2.973714, 2.889567, 2.978394, 2.915812, 2.939087, 2.914592, 3.028646                            |
-| Repeated manager queries                 | TextView       | Prepared         |   2 | 2.979492, 3.023641, 3.005453, 3.019124, 2.980184, 9.884399, 9.908691, 2.976563, 2.999227                            |
-| Repeated manager queries                 | TextView       | Prepared         |   3 | 3.024659, 2.954875, 3.015544, 2.968709, 3.030558, 2.963786, 3.009196, 2.981242, 3.108114                            |
-| Repeated manager queries, two-line limit | RN Text        | Default          |   1 | 4.003133, 4.566162, 4.047851, 4.659098, 3.996298, 4.511556, 4.009765, 4.514730, 4.028849                            |
-| Repeated manager queries, two-line limit | RN Text        | Default          |   2 | 4.134481, 3.928304, 4.313436, 3.973226, 4.509603, 3.916788, 4.211100, 3.903728, 4.100057                            |
-| Repeated manager queries, two-line limit | RN Text        | Default          |   3 | 4.087850, 4.331340, 3.885376, 4.347005, 3.893921, 4.398763, 3.875203, 4.429891, 3.937378                            |
-| Repeated manager queries, two-line limit | RN Text        | Prepared         |   1 | 1809.498902, 1825.071534, 1804.291383, 1799.641114, 1815.364991, 1822.254558, 1807.126099, 1808.880982, 1820.940715 |
-| Repeated manager queries, two-line limit | RN Text        | Prepared         |   2 | 1805.019451, 1808.227093, 1815.780763, 1804.021811, 1807.861329, 1798.223389, 1801.860678, 1800.812623, 1806.158529 |
-| Repeated manager queries, two-line limit | RN Text        | Prepared         |   3 | 1820.853028, 1810.653729, 1803.116008, 1800.077516, 1797.513063, 1806.217815, 1814.641074, 1802.376913, 1792.319743 |
-| Repeated manager queries, two-line limit | TextView       | Default          |   1 | 4.410156, 4.187053, 4.381836, 4.202311, 4.440592, 4.212484, 4.412028, 4.212891, 4.522217                            |
-| Repeated manager queries, two-line limit | TextView       | Default          |   2 | 3.961914, 4.004110, 4.086263, 5.494914, 3.872030, 4.020345, 4.038167, 3.979533, 4.021077                            |
-| Repeated manager queries, two-line limit | TextView       | Default          |   3 | 4.184855, 4.006144, 4.180949, 4.016194, 4.197550, 4.035360, 4.265991, 3.969808, 4.148559                            |
-| Repeated manager queries, two-line limit | TextView       | Prepared         |   1 | 3.921265, 3.872600, 3.914754, 3.852743, 3.947509, 3.911133, 3.931600, 3.871297, 8.448364                            |
-| Repeated manager queries, two-line limit | TextView       | Prepared         |   2 | 3.874390, 3.955485, 3.834270, 3.924764, 3.911296, 3.970459, 3.864624, 3.949992, 3.887248                            |
-| Repeated manager queries, two-line limit | TextView       | Prepared         |   3 | 4.014404, 4.353963, 3.956340, 3.918335, 4.013794, 3.922974, 3.975301, 3.917521, 3.964111                            |
-| Styled text creation and layout          | RN Text        | Default          |   1 | 316.207357, 317.038859, 321.602458, 332.719808, 325.560506, 321.538168, 317.920614, 311.928548, 314.651937          |
-| Styled text creation and layout          | RN Text        | Default          |   2 | 318.911133, 316.889974, 316.359986, 317.236654, 318.541992, 319.457519, 318.159384, 315.566040, 315.972941          |
-| Styled text creation and layout          | RN Text        | Default          |   3 | 319.403890, 320.569743, 322.465291, 320.606771, 313.558838, 312.277426, 318.703573, 311.033081, 312.309855          |
-| Styled text creation and layout          | RN Text        | Prepared         |   1 | 296.172607, 296.130046, 298.486003, 296.637492, 302.113851, 297.082397, 305.909505, 301.115600, 296.878337          |
-| Styled text creation and layout          | RN Text        | Prepared         |   2 | 299.379354, 298.202270, 297.297771, 298.994100, 296.479452, 297.898030, 298.405477, 294.313110, 296.537435          |
-| Styled text creation and layout          | RN Text        | Prepared         |   3 | 302.535319, 307.836874, 297.077596, 297.869507, 302.031779, 297.133260, 294.895508, 300.659505, 297.833212          |
-| Styled text creation and layout          | TextView       | Default          |   1 | 192.442017, 192.198527, 191.269246, 194.572550, 186.761312, 188.634481, 188.238077, 187.760783, 185.530111          |
-| Styled text creation and layout          | TextView       | Default          |   2 | 190.099609, 192.196818, 190.386679, 190.330241, 190.266602, 189.710043, 190.964275, 189.918050, 192.031331          |
-| Styled text creation and layout          | TextView       | Default          |   3 | 192.278890, 191.505534, 189.335286, 192.618734, 187.782023, 191.124634, 187.010620, 185.518026, 182.208292          |
-| Styled text creation and layout          | TextView       | Prepared         |   1 | 176.462280, 175.140381, 174.684408, 176.478190, 174.988729, 177.975790, 175.669637, 174.431112, 174.976440          |
-| Styled text creation and layout          | TextView       | Prepared         |   2 | 175.523112, 175.728475, 175.045899, 174.475953, 176.758138, 171.968628, 171.347900, 172.015503, 171.577352          |
-| Styled text creation and layout          | TextView       | Prepared         |   3 | 176.006103, 171.299113, 176.843262, 177.022501, 176.715617, 178.602295, 177.082072, 176.825521, 180.559326          |
+| Chat list layout                         | RN Text        | Default          |   1 | 156.132324, 153.803182, 152.978556, 154.569824, 153.532553, 153.988119, 154.356975, 153.440715, 155.017008          |
+| Chat list layout                         | RN Text        | Default          |   2 | 158.004516, 152.464641, 153.036540, 159.652832, 152.888916, 153.214559, 155.026977, 152.847249, 154.780843          |
+| Chat list layout                         | RN Text        | Default          |   3 | 155.175171, 154.190552, 153.276896, 156.857625, 153.326131, 154.138224, 154.377808, 153.709758, 153.290731          |
+| Chat list layout                         | RN Text        | Prepared         |   1 | 157.675293, 159.287842, 156.822266, 157.504964, 157.227051, 158.586589, 157.411051, 158.648030, 159.590129          |
+| Chat list layout                         | RN Text        | Prepared         |   2 | 156.806722, 156.698283, 159.358358, 158.247721, 157.217733, 159.850546, 159.319906, 158.262573, 160.434895          |
+| Chat list layout                         | RN Text        | Prepared         |   3 | 157.159221, 158.327799, 157.126140, 159.459879, 157.800822, 157.040650, 155.804688, 158.437053, 158.352539          |
+| Chat list layout                         | TextView       | Default          |   1 | 102.510050, 101.939046, 102.392618, 102.211751, 101.969686, 101.929403, 104.203125, 102.182658, 102.303060          |
+| Chat list layout                         | TextView       | Default          |   2 | 103.492024, 102.284302, 101.611736, 101.569173, 102.177327, 102.186971, 102.639974, 101.015055, 102.307902          |
+| Chat list layout                         | TextView       | Default          |   3 | 101.855997, 102.378743, 102.835286, 102.761271, 102.248007, 102.187419, 104.591715, 102.270915, 102.285929          |
+| Chat list layout                         | TextView       | Prepared         |   1 | 101.927287, 102.095581, 102.159139, 102.101196, 102.538411, 102.427897, 102.387044, 101.927490, 102.195964          |
+| Chat list layout                         | TextView       | Prepared         |   2 | 101.826782, 102.416179, 102.581543, 102.612020, 102.126058, 102.263834, 102.259644, 102.408976, 102.689250          |
+| Chat list layout                         | TextView       | Prepared         |   3 | 101.347494, 101.816324, 101.754598, 104.533854, 102.218221, 102.874593, 102.145874, 101.622070, 102.089641          |
+| Plain text creation and layout           | RN Text        | Default          |   1 | 140.892334, 141.027547, 140.943645, 142.604777, 141.942667, 143.718547, 142.354370, 141.052857, 140.830078          |
+| Plain text creation and layout           | RN Text        | Default          |   2 | 140.434855, 136.440023, 137.299724, 141.019653, 139.066121, 141.496541, 141.629191, 140.822143, 141.607422          |
+| Plain text creation and layout           | RN Text        | Default          |   3 | 141.513794, 141.353719, 141.422770, 142.763876, 142.028117, 141.318400, 141.109334, 137.943685, 141.143270          |
+| Plain text creation and layout           | RN Text        | Prepared         |   1 | 143.872436, 148.045532, 144.054810, 145.442709, 144.881714, 145.378581, 144.750692, 145.100749, 144.820557          |
+| Plain text creation and layout           | RN Text        | Prepared         |   2 | 145.704834, 145.198934, 145.349406, 145.521606, 145.493490, 147.565714, 145.784545, 145.494344, 148.778850          |
+| Plain text creation and layout           | RN Text        | Prepared         |   3 | 143.995035, 145.467204, 146.136556, 145.034791, 144.815877, 144.611776, 144.713054, 145.097371, 147.148926          |
+| Plain text creation and layout           | TextView       | Default          |   1 | 96.907796, 95.114176, 96.737223, 95.206177, 95.192789, 95.248576, 94.819499, 95.928386, 95.065105                   |
+| Plain text creation and layout           | TextView       | Default          |   2 | 91.479289, 91.260661, 91.728068, 90.901977, 91.754435, 95.351074, 97.312175, 95.314127, 95.491252                   |
+| Plain text creation and layout           | TextView       | Default          |   3 | 94.740316, 95.664632, 95.578654, 95.630493, 95.690877, 95.502197, 95.627523, 96.450236, 95.411621                   |
+| Plain text creation and layout           | TextView       | Prepared         |   1 | 95.221150, 95.407715, 95.201457, 95.311076, 96.596110, 92.942017, 95.163167, 95.306641, 95.402507                   |
+| Plain text creation and layout           | TextView       | Prepared         |   2 | 95.385457, 95.302938, 95.551961, 95.373128, 95.598632, 93.131225, 95.680908, 92.066406, 95.824341                   |
+| Plain text creation and layout           | TextView       | Prepared         |   3 | 95.059489, 95.198039, 95.093303, 95.030436, 95.022787, 96.042603, 95.081625, 95.097860, 94.897380                   |
+| Repeated manager queries                 | RN Text        | Default          |   1 | 3.785075, 3.794922, 3.701172, 3.853109, 3.861898, 3.966268, 3.968059, 3.968506, 3.949382                            |
+| Repeated manager queries                 | RN Text        | Default          |   2 | 4.129395, 3.879110, 4.467488, 3.889323, 3.898518, 4.400594, 3.914103, 3.891601, 3.930502                            |
+| Repeated manager queries                 | RN Text        | Default          |   3 | 3.898234, 4.000366, 3.908447, 3.963663, 3.935181, 3.963501, 3.913655, 4.007365, 3.905721                            |
+| Repeated manager queries                 | RN Text        | Prepared         |   1 | 1751.483480, 1740.691529, 1734.430664, 1740.497966, 1731.681682, 1735.404461, 1724.817668, 1724.485027, 1722.172730 |
+| Repeated manager queries                 | RN Text        | Prepared         |   2 | 1757.306682, 1751.522055, 1742.193645, 1745.481649, 1745.804078, 1743.793173, 1733.685670, 1730.348674, 1728.974081 |
+| Repeated manager queries                 | RN Text        | Prepared         |   3 | 1752.982545, 1745.314006, 1742.172527, 1742.732015, 1742.708863, 1744.161703, 1722.740845, 1724.304445, 1721.895713 |
+| Repeated manager queries                 | TextView       | Default          |   1 | 1.487671, 1.486003, 1.486003, 1.464356, 1.526571, 1.474406, 1.492188, 1.489991, 1.491211                            |
+| Repeated manager queries                 | TextView       | Default          |   2 | 1.508911, 1.514689, 1.470744, 1.500895, 1.464477, 1.518189, 1.493164, 1.487834, 1.529663                            |
+| Repeated manager queries                 | TextView       | Default          |   3 | 1.668010, 1.670817, 1.679077, 1.689005, 1.655477, 1.620361, 1.680867, 1.652507, 1.701701                            |
+| Repeated manager queries                 | TextView       | Prepared         |   1 | 1.472046, 1.502197, 1.461507, 1.439657, 1.470459, 1.492269, 1.483887, 1.445801, 1.446574                            |
+| Repeated manager queries                 | TextView       | Prepared         |   2 | 1.468872, 1.494914, 1.464355, 1.469238, 1.455892, 1.507893, 1.461792, 1.472046, 1.479858                            |
+| Repeated manager queries                 | TextView       | Prepared         |   3 | 1.449504, 1.439575, 1.481811, 1.443482, 1.478719, 1.449219, 1.469523, 1.443441, 1.461874                            |
+| Repeated manager queries, two-line limit | RN Text        | Default          |   1 | 3.900309, 3.988648, 3.911784, 3.960124, 3.940592, 3.960002, 3.901408, 4.012818, 3.982829                            |
+| Repeated manager queries, two-line limit | RN Text        | Default          |   2 | 3.966919, 3.882405, 3.927246, 3.924398, 3.953369, 3.891276, 3.960327, 3.887126, 3.940755                            |
+| Repeated manager queries, two-line limit | RN Text        | Default          |   3 | 3.887126, 3.927409, 3.907186, 3.933675, 3.882121, 3.973592, 3.877034, 3.971069, 3.888387                            |
+| Repeated manager queries, two-line limit | RN Text        | Prepared         |   1 | 1837.406170, 1822.710653, 1827.909547, 1835.609539, 1837.784506, 1842.108033, 1829.028240, 1830.913575, 1827.229086 |
+| Repeated manager queries, two-line limit | RN Text        | Prepared         |   2 | 1838.437908, 1828.541423, 1817.035198, 1819.527304, 1830.959880, 1812.241985, 1822.652345, 1798.530234, 1819.771770 |
+| Repeated manager queries, two-line limit | RN Text        | Prepared         |   3 | 1830.891602, 1834.860271, 1834.656942, 1829.078858, 1818.856243, 1814.834921, 1828.632040, 1811.831828, 1813.116049 |
+| Repeated manager queries, two-line limit | TextView       | Default          |   1 | 1.749878, 1.656087, 1.748413, 1.653686, 1.722494, 1.703532, 1.712931, 1.728556, 1.709961                            |
+| Repeated manager queries, two-line limit | TextView       | Default          |   2 | 1.599324, 1.645508, 1.624430, 1.614625, 1.663208, 1.622762, 1.600016, 1.659342, 1.598308                            |
+| Repeated manager queries, two-line limit | TextView       | Default          |   3 | 1.950196, 1.827148, 1.925497, 1.848510, 1.886433, 1.894043, 1.898763, 1.849650, 1.912150                            |
+| Repeated manager queries, two-line limit | TextView       | Prepared         |   1 | 1.683553, 1.621013, 1.644613, 1.646647, 2.016683, 1.630411, 1.738728, 1.635417, 1.643066                            |
+| Repeated manager queries, two-line limit | TextView       | Prepared         |   2 | 1.610433, 1.638143, 1.614828, 1.637696, 1.629069, 1.655110, 1.599121, 1.649129, 1.610473                            |
+| Repeated manager queries, two-line limit | TextView       | Prepared         |   3 | 1.723063, 1.613444, 1.631551, 1.630493, 1.643595, 1.608805, 1.668091, 1.605062, 1.641439                            |
+| Styled text creation and layout          | RN Text        | Default          |   1 | 313.505981, 315.272135, 319.828532, 314.998901, 317.522013, 318.475789, 314.108440, 315.220581, 317.319173          |
+| Styled text creation and layout          | RN Text        | Default          |   2 | 320.691569, 316.956828, 317.634969, 318.514568, 320.512411, 315.229533, 323.649821, 315.617880, 316.527751          |
+| Styled text creation and layout          | RN Text        | Default          |   3 | 327.170492, 322.585449, 316.295858, 318.658163, 318.088501, 318.331502, 318.352540, 318.861816, 317.903320          |
+| Styled text creation and layout          | RN Text        | Prepared         |   1 | 296.613160, 297.885783, 301.357585, 299.397055, 299.663697, 298.025716, 298.253418, 300.423136, 297.450155          |
+| Styled text creation and layout          | RN Text        | Prepared         |   2 | 300.384400, 298.381470, 298.685384, 298.580566, 299.052287, 301.976522, 297.308960, 299.805135, 298.500652          |
+| Styled text creation and layout          | RN Text        | Prepared         |   3 | 298.944621, 299.310262, 298.348308, 298.378947, 298.375204, 300.383179, 298.699056, 296.741943, 294.401490          |
+| Styled text creation and layout          | TextView       | Default          |   1 | 192.402221, 189.357422, 189.772461, 191.359049, 189.886678, 190.155924, 191.073893, 190.637370, 189.645914          |
+| Styled text creation and layout          | TextView       | Default          |   2 | 189.940877, 191.714559, 190.218546, 190.000122, 189.439698, 190.881103, 189.819580, 189.547241, 192.997966          |
+| Styled text creation and layout          | TextView       | Default          |   3 | 190.039754, 189.863770, 191.838256, 190.120809, 190.120443, 190.292561, 190.577719, 190.540243, 191.746460          |
+| Styled text creation and layout          | TextView       | Prepared         |   1 | 177.451050, 180.774902, 177.568359, 177.468587, 177.806153, 177.990438, 178.327311, 177.054932, 177.921916          |
+| Styled text creation and layout          | TextView       | Prepared         |   2 | 177.844361, 177.573812, 177.544149, 178.948690, 177.883830, 177.608480, 179.654052, 176.729371, 175.673299          |
+| Styled text creation and layout          | TextView       | Prepared         |   3 | 174.967611, 176.743775, 176.260132, 178.025065, 175.087077, 176.669190, 175.511475, 174.471232, 174.695149          |
 
 </details>
