@@ -118,14 +118,12 @@ internal object RNTextEngineBindings {
             ellipsize: TextUtils.TruncateAt?,
             alignment: Layout.Alignment,
             justificationMode: Int,
-            nativeLineSpacing: Boolean,
         ): Layout? = synchronized(this) {
             val measured = measuredLayout
             measuredLayout = null
             measured?.layout?.takeIf {
                 it.width == width && measured.maxLines == maxLines && measured.ellipsize == ellipsize &&
-                    it.matchesAlignment(alignment) && justificationMode == 0 &&
-                    (nativeLineSpacing || hasInlineStyleRuns || style.lineHeightPx == null)
+                    it.matchesAlignment(alignment) && justificationMode == 0
             }
         }
 
@@ -133,16 +131,7 @@ internal object RNTextEngineBindings {
             synchronized(this) { measuredLayout = MeasuredLayout(layout, maxLines, ellipsize) }
         }
 
-        fun displayText(nativeLineSpacing: Boolean): CharSequence {
-            return if (nativeLineSpacing && !hasInlineStyleRuns) text else resolvePreparedLayoutText(this)
-        }
-
-        fun lineSpacingAdd(nativeLineSpacing: Boolean): Float {
-            if (!nativeLineSpacing || hasInlineStyleRuns) return 0f
-            val lineHeight = style.lineHeightPx ?: return 0f
-            val metrics = style.textPaint.fontMetricsInt
-            return max(0f, lineHeight - (metrics.descent - metrics.ascent))
-        }
+        fun displayText(): CharSequence = resolvePreparedLayoutText(this)
 
         val capHeights: CapHeights
             get() {
@@ -299,6 +288,7 @@ internal object RNTextEngineBindings {
             "RNTextEngine: glyph field variant arrays must stay aligned."
         }
         val glyphPaletteChars = glyphPalette?.toCharArray()
+        val rowHeightPx = PixelUtil.toPixelFromDIP(lineHeight.toFloat())
 
         val variants =
             List(variantColors.size) { index ->
@@ -325,7 +315,7 @@ internal object RNTextEngineBindings {
                             }
                         },
                     textPaint = style.textPaint,
-                    yOffset = ((style.lineHeightPx ?: 0f) - (metrics.descent - metrics.ascent)) * 0.5f - metrics.ascent,
+                    yOffset = (rowHeightPx - (metrics.descent - metrics.ascent)) * 0.5f - metrics.ascent,
                 )
             }
 
@@ -335,7 +325,7 @@ internal object RNTextEngineBindings {
                 columns = columns,
                 glyphPaletteChars = glyphPaletteChars,
                 glyphPalette = glyphPalette,
-                lineHeightPx = PixelUtil.toPixelFromDIP(lineHeight.toFloat()),
+                lineHeightPx = rowHeightPx,
                 rows = rows,
                 textAlign = textAlign,
                 variants = variants,
@@ -971,7 +961,7 @@ internal object RNTextEngineBindings {
             tabularNumbers = tabularNumbers,
             textBreakStrategy = textBreakStrategy,
         )
-        val context = resolveOneShotPlainLayoutContext(style, width, maxLines, ellipsizeMode, anchorToCapHeight)
+        val context = resolveOneShotPlainLayoutContext(style, width, maxLines, ellipsizeMode)
         return packLayout(buildOneShotPlainLayout(text, style, context, anchorToCapHeight, includeLines = false))
     }
 
@@ -1083,7 +1073,7 @@ internal object RNTextEngineBindings {
             textBreakStrategy = textBreakStrategy,
         )
         val packed = DoubleArray(texts.size * PACKED_LAYOUT_SIZE)
-        val context = resolveOneShotPlainLayoutContext(style, width, maxLines, ellipsizeMode, anchorToCapHeight)
+        val context = resolveOneShotPlainLayoutContext(style, width, maxLines, ellipsizeMode)
         val sharedPaint = TextPaint(style.textPaint)
         for (index in texts.indices) {
             packLayoutInto(
@@ -1936,7 +1926,9 @@ internal object RNTextEngineBindings {
             textPaint.fontFeatureSettings = "'tnum'"
         }
 
-        val lineHeightPx = if (lineHeight.isNaN()) null else scale(lineHeight, allowFontScaling, defaultValue = lineHeight)
+        val lineHeightPx = if (lineHeight.isNaN()) null else {
+            ceil(scale(lineHeight, allowFontScaling, defaultValue = lineHeight).toDouble()).toFloat()
+        }
         val fallbackLineHeight = lineHeightPx?.toDouble()?.toDp() ?: textPaint.fontMetricsInt.let {
             (it.descent - it.ascent).toDouble().toDp()
         }
@@ -2365,7 +2357,6 @@ internal object RNTextEngineBindings {
         val ellipsize: TextUtils.TruncateAt?,
         val lineHeightDp: Double?,
         val textWidthPx: Int,
-        val usesPlainTextLineHeightMetrics: Boolean,
     )
 
     private fun trimVisibleEnd(text: CharSequence, start: Int, end: Int): Int {
@@ -2377,6 +2368,16 @@ internal object RNTextEngineBindings {
 
         return visibleEnd
     }
+
+    // Android leaves trailing empty paragraphs unspanned and can pad an ellipsized final line.
+    private fun canUseFixedLineHeight(
+        style: ResolvedTextStyle,
+        text: String,
+        ellipsize: TextUtils.TruncateAt?,
+        anchorToCapHeight: Boolean,
+    ): Boolean =
+        style.lineHeightPx != null && !anchorToCapHeight &&
+            (!style.includeFontPadding || ellipsize == null) && !text.endsWith('\n')
 
     private fun buildLayout(
         prepared: PreparedText,
@@ -2399,13 +2400,13 @@ internal object RNTextEngineBindings {
 
         val layoutWidth = max(0.0, width) * density
         val textWidthPx = max(1, ceil(layoutWidth).toInt())
-        val usesPlainTextLineHeightMetrics = !prepared.hasInlineStyleRuns && prepared.style.lineHeightPx != null && !anchorToCapHeight
-        val charSequence = if (usesPlainTextLineHeightMetrics) prepared.text else resolvePreparedLayoutText(prepared)
+        val useFixedLineHeight = !prepared.hasInlineStyleRuns &&
+            canUseFixedLineHeight(prepared.style, prepared.text, ellipsize, anchorToCapHeight)
+        val retainLayout = prepared.source != null && !includeLines && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
+            prepared.style.textBreakStrategy == Layout.BREAK_STRATEGY_HIGH_QUALITY
+        val charSequence = if (useFixedLineHeight && !retainLayout) prepared.text else prepared.displayText()
         val paint = TextPaint(prepared.style.textPaint)
         val effectiveMaxLines = if (maxLines > 0) maxLines else Int.MAX_VALUE
-        val retainLayout = prepared.source != null && !includeLines && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
-            prepared.style.textBreakStrategy == Layout.BREAK_STRATEGY_HIGH_QUALITY &&
-            (prepared.hasInlineStyleRuns || prepared.style.lineHeightPx == null || !anchorToCapHeight)
 
         val layout = buildStaticLayoutCompat(
             text = charSequence,
@@ -2416,7 +2417,6 @@ internal object RNTextEngineBindings {
             hyphenationFrequency = Layout.HYPHENATION_FREQUENCY_NORMAL,
             maxLines = effectiveMaxLines,
             ellipsize = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) ellipsize else null,
-            lineSpacingAdd = if (retainLayout && usesPlainTextLineHeightMetrics) prepared.lineSpacingAdd(true) else 0f,
         )
 
         val actualLineCount = min(layout.lineCount, effectiveMaxLines)
@@ -2455,8 +2455,8 @@ internal object RNTextEngineBindings {
             val lineBottom =
                 if (anchorToCapHeight) {
                     (layout.getLineBaseline(index) - topInsetPx).toDouble() / density
-                } else if (usesPlainTextLineHeightMetrics) {
-                    ((index + 1) * prepared.style.lineHeightPx.toDouble()) / density
+                } else if (useFixedLineHeight) {
+                    ((index + 1) * requireNotNull(prepared.style.lineHeightPx).toDouble()) / density
                 } else {
                     layout.getLineBottom(index).toDouble() / density
                 }
@@ -2497,7 +2497,6 @@ internal object RNTextEngineBindings {
         width: Double,
         maxLines: Int,
         ellipsizeMode: String?,
-        anchorToCapHeight: Boolean,
     ): OneShotPlainLayoutContext {
         val density = currentDensity()
         val effectiveMaxLines = if (maxLines > 0) maxLines else Int.MAX_VALUE
@@ -2507,7 +2506,6 @@ internal object RNTextEngineBindings {
             ellipsize = resolveEllipsize(ellipsizeMode, effectiveMaxLines),
             lineHeightDp = style.lineHeightPx?.toDouble()?.div(density),
             textWidthPx = max(1, ceil(max(0.0, width) * density).toInt()),
-            usesPlainTextLineHeightMetrics = style.lineHeightPx != null && !anchorToCapHeight,
         )
     }
 
@@ -2528,13 +2526,16 @@ internal object RNTextEngineBindings {
                 width = 0.0,
             )
         }
-        if (!anchorToCapHeight && !includeLines && context.usesPlainTextLineHeightMetrics && context.effectiveMaxLines == Int.MAX_VALUE && context.ellipsize == null) {
+        val useFixedLineHeight = canUseFixedLineHeight(style, text, context.ellipsize, anchorToCapHeight)
+        // LineBreaker accepts one paragraph; StaticLayout owns explicit paragraph boundaries.
+        if (!includeLines && useFixedLineHeight && context.effectiveMaxLines == Int.MAX_VALUE &&
+            context.ellipsize == null && '\n' !in text) {
             return buildOneShotPlainLayoutSimple(text, style, context, reusablePaint)
         }
 
         val density = context.density
         val charSequence =
-            if (context.usesPlainTextLineHeightMetrics || style.lineHeightPx == null) {
+            if (useFixedLineHeight || style.lineHeightPx == null) {
                 text
             } else {
                 SpannableString(text).apply {
@@ -2592,7 +2593,7 @@ internal object RNTextEngineBindings {
             val lineBottom =
                 if (anchorToCapHeight) {
                     (layout.getLineBaseline(index) - topInsetPx).toDouble() / density
-                } else if (context.usesPlainTextLineHeightMetrics) {
+                } else if (useFixedLineHeight) {
                     (index + 1) * requireNotNull(context.lineHeightDp)
                 } else {
                     layout.getLineBottom(index).toDouble() / density

@@ -130,7 +130,7 @@ class RNTextEngineTextComparisonBenchmark {
             view.layout(0, 0, width, height)
             val layout = requireNotNull(view.displayView.resolveLayout(width))
             assertTrue(layout.text.toString() == expectedText)
-            if (firstState) assertTrue(layout.text === content.displayText(true))
+            if (firstState) assertTrue(layout.text === content.displayText())
             assertTrue(layout.paint.textSize == PixelUtil.toPixelFromDIP(if (firstState) 18f else 42f))
             if (content.source?.nested == true && content.source.runs.isNotEmpty()) {
                 val spans = (layout.text as android.text.Spanned).getSpans(0, layout.text.length, RNTextEngineTextPaintSpan::class.java)

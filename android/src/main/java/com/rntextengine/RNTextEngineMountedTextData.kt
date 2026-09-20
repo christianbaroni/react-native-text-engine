@@ -34,7 +34,6 @@ internal data class RNTextEngineTextRun(
 internal fun applyPreparedText(
     textView: TextView,
     prepared: RNTextEngineBindings.PreparedText?,
-    nativeLineSpacing: Boolean,
 ) {
     if (prepared == null) {
         textView.setText("", BufferType.NORMAL)
@@ -57,7 +56,7 @@ internal fun applyPreparedText(
     textView.setTextColor(paint.color)
     textView.fontFeatureSettings = paint.fontFeatureSettings
 
-    textView.setLineSpacing(prepared.lineSpacingAdd(nativeLineSpacing), 1f)
-    val text = prepared.displayText(nativeLineSpacing)
+    textView.setLineSpacing(0f, 1f)
+    val text = prepared.displayText()
     textView.setText(text, if (text is Spanned) BufferType.SPANNABLE else BufferType.NORMAL)
 }

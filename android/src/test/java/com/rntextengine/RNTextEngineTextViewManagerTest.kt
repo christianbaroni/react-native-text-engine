@@ -556,7 +556,7 @@ class RNTextEngineTextViewManagerTest {
                 textBreakStrategy = null,
             )
         val prepared = requireNotNull(RNTextEngineBindings.preparedText(handle))
-        val intrinsicWidthPx = referencePlainTextWidthPx(prepared.displayText(false), TextPaint(prepared.style.textPaint))
+        val intrinsicWidthPx = referencePlainTextWidthPx(prepared.displayText(), TextPaint(prepared.style.textPaint))
         val measurement =
             measurePreparedAutoSizeText(
                 handle = handle,
@@ -592,7 +592,7 @@ class RNTextEngineTextViewManagerTest {
                 textBreakStrategy = null,
             )
         val prepared = requireNotNull(RNTextEngineBindings.preparedText(handle))
-        val intrinsicWidthPx = referencePlainTextWidthPx(prepared.displayText(false), TextPaint(prepared.style.textPaint))
+        val intrinsicWidthPx = referencePlainTextWidthPx(prepared.displayText(), TextPaint(prepared.style.textPaint))
         val measurement =
             measurePreparedAutoSizeText(
                 handle = handle,
@@ -630,9 +630,8 @@ class RNTextEngineTextViewManagerTest {
         val prepared = requireNotNull(RNTextEngineBindings.preparedText(handle))
         val textView = AppCompatTextView(application)
 
-        applyPreparedText(textView, prepared, nativeLineSpacing = false)
+        applyPreparedText(textView, prepared)
 
-        assertEquals(0f, prepared.lineSpacingAdd(false), 0f)
         assertTrue(textView.text is Spanned)
         assertEquals("EXACT ROW", textView.text.toString())
         assertEquals(0f, textView.lineSpacingExtra, 0.0001f)
@@ -672,7 +671,7 @@ class RNTextEngineTextViewManagerTest {
         val prepared = requireNotNull(RNTextEngineBindings.preparedText(handle))
         val textView = AppCompatTextView(application)
 
-        applyPreparedText(textView, prepared, nativeLineSpacing = false)
+        applyPreparedText(textView, prepared)
 
         assertTrue(textView.text is Spanned)
         assertEquals(0f, textView.lineSpacingExtra, 0.0001f)

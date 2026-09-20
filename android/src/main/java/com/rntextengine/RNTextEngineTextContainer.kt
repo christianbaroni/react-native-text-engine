@@ -10,8 +10,8 @@ import androidx.core.widget.TextViewCompat
 import kotlin.math.floor
 import kotlin.math.roundToInt
 
-internal open class RNTextEngineTextContainer(context: Context, private val nativeLineSpacing: Boolean) : FrameLayout(context) {
-    val displayView = RNTextEngineAttributedTextDisplayView(context, nativeLineSpacing)
+internal open class RNTextEngineTextContainer(context: Context) : FrameLayout(context) {
+    val displayView = RNTextEngineAttributedTextDisplayView(context)
     var selectionView: AppCompatTextView? = null
         private set
     protected var preparedText: RNTextEngineBindings.PreparedText? = null
@@ -51,7 +51,7 @@ internal open class RNTextEngineTextContainer(context: Context, private val nati
         preparedText = prepared
         displayView.setPreparedText(prepared)
         activeSelectionView?.let {
-            applyPreparedText(it, prepared, nativeLineSpacing)
+            applyPreparedText(it, prepared)
             displayView.applyDrawingStyle(it)
         }
         requestTextLayout()
@@ -125,7 +125,7 @@ internal open class RNTextEngineTextContainer(context: Context, private val nati
             }
             view.setTextIsSelectable(true)
             view.isFocusable = true
-            applyPreparedText(view, preparedText, nativeLineSpacing)
+            applyPreparedText(view, preparedText)
             displayView.applySelectionLayout(view)
             displayView.applyDrawingStyle(view)
             addInternalChild(view)

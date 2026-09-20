@@ -186,7 +186,7 @@ class RNTextEngineBindingsInstrumentedTest {
                 val label = "$chunk masks=${masks.contentToString()} height=$height"
                 try {
                     val prepared = requireNotNull(RNTextEngineBindings.preparedText(handle))
-                    val actualText = prepared.displayText(false) as android.text.Spanned
+                    val actualText = prepared.displayText() as android.text.Spanned
                     if (masks.all { it and ((1 shl 2) or (1 shl 4)) == 0 }) {
                         assertEquals(prepared.capHeights.base, requireNotNull(prepared.capHeights.uniform), 0f)
                     }
@@ -254,7 +254,7 @@ class RNTextEngineBindingsInstrumentedTest {
         )
         try {
             val prepared = requireNotNull(RNTextEngineBindings.preparedText(handle))
-            val text = prepared.displayText(false) as android.text.Spanned
+            val text = prepared.displayText() as android.text.Spanned
             assertTrue(prepared.hasInlineStyleRuns)
             assertEquals(6, text.getSpans(0, text.length, RNTextEngineTextPaintSpan::class.java).size)
             assertEquals(2, text.getSpans(0, text.length, android.text.style.ForegroundColorSpan::class.java).size)
@@ -286,7 +286,7 @@ class RNTextEngineBindingsInstrumentedTest {
                 val prepared = requireNotNull(RNTextEngineBindings.preparedText(handle))
                 val metrics = prepared.style.textPaint.fontMetricsInt
                 val expected = if (lineHeight.isNaN()) (metrics.descent - metrics.ascent) / density.toDouble()
-                    else PixelUtil.toPixelFromDIP(lineHeight) / density.toDouble()
+                    else ceil(PixelUtil.toPixelFromDIP(lineHeight)) / density.toDouble()
                 assertEquals(expected, RNTextEngineBindings.layout(handle, 180.0, 0, null, false)[1], 0.000001)
             } finally {
                 RNTextEngineBindings.release(handle)
@@ -308,7 +308,7 @@ class RNTextEngineBindingsInstrumentedTest {
         val paint = TextPaint(prepared.style.textPaint)
         styled.getSpans(0, styled.length, RNTextEngineTextPaintSpan::class.java).single().updateMeasureState(paint)
         assertEquals(PixelUtil.toPixelFromDIP(23.0), paint.textSize, 0f)
-        assertEquals(25.0, prepared.style.fallbackLineHeight, 0.000001)
+        assertEquals(ceil(PixelUtil.toPixelFromDIP(25.0).toDouble()) / density, prepared.style.fallbackLineHeight, 0.000001)
     }
 
     @Test
@@ -439,7 +439,7 @@ class RNTextEngineBindingsInstrumentedTest {
             manager.updateExtraData(view, prepared)
             measureAndLayout(view, 320, 160)
             val first = requireNotNull(view.displayView.resolveLayout(320))
-            assertSame(prepared.displayText(true), first.text)
+            assertSame(prepared.displayText(), first.text)
             assertEquals(view.defaultTextColor, first.paint.color)
             manager.updateProperties(view, ReactStylesDiffMap(JavaOnlyMap.of("color", Color.BLUE)))
             assertSame(first, view.displayView.resolveLayout(320))
@@ -479,7 +479,7 @@ class RNTextEngineBindingsInstrumentedTest {
             val next = requireNotNull(RNTextEngineBindings.preparedText(nextHandle))
             manager.updateExtraData(view, next)
             RNTextEngineBindings.release(nextHandle)
-            assertSame(next.displayText(true), view.displayView.resolveLayout(320)?.text)
+            assertSame(next.displayText(), view.displayView.resolveLayout(320)?.text)
             assertEquals(next.text, view.selectionView?.text.toString())
             assertEquals(next.style.textPaint.textSize, view.selectionView!!.textSize, 0f)
             assertEquals(Color.BLUE, view.selectionView?.currentTextColor)
@@ -981,7 +981,7 @@ class RNTextEngineBindingsInstrumentedTest {
         }
         val prepared = requireNotNull(RNTextEngineBindings.preparedText(handle))
         assertSame(prepared, RNTextEngineBindings.preparedText(handle))
-        val text = prepared.displayText(false) as android.text.Spanned
+        val text = prepared.displayText() as android.text.Spanned
         assertTrue("Canonical spans must be immutable", text !is android.text.Spannable)
         val inherited = text.getSpans(5, 14, RNTextEngineTextPaintSpan::class.java).single()
         val explicit = text.getSpans(15, 23, android.text.style.CharacterStyle::class.java).single()
@@ -1060,7 +1060,7 @@ class RNTextEngineBindingsInstrumentedTest {
                 return slot.javaClass.getDeclaredField("layout").apply { isAccessible = true }.get(slot) as Layout
             }
             for (styled in listOf(false, true)) {
-                for (lineHeight in doubleArrayOf(Double.NaN, 24.0)) {
+                for (lineHeight in doubleArrayOf(Double.NaN, 12.0, 24.0, 24.5)) {
                     for (anchor in listOf(false, true)) {
                         for (maxLines in intArrayOf(0, 2)) {
                             for (align in listOf(null, "left", "center", "right", "justify")) {
@@ -1085,10 +1085,10 @@ class RNTextEngineBindingsInstrumentedTest {
                                     org.junit.Assert.assertArrayEquals(expected, actual, 0.0001)
                                     val prepared = requireNotNull(RNTextEngineBindings.preparedText(handle))
                                     val measured = pending(prepared)
-                                    val eligible = (styled || lineHeight.isNaN() || !anchor) && (align == null || align == "left")
+                                    val eligible = align == null || align == "left"
                                     if (eligible) assertTrue(measured != null)
                                     fun view(content: RNTextEngineBindings.PreparedText) =
-                                        RNTextEngineAttributedTextDisplayView(application, true).apply {
+                                        RNTextEngineAttributedTextDisplayView(application).apply {
                                             setPreparedText(content)
                                             numberOfLines = maxLines
                                             ellipsizeMode = "tail"
@@ -1161,7 +1161,7 @@ class RNTextEngineBindingsInstrumentedTest {
                 tabularNumbers = false,
                 textBreakStrategy = "highQuality",
             )
-            fun createView() = RNTextEngineAttributedTextDisplayView(application, nativeLineSpacing = true).apply {
+            fun createView() = RNTextEngineAttributedTextDisplayView(application).apply {
                 setPreparedText(prepared)
                 layout(0, 0, 320, 240)
             }
@@ -1199,25 +1199,27 @@ class RNTextEngineBindingsInstrumentedTest {
     }
 
     @Test
-    fun naturalHeightMeasurementMatchesRenderedFallbackFonts() {
+    fun measurementMatchesRenderedLineHeightsAndFallbackFonts() {
         InstrumentationRegistry.getInstrumentation().runOnMainSync {
-            for (text in listOf("OK 1", "日本語の短い文章", "বাংলা ভাষা", "Hello 🙂 world")) {
+            val texts = listOf("OK 1", "日本語の短い文章", "বাংলা ভাষা", "Hello 🙂 world", "Ag\n", "Ag\n\n", "\n", "\n\n", "\nAg", "Ag\nAg\nAg")
+            for (text in texts) for (lineHeight in listOf(Double.NaN, 8.0, 16.25, 32.0)) for (includeFontPadding in listOf(false, true)) {
                 val handle = RNTextEngineBindings.prepare(
-                    text, null, null, 16.0, null, null, 0.0, Double.NaN,
-                    false, false, false, null,
+                    text, null, null, 16.0, null, null, 0.0, lineHeight,
+                    false, includeFontPadding, false, null,
                 )
                 try {
                     val prepared = requireNotNull(RNTextEngineBindings.preparedText(handle))
                     for (width in listOf(80.0, 160.0)) {
-                        for (maxLines in listOf(0, 2)) {
-                            val view = RNTextEngineAttributedTextDisplayView(application, nativeLineSpacing = false).apply {
+                        for (maxLines in listOf(0, 1, 2)) for (ellipsize in listOf("tail", "clip")) {
+                            val view = RNTextEngineAttributedTextDisplayView(application).apply {
                                 setPreparedText(prepared)
                                 numberOfLines = maxLines
-                                ellipsizeMode = "tail"
+                                ellipsizeMode = ellipsize
                             }
                             val widthPx = PixelUtil.toPixelFromDIP(width.toFloat()).roundToInt()
                             val layout = requireNotNull(view.resolveLayout(widthPx))
-                            val lastLine = layout.lineCount - 1
+                            val lineCount = if (maxLines > 0) minOf(layout.lineCount, maxLines) else layout.lineCount
+                            val lastLine = lineCount - 1
                             for (anchor in listOf(false, true)) {
                                 val expectedPx = if (anchor) {
                                     layout.getLineBaseline(lastLine) - view.resolveCapHeightInsets(widthPx).top
@@ -1226,21 +1228,70 @@ class RNTextEngineBindingsInstrumentedTest {
                                 }
                                 val expected = PixelUtil.toDIPFromPixel(expectedPx).toDouble()
                                 val measured = RNTextEngineBindings.measure(
-                                    text, null, null, 16.0, null, null, 0.0, Double.NaN,
-                                    false, false, false, null, width, maxLines, "tail", anchor,
+                                    text, null, null, 16.0, null, null, 0.0, lineHeight,
+                                    false, includeFontPadding, false, null, width, maxLines, ellipsize, anchor,
                                 )
-                                val cached = RNTextEngineBindings.layout(handle, width, maxLines, "tail", anchor)
-                                val lines = RNTextEngineBindings.layoutLines(handle, width, maxLines, "tail", anchor)
+                                val batch = RNTextEngineBindings.measureBatch(
+                                    arrayOf("prefix", text), null, null, 16.0, null, null, 0.0, lineHeight,
+                                    false, includeFontPadding, false, null, width, maxLines, ellipsize, anchor,
+                                ).copyOfRange(4, 8)
+                                val cached = RNTextEngineBindings.layout(handle, width, maxLines, ellipsize, anchor)
+                                val lines = RNTextEngineBindings.layoutLines(handle, width, maxLines, ellipsize, anchor)
                                 val tolerance = PixelUtil.toDIPFromPixel(1f).toDouble()
-                                for (result in listOf(measured, cached, lines)) {
-                                    assertEquals("text=$text width=$width maxLines=$maxLines anchor=$anchor", expected, result[1], tolerance)
-                                    assertEquals(layout.lineCount.toDouble(), result[2], 0.0)
+                                for (result in listOf(measured, batch, cached, lines)) {
+                                    assertEquals("text=$text lineHeight=$lineHeight width=$width maxLines=$maxLines mode=$ellipsize padding=$includeFontPadding anchor=$anchor", expected, result[1], tolerance)
+                                    assertEquals(lineCount.toDouble(), result[2], 0.0)
                                 }
                             }
                         }
                     }
                 } finally {
                     RNTextEngineBindings.release(handle)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun explicitLineHeightControlsPlainTextLineBoxes() {
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            val manager = RNTextEngineTextViewManager()
+            val view = RNTextEngineTextViewManager.RNTextEngineTextView(application)
+            manager.setFontSize(view, 32.0)
+            for (text in listOf("Ag\nAg\nAg", "বাংলা\n日本語\n🙂")) {
+                manager.setText(view, text)
+                for (lineHeight in listOf(16.0, 16.25, 32.0, 48.0)) {
+                    manager.setLineHeight(view, lineHeight)
+                    val lineHeightPx = ceil(PixelUtil.toPixelFromDIP(lineHeight.toFloat()).toDouble()).toInt()
+                    for (anchor in listOf(false, true)) {
+                        view.anchorToCapHeight = anchor
+                        for (selectable in listOf(false, true, false)) {
+                            view.setSelectable(selectable)
+                            manager.setRuns(view, null)
+                            measureAndLayout(view, 600, 600)
+                            val layout = if (selectable) requireNotNull(view.selectionView?.layout)
+                                else requireNotNull(view.displayView.resolveLayout(600))
+                            val case = "$text height=$lineHeight anchor=$anchor selectable=$selectable"
+                            assertEquals(case, 3, layout.lineCount)
+                            assertEquals(case, lineHeightPx * layout.lineCount, layout.height)
+                            for (line in 0 until layout.lineCount) {
+                                assertEquals(case, lineHeightPx * line, layout.getLineTop(line))
+                                assertEquals(case, lineHeightPx * (line + 1), layout.getLineBottom(line))
+                            }
+                            manager.setRuns(view, JavaOnlyArray.of(JavaOnlyMap.of(
+                                "start", 0, "end", text.length, "style", JavaOnlyMap.of("color", "#0000ff"),
+                            )))
+                            measureAndLayout(view, 600, 600)
+                            val styled = if (selectable) requireNotNull(view.selectionView?.layout)
+                                else requireNotNull(view.displayView.resolveLayout(600))
+                            assertEquals(case, layout.lineCount, styled.lineCount)
+                            for (line in 0 until layout.lineCount) {
+                                assertEquals(case, layout.getLineTop(line), styled.getLineTop(line))
+                                assertEquals(case, layout.getLineBottom(line), styled.getLineBottom(line))
+                                assertEquals(case, layout.getLineBaseline(line), styled.getLineBaseline(line))
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -2112,7 +2163,7 @@ class RNTextEngineBindingsInstrumentedTest {
     ): Layout {
         val widthPx = ceil(PixelUtil.toPixelFromDIP(widthDp.toFloat()).toDouble()).toInt()
         return buildStaticLayoutCompat(
-            text = prepared.displayText(false),
+            text = prepared.displayText(),
             paint = TextPaint(prepared.style.textPaint),
             widthPx = widthPx,
             includeFontPadding = prepared.style.includeFontPadding,

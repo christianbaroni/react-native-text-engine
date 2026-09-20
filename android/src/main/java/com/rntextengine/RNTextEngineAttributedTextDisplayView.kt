@@ -16,7 +16,7 @@ import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
 
-internal class RNTextEngineAttributedTextDisplayView(context: Context, private val nativeLineSpacing: Boolean) : View(context) {
+internal class RNTextEngineAttributedTextDisplayView(context: Context) : View(context) {
     private var cachedLayout: Layout? = null
     private var cachedLayoutWidth = -1
     private var layoutDirty = true
@@ -133,7 +133,7 @@ internal class RNTextEngineAttributedTextDisplayView(context: Context, private v
         val capHeights = prepared.capHeights
         return resolveCapHeightInsetsPx(
             layout = layout,
-            text = prepared.displayText(nativeLineSpacing),
+            text = prepared.displayText(),
             defaultCapHeightPx = capHeights.base,
             uniformCapHeightPx = capHeights.uniform,
         )
@@ -178,9 +178,9 @@ internal class RNTextEngineAttributedTextDisplayView(context: Context, private v
         val alignment = resolveLayoutAlignment(textAlign)
         val justificationMode = resolveJustificationMode(textAlign)
         cachedLayout = prepared.takeMeasuredLayout(max(1, contentWidth), maxLines, ellipsize,
-            alignment, justificationMode, nativeLineSpacing)?.also { applyDrawingStyle(it.paint) }
+            alignment, justificationMode)?.also { applyDrawingStyle(it.paint) }
             ?: buildStaticLayoutCompat(
-                text = prepared.displayText(nativeLineSpacing),
+                text = prepared.displayText(),
                 paint = TextPaint(prepared.style.textPaint).also(::applyDrawingStyle),
                 widthPx = max(1, contentWidth),
                 includeFontPadding = prepared.style.includeFontPadding,
@@ -190,7 +190,6 @@ internal class RNTextEngineAttributedTextDisplayView(context: Context, private v
                 ellipsize = ellipsize,
                 alignment = alignment,
                 justificationMode = justificationMode,
-                lineSpacingAdd = prepared.lineSpacingAdd(nativeLineSpacing),
             )
         cachedLayoutWidth = contentWidth
         layoutDirty = false

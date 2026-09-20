@@ -327,7 +327,7 @@ internal class RNTextEngineTextViewManager :
         view.setContentPadding(left, top, right, bottom)
     }
 
-    internal class RNTextEngineTextView(context: Context) : RNTextEngineTextContainer(context, nativeLineSpacing = true) {
+    internal class RNTextEngineTextView(context: Context) : RNTextEngineTextContainer(context) {
         var fontFamily: String? = null
         var fontStyle: String? = null
         var fontWeight: String? = null

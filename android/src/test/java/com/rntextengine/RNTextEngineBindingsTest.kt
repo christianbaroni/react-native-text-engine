@@ -27,7 +27,6 @@ import kotlin.math.max
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -271,7 +270,7 @@ class RNTextEngineBindingsTest {
                 textBreakStrategy = null,
             )
         val prepared = requireNotNull(RNTextEngineBindings.preparedText(handle))
-        val expectedWidthDp = measureReactTextWidth(prepared.displayText(false), prepared.style.textPaint, prepared.style.includeFontPadding)
+        val expectedWidthDp = measureReactTextWidth(prepared.displayText(), prepared.style.textPaint, prepared.style.includeFontPadding)
         val measuredWidthDp = RNTextEngineBindings.measurePreparedWidth(handle)
 
         assertEquals(expectedWidthDp, measuredWidthDp, 0.0001)
@@ -314,7 +313,7 @@ class RNTextEngineBindingsTest {
             )
         val prepared = requireNotNull(RNTextEngineBindings.preparedText(handle))
 
-        assertEquals(prepared.displayText(false).toString(), direct.displayText(true).toString())
+        assertEquals(prepared.displayText().toString(), direct.displayText().toString())
         assertEquals(prepared.style.textPaint.textSize, direct.style.textPaint.textSize, 0.0001f)
         assertEquals(prepared.style.textPaint.letterSpacing, direct.style.textPaint.letterSpacing, 0.0001f)
         assertEquals(prepared.style.textPaint.fontFeatureSettings, direct.style.textPaint.fontFeatureSettings)
@@ -346,35 +345,11 @@ class RNTextEngineBindingsTest {
             )
         val prepared = requireNotNull(RNTextEngineBindings.preparedText(handle))
 
-        assertEquals(0f, prepared.lineSpacingAdd(false), 0f)
-        assertTrue(prepared.displayText(false) is Spanned)
-        assertEquals("EXACT ROW", prepared.displayText(false).toString())
+        assertTrue(prepared.displayText() is Spanned)
+        assertEquals("EXACT ROW", prepared.displayText().toString())
         assertEquals(PixelUtil.toPixelFromDIP(24f), prepared.style.lineHeightPx ?: Float.NaN, 0.0001f)
 
         RNTextEngineBindings.release(handle)
-    }
-
-    @Test
-    fun plainTextViewDisplayDataKeepsTheNativeMountedTextPath() {
-        val direct =
-            RNTextEngineBindings.prepareTextViewContent(
-                text = "exact row",
-                textTransform = "uppercase",
-                color = null,
-                fontFamily = null,
-                fontSize = 20.0,
-                fontWeight = "800",
-                fontStyle = null,
-                letterSpacing = 1.5,
-                lineHeight = 24.0,
-                allowFontScaling = false,
-                tabularNumbers = false,
-                textBreakStrategy = null,
-            )
-
-        assertFalse(direct.displayText(true) is Spanned)
-        assertEquals("EXACT ROW", direct.displayText(true).toString())
-        assertEquals(PixelUtil.toPixelFromDIP(24f), direct.style.lineHeightPx ?: Float.NaN, 0.0001f)
     }
 
     @Test
@@ -408,8 +383,7 @@ class RNTextEngineBindingsTest {
             )
         val prepared = requireNotNull(RNTextEngineBindings.preparedText(handle))
 
-        assertEquals(0f, prepared.lineSpacingAdd(false), 0f)
-        assertTrue(prepared.displayText(false) is Spanned)
+        assertTrue(prepared.displayText() is Spanned)
 
         RNTextEngineBindings.release(handle)
     }
@@ -432,8 +406,8 @@ class RNTextEngineBindingsTest {
                 textBreakStrategy = null,
             )
         val prepared = requireNotNull(RNTextEngineBindings.preparedText(handle))
-        val widthDp = measureReactTextWidth(prepared.displayText(false), prepared.style.textPaint, prepared.style.includeFontPadding)
-        val expectedWidthDp = measureReactTextLayoutWidth(prepared.displayText(false), prepared.style.textPaint, prepared.style.includeFontPadding, widthDp)
+        val widthDp = measureReactTextWidth(prepared.displayText(), prepared.style.textPaint, prepared.style.includeFontPadding)
+        val expectedWidthDp = measureReactTextLayoutWidth(prepared.displayText(), prepared.style.textPaint, prepared.style.includeFontPadding, widthDp)
         val measuredWidthDp = RNTextEngineBindings.layout(handle, widthDp, 0, null, false)[0]
 
         assertEquals(expectedWidthDp, measuredWidthDp, 0.0001)
@@ -460,7 +434,7 @@ class RNTextEngineBindingsTest {
                 textBreakStrategy = null,
             )
         val prepared = requireNotNull(RNTextEngineBindings.preparedText(handle))
-        val intrinsicWidthDp = measureReactTextWidth(prepared.displayText(false), prepared.style.textPaint, prepared.style.includeFontPadding)
+        val intrinsicWidthDp = measureReactTextWidth(prepared.displayText(), prepared.style.textPaint, prepared.style.includeFontPadding)
         var widthDp = max(1.0, intrinsicWidthDp * 0.5)
         var layout = buildEllipsizedSingleLineLayout(prepared, widthDp)
 
@@ -509,7 +483,7 @@ class RNTextEngineBindingsTest {
         assertNotNull(prepared)
         assertEquals("SSB", prepared?.text?.toString())
 
-        val text = prepared?.displayText(false) as android.text.Spanned
+        val text = prepared?.displayText() as android.text.Spanned
         val spans = text.getSpans(0, text.length, RNTextEngineTextPaintSpan::class.java)
         assertEquals(1, spans.size)
         assertEquals(2, text.getSpanStart(spans[0]))
@@ -937,7 +911,7 @@ class RNTextEngineBindingsTest {
                 fontSize = 14.0,
                 glyphPalette = ".#*",
                 letterSpacing = 0.0,
-                lineHeight = 16.0,
+                lineHeight = 16.25,
                 textAlign = "center",
                 variantColors = arrayOf("#ffffffff"),
                 variantFontWeights = arrayOfNulls(1),
@@ -955,9 +929,20 @@ class RNTextEngineBindingsTest {
             assertTrue(resolveGlyphFieldRenderedRows(glyphField).isEmpty())
 
             val bitmap = Bitmap.createBitmap(80, 40, Bitmap.Config.ARGB_8888)
-            val canvas = Canvas(bitmap)
+            val rowHeightPx = PixelUtil.toPixelFromDIP(16.25f)
+            var drawnRows = 0
+            val canvas = object : Canvas(bitmap) {
+                override fun drawText(text: String, x: Float, y: Float, paint: android.graphics.Paint) {
+                    val metrics = paint.fontMetrics
+                    val center = y + (metrics.ascent + metrics.descent) * 0.5f
+                    assertEquals(bitmap.height * 0.5f + (drawnRows - 0.5f) * rowHeightPx, center, 0.0001f)
+                    drawnRows += 1
+                    super.drawText(text, x, y, paint)
+                }
+            }
             RNTextEngineBindings.drawGlyphField(handle, canvas, bitmap.width.toFloat(), bitmap.height.toFloat())
 
+            assertEquals(2, drawnRows)
             assertEquals(2, resolveGlyphFieldRenderedRows(glyphField).size)
         } finally {
             RNTextEngineBindings.releaseGlyphField(handle)
@@ -1049,7 +1034,7 @@ class RNTextEngineBindingsTest {
 
             val resolved = requireNotNull(actual)
             val context =
-                "text=${prepared.displayText(false)} widthDp=$widthDp anchor=$anchorToCapHeight start=$start expected=$expected actual=${resolved.contentToString()}"
+                "text=${prepared.displayText()} widthDp=$widthDp anchor=$anchorToCapHeight start=$start expected=$expected actual=${resolved.contentToString()}"
             assertEquals(context, expected.start, resolved[0], 0.0001)
             assertEquals(context, expected.end, resolved[1], 0.0001)
             assertEquals(context, expected.width, resolved[2], 0.0001)
@@ -1067,7 +1052,7 @@ class RNTextEngineBindingsTest {
         widthDp: Double,
         anchorToCapHeight: Boolean,
     ): PackedLine? {
-        val text = prepared.displayText(false)
+        val text = prepared.displayText()
         if (start < 0 || start >= text.length) return null
 
         val widthPx = max(1, ceil(PixelUtil.toPixelFromDIP(widthDp.toFloat()).toDouble()).toInt())
@@ -1210,7 +1195,7 @@ class RNTextEngineBindingsTest {
         widthDp: Double,
     ): StaticLayout {
         val widthPx = ceil(PixelUtil.toPixelFromDIP(widthDp.toFloat()).toDouble()).toInt()
-        return StaticLayout.Builder.obtain(prepared.displayText(false), 0, prepared.displayText(false).length, TextPaint(prepared.style.textPaint), widthPx)
+        return StaticLayout.Builder.obtain(prepared.displayText(), 0, prepared.displayText().length, TextPaint(prepared.style.textPaint), widthPx)
             .setAlignment(Layout.Alignment.ALIGN_NORMAL)
             .setLineSpacing(0f, 1f)
             .setIncludePad(prepared.style.includeFontPadding)
