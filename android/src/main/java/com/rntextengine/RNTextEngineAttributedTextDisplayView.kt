@@ -52,7 +52,7 @@ internal class RNTextEngineAttributedTextDisplayView(context: Context, private v
     init {
         isFocusable = false
         isClickable = false
-        setBackgroundColor(Color.TRANSPARENT)
+        background = null
     }
 
     fun setPreparedText(value: RNTextEngineBindings.PreparedText?) {

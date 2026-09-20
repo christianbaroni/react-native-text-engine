@@ -39,6 +39,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertNotSame
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertThrows
 import org.junit.Before
@@ -742,6 +743,70 @@ class RNTextEngineBindingsInstrumentedTest {
                 }
             } finally {
                 bitmap.recycle()
+            }
+        }
+    }
+
+    @Test
+    fun emptyBackgroundsPreserveTransparencyAndRequestedColors() {
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            val testContext = InstrumentationRegistry.getInstrumentation().context
+            val themeId = testContext.resources.getIdentifier("RNTETextTheme", "style", testContext.packageName)
+            assertNotEquals(0, themeId)
+            val context = androidx.appcompat.view.ContextThemeWrapper(testContext, themeId)
+            assertTrue("The widget theme must supply a background", androidx.appcompat.widget.AppCompatTextView(context).background != null)
+            val manager = RNTextEngineTextViewManager()
+            val actual = RNTextEngineTextViewManager.RNTextEngineTextView(context)
+            val reference = RNTextEngineTextViewManager.RNTextEngineTextView(context)
+            reference.setBackgroundColor(Color.TRANSPARENT)
+            reference.displayView.setBackgroundColor(Color.TRANSPARENT)
+            assertNull(actual.background)
+            assertNull(actual.displayView.background)
+            for (view in listOf(actual, reference)) {
+                android.widget.FrameLayout(application).addView(view)
+                manager.setText(view, "Background and overflow: Ag pq 🙂")
+                manager.setFontSize(view, 24.0)
+                manager.setLineHeight(view, 32.0)
+                manager.setColor(view, Color.BLACK)
+                manager.setPadding(view, 5, 3, 7, 2)
+            }
+            fun render(view: View) = Bitmap.createBitmap(360, 180, Bitmap.Config.ARGB_8888).also {
+                val host = view.parent as View
+                measureAndLayout(host, 360, 180)
+                host.draw(Canvas(it))
+            }
+            for (anchored in listOf(false, true, false)) {
+                for (selectable in listOf(false, true, false)) {
+                    for (color in listOf(null, Color.GREEN, Color.argb(128, 255, 0, 0), Color.BLUE, Color.TRANSPARENT, null)) {
+                        for (opacity in listOf(1f, 0.4f)) {
+                            for (view in listOf(actual, reference)) {
+                                view.anchorToCapHeight = anchored
+                                view.setSelectable(selectable)
+                                if (color == null) {
+                                    view.background = if (view === reference) android.graphics.drawable.ColorDrawable(Color.TRANSPARENT) else null
+                                    view.reapplyPaperOpacity()
+                                } else {
+                                    manager.setBackgroundColor(view, color)
+                                }
+                                manager.setOpacity(view, opacity)
+                                measureAndLayout(view, 360, 180)
+                            }
+                            reference.selectionView?.setBackgroundColor(Color.TRANSPARENT)
+                            actual.selectionView?.let { assertNull(it.background) }
+                            val actualBitmap = render(actual)
+                            val case = "anchor=$anchored selectable=$selectable color=$color opacity=$opacity"
+                            val expectedCorner = if (color == null) Color.TRANSPARENT else
+                                Color.argb((opacity * Color.alpha(color)).roundToInt(), Color.red(color), Color.green(color), Color.blue(color))
+                            assertEquals(case, expectedCorner, actualBitmap.getPixel(359, 179))
+                            if (color == null || color == Color.TRANSPARENT) {
+                                val expectedBitmap = render(reference)
+                                assertTrue(case, actualBitmap.sameAs(expectedBitmap))
+                                expectedBitmap.recycle()
+                            }
+                            actualBitmap.recycle()
+                        }
+                    }
+                }
             }
         }
     }

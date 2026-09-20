@@ -6,6 +6,7 @@
     <style name="RNTETextViewStyle" parent="android:Widget.TextView">
         <item name="android:textAppearance">@style/RNTETextAppearance</item>
         <item name="android:padding">23dp</item>
+        <item name="android:background">#ff2345aa</item>
         <item name="android:gravity">bottom|right</item>
         <item name="android:maxLines">1</item>
         <item name="android:textAllCaps">true</item>

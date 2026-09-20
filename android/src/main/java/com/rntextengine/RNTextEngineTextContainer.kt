@@ -1,7 +1,6 @@
 package com.rntextengine
 
 import android.content.Context
-import android.graphics.Color
 import android.graphics.drawable.Drawable
 import android.text.Layout
 import android.view.View
@@ -41,7 +40,7 @@ internal open class RNTextEngineTextContainer(context: Context, private val nati
     init {
         clipChildren = false
         clipToPadding = false
-        setBackgroundColor(Color.TRANSPARENT)
+        background = null
         addInternalChild(displayView)
     }
 
@@ -111,7 +110,7 @@ internal open class RNTextEngineTextContainer(context: Context, private val nati
         if (value == (activeSelectionView != null)) return
         if (value) {
             val view = selectionView ?: AppCompatTextView(context, null, 0).also {
-                it.setBackgroundColor(Color.TRANSPARENT)
+                it.background = null
                 it.setSingleLine(false)
                 it.setHorizontallyScrolling(false)
                 it.transformationMethod = null
