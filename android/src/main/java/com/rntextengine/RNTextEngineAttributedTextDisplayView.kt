@@ -22,6 +22,7 @@ internal class RNTextEngineAttributedTextDisplayView(context: Context, private v
     private var layoutDirty = true
     private var preparedText: RNTextEngineBindings.PreparedText? = null
     private var textAlign: String? = null
+    private var textColor: Int? = null
     private var decorationFlags = 0
     private var textShadowColor: Int? = null
     private var textShadowOffsetHeightPx = 0f
@@ -64,6 +65,12 @@ internal class RNTextEngineAttributedTextDisplayView(context: Context, private v
         if (textAlign == value) return
         textAlign = value
         invalidateLayout()
+    }
+
+    fun setTextColorValue(value: Int) {
+        if (textColor == value) return
+        textColor = value
+        invalidateDrawingStyle()
     }
 
     fun setTextDecorationLineValue(value: String?) {
@@ -114,6 +121,7 @@ internal class RNTextEngineAttributedTextDisplayView(context: Context, private v
     }
 
     fun applyDrawingStyle(view: TextView) {
+        textColor?.let(view::setTextColor)
         view.paintFlags = (view.paintFlags and Paint.UNDERLINE_TEXT_FLAG.inv() and Paint.STRIKE_THRU_TEXT_FLAG.inv()) or decorationFlags
         view.setShadowLayer(textShadowRadiusPx, textShadowOffsetWidthPx, textShadowOffsetHeightPx, textShadowColor ?: Color.TRANSPARENT)
     }
@@ -165,8 +173,12 @@ internal class RNTextEngineAttributedTextDisplayView(context: Context, private v
         if (!layoutDirty && cachedLayoutWidth == contentWidth) return cachedLayout
 
         val maxLines = if (numberOfLines > 0) numberOfLines else Int.MAX_VALUE
-        cachedLayout =
-            buildStaticLayoutCompat(
+        val ellipsize = resolveEllipsize(maxLines, ellipsizeMode)
+        val alignment = resolveAlignment(textAlign)
+        val justificationMode = resolveJustificationMode(textAlign)
+        cachedLayout = prepared.takeMeasuredLayout(max(1, contentWidth), maxLines, ellipsize,
+            alignment, justificationMode, nativeLineSpacing)?.also { applyDrawingStyle(it.paint) }
+            ?: buildStaticLayoutCompat(
                 text = prepared.displayText(nativeLineSpacing),
                 paint = TextPaint(prepared.style.textPaint).also(::applyDrawingStyle),
                 widthPx = max(1, contentWidth),
@@ -174,9 +186,9 @@ internal class RNTextEngineAttributedTextDisplayView(context: Context, private v
                 breakStrategy = Layout.BREAK_STRATEGY_HIGH_QUALITY,
                 hyphenationFrequency = Layout.HYPHENATION_FREQUENCY_NORMAL,
                 maxLines = maxLines,
-                ellipsize = resolveEllipsize(maxLines, ellipsizeMode),
-                alignment = resolveAlignment(textAlign),
-                justificationMode = resolveJustificationMode(textAlign),
+                ellipsize = ellipsize,
+                alignment = alignment,
+                justificationMode = justificationMode,
                 lineSpacingAdd = prepared.lineSpacingAdd(nativeLineSpacing),
             )
         cachedLayoutWidth = contentWidth
@@ -197,6 +209,7 @@ internal class RNTextEngineAttributedTextDisplayView(context: Context, private v
     }
 
     private fun applyDrawingStyle(paint: TextPaint) {
+        textColor?.let { paint.color = it }
         paint.flags = (paint.flags and Paint.UNDERLINE_TEXT_FLAG.inv() and Paint.STRIKE_THRU_TEXT_FLAG.inv()) or decorationFlags
         paint.setShadowLayer(textShadowRadiusPx, textShadowOffsetWidthPx, textShadowOffsetHeightPx, textShadowColor ?: Color.TRANSPARENT)
     }

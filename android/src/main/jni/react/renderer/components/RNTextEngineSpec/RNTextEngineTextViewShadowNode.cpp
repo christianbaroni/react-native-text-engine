@@ -7,11 +7,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
-#include <functional>
 #include <limits>
 #include <stdexcept>
 #include <string_view>
-#include <type_traits>
 #include <unordered_map>
 #include <utility>
 
@@ -20,9 +18,9 @@ namespace rntextengine {
 namespace {
 
 constexpr auto kPrepareTextViewSignature =
-    "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;DLjava/lang/String;Ljava/lang/String;DDZZZLjava/lang/String;)J";
+    "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;DLjava/lang/String;Ljava/lang/String;DDZZZLjava/lang/String;JZ)J";
 constexpr auto kPrepareTextViewWithRunsSignature =
-    "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;DLjava/lang/String;Ljava/lang/String;DDZZZLjava/lang/String;[I[I[I[Ljava/lang/String;[Ljava/lang/String;[D[Ljava/lang/String;[Ljava/lang/String;[D[D[Z)J";
+    "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;DLjava/lang/String;Ljava/lang/String;DDZZZLjava/lang/String;[I[I[I[Ljava/lang/String;[Ljava/lang/String;[D[Ljava/lang/String;[Ljava/lang/String;[D[D[ZJZ)J";
 constexpr auto kTransformTextWithBoundariesSignature =
     "(Ljava/lang/String;Ljava/lang/String;[I)[Ljava/lang/Object;";
 
@@ -30,6 +28,7 @@ struct JavaBindings {
   jclass bindingsClass = nullptr;
   jclass stringClass = nullptr;
   jmethodID scaleTypographyValueMethod = nullptr;
+  jmethodID textEnvironmentVersionMethod = nullptr;
   jmethodID prepareTextViewMethod = nullptr;
   jmethodID prepareTextViewWithRunsMethod = nullptr;
   jmethodID releaseMethod = nullptr;
@@ -48,6 +47,7 @@ struct JavaBindings {
 
     scaleTypographyValueMethod =
         env->GetStaticMethodID(bindingsClass, "scaleTypographyValue", "(D)D");
+    textEnvironmentVersionMethod = env->GetStaticMethodID(bindingsClass, "textEnvironmentVersion", "()J");
     prepareTextViewMethod = env->GetStaticMethodID(
         bindingsClass,
         "prepareTextView",
@@ -87,8 +87,8 @@ bool clearPendingException(JNIEnv* env, const char* fallback) {
   return true;
 }
 
-jstring toJString(JNIEnv* env, const std::string& value) {
-  return value.empty() ? nullptr : env->NewStringUTF(value.c_str());
+jstring toJString(const std::string& value) {
+  return value.empty() ? nullptr : facebook::jni::make_jstring(value).release();
 }
 
 jintArray toIntArray(JNIEnv* env, const std::vector<int>& values) {
@@ -133,7 +133,7 @@ jobjectArray toStringArray(JNIEnv* env, const std::vector<std::string>& values) 
 
   auto array = env->NewObjectArray(static_cast<jsize>(values.size()), getBindings(env).stringClass, nullptr);
   for (size_t index = 0; index < values.size(); index += 1) {
-    auto value = toJString(env, values[index]);
+    auto value = toJString(values[index]);
     env->SetObjectArrayElement(array, static_cast<jsize>(index), value);
     if (value != nullptr) env->DeleteLocalRef(value);
   }
@@ -198,7 +198,9 @@ uint64_t prepareTextViewMeasurementHandle(
     double letterSpacing,
     double lineHeight,
     bool tabularNumbers,
-    const TextViewMeasurementRuns& runs) {
+    const TextViewMeasurementRuns& runs,
+    uint64_t environmentVersion,
+    bool hasNested) {
   bool needsDetach = false;
   JNIEnv* env = getEnv(needsDetach);
   if (env == nullptr) {
@@ -206,11 +208,11 @@ uint64_t prepareTextViewMeasurementHandle(
   }
   const auto& bindings = getBindings(env);
 
-  auto textValue = toJString(env, text);
-  auto textTransformValue = toJString(env, textTransform);
-  auto fontFamilyValue = toJString(env, fontFamily);
-  auto fontWeightValue = toJString(env, fontWeight);
-  auto fontStyleValue = toJString(env, fontStyle);
+  auto textValue = facebook::jni::make_jstring(text).release();
+  auto textTransformValue = toJString(textTransform);
+  auto fontFamilyValue = toJString(fontFamily);
+  auto fontWeightValue = toJString(fontWeight);
+  auto fontStyleValue = toJString(fontStyle);
 
   jlong handle = 0;
   if (runs.starts.empty()) {
@@ -229,7 +231,9 @@ uint64_t prepareTextViewMeasurementHandle(
         allowFontScaling,
         false,
         tabularNumbers,
-        nullptr);
+        nullptr,
+        static_cast<jlong>(environmentVersion),
+        static_cast<jboolean>(hasNested));
   } else {
     auto runStarts = toIntArray(env, runs.starts);
     auto runEnds = toIntArray(env, runs.ends);
@@ -269,7 +273,9 @@ uint64_t prepareTextViewMeasurementHandle(
         runFontStyles,
         runLetterSpacings,
         runLineHeights,
-        runTabularNumbers);
+        runTabularNumbers,
+        static_cast<jlong>(environmentVersion),
+        static_cast<jboolean>(hasNested));
 
     cleanupLocalRef(env, runStarts);
     cleanupLocalRef(env, runEnds);
@@ -355,8 +361,8 @@ std::pair<std::string, std::vector<int>> transformTextWithBoundaries(
   }
   const auto& bindings = getBindings(env);
 
-  auto textValue = toJString(env, text);
-  auto transformValue = toJString(env, textTransform);
+  auto textValue = facebook::jni::make_jstring(text).release();
+  auto transformValue = toJString(textTransform);
   auto boundariesValue = toIntArray(env, boundaries);
 
   auto result = reinterpret_cast<jobjectArray>(env->CallStaticObjectMethod(
@@ -382,11 +388,7 @@ std::pair<std::string, std::vector<int>> transformTextWithBoundaries(
 
   std::string transformedText = text;
   if (transformedTextValue != nullptr) {
-    const char* chars = env->GetStringUTFChars(transformedTextValue, nullptr);
-    if (chars != nullptr) {
-      transformedText = chars;
-      env->ReleaseStringUTFChars(transformedTextValue, chars);
-    }
+    transformedText = facebook::jni::wrap_alias(transformedTextValue)->toStdString();
   }
 
   auto mappedBoundaries = toIntVector(env, mappedBoundariesValue);
@@ -419,6 +421,19 @@ void releasePreparedTextMeasurementHandle(uint64_t handle) {
   if (needsDetach) javaVm()->DetachCurrentThread();
 }
 
+uint64_t textEnvironmentVersion() {
+  facebook::jni::ThreadScope attached;
+  auto* env = facebook::jni::Environment::current();
+  const auto& bindings = getBindings(env);
+  const auto version = env->CallStaticLongMethod(bindings.bindingsClass, bindings.textEnvironmentVersionMethod);
+  facebook::jni::throwPendingJniExceptionAsCppException();
+  return static_cast<uint64_t>(version);
+}
+
+PreparedTextHandle::~PreparedTextHandle() {
+  releasePreparedTextMeasurementHandle(handle);
+}
+
 } // namespace rntextengine
 
 namespace facebook::react {
@@ -434,24 +449,13 @@ constexpr int kRunStyleHasLetterSpacing = 1 << 5;
 constexpr int kRunStyleHasLineHeight = 1 << 6;
 constexpr int kRunStyleHasTabularNumbers = 1 << 7;
 
-#ifdef RN_SERIALIZABLE_STATE
-constexpr MapBuffer::Key kStateHasNested = 1;
-constexpr MapBuffer::Key kStateHash = 2;
-constexpr MapBuffer::Key kStateText = 3;
-constexpr MapBuffer::Key kStateRunStarts = 4;
-constexpr MapBuffer::Key kStateRunEnds = 5;
-constexpr MapBuffer::Key kStateRunStyleMasks = 6;
-constexpr MapBuffer::Key kStateRunColors = 7;
-constexpr MapBuffer::Key kStateRunFontFamilies = 8;
-constexpr MapBuffer::Key kStateRunFontSizes = 9;
-constexpr MapBuffer::Key kStateRunFontWeights = 10;
-constexpr MapBuffer::Key kStateRunFontStyles = 11;
-constexpr MapBuffer::Key kStateRunLetterSpacings = 12;
-constexpr MapBuffer::Key kStateRunLineHeights = 13;
-constexpr MapBuffer::Key kStateRunTabularNumbers = 14;
 
-constexpr MapBuffer::Key kArrayLength = 0;
-#endif
+std::string colorString(const SharedColor& color) {
+  if (!color) return {};
+  char value[10];
+  std::snprintf(value, sizeof(value), "#%08x", static_cast<uint32_t>(*color));
+  return value;
+}
 
 bool hasExactConstraint(Float minimum, Float maximum) {
   return std::isfinite(minimum) && std::isfinite(maximum) &&
@@ -487,97 +491,6 @@ int resolveRunCount(const RNTextEngineTextViewProps& props) {
 template <typename T>
 T valueOrDefault(const std::vector<T>& values, int index, const T& fallback) {
   return index < static_cast<int>(values.size()) ? values[index] : fallback;
-}
-
-template <typename T>
-void hashCombine(int64_t& hash, const T& value) {
-  hash = (hash * 31) + static_cast<int64_t>(std::hash<T>{}(value));
-}
-
-template <typename T>
-void hashVector(int64_t& hash, const std::vector<T>& values) {
-  hashCombine(hash, values.size());
-  for (const auto& value : values) {
-    hashCombine(hash, value);
-  }
-}
-
-void hashVector(int64_t& hash, const std::vector<bool>& values) {
-  hashCombine(hash, values.size());
-  for (bool value : values) {
-    hashCombine(hash, value);
-  }
-}
-
-#ifdef RN_SERIALIZABLE_STATE
-MapBuffer buildIntArrayMapBuffer(const std::vector<int>& values) {
-  MapBufferBuilder builder(static_cast<uint32_t>(values.size() + 1));
-  builder.putInt(kArrayLength, static_cast<int>(values.size()));
-  for (size_t index = 0; index < values.size(); index += 1) {
-    builder.putInt(static_cast<MapBuffer::Key>(index + 1), values[index]);
-  }
-  return builder.build();
-}
-
-MapBuffer buildDoubleArrayMapBuffer(const std::vector<double>& values) {
-  MapBufferBuilder builder(static_cast<uint32_t>(values.size() + 1));
-  builder.putInt(kArrayLength, static_cast<int>(values.size()));
-  for (size_t index = 0; index < values.size(); index += 1) {
-    builder.putDouble(static_cast<MapBuffer::Key>(index + 1), values[index]);
-  }
-  return builder.build();
-}
-
-MapBuffer buildStringArrayMapBuffer(const std::vector<std::string>& values) {
-  MapBufferBuilder builder(static_cast<uint32_t>(values.size() + 1));
-  builder.putInt(kArrayLength, static_cast<int>(values.size()));
-  for (size_t index = 0; index < values.size(); index += 1) {
-    builder.putString(static_cast<MapBuffer::Key>(index + 1), values[index]);
-  }
-  return builder.build();
-}
-
-MapBuffer buildBoolArrayMapBuffer(const std::vector<bool>& values) {
-  MapBufferBuilder builder(static_cast<uint32_t>(values.size() + 1));
-  builder.putInt(kArrayLength, static_cast<int>(values.size()));
-  for (size_t index = 0; index < values.size(); index += 1) {
-    builder.putBool(static_cast<MapBuffer::Key>(index + 1), values[index]);
-  }
-  return builder.build();
-}
-
-template <typename T>
-std::vector<T> vectorFromDynamicArray(const folly::dynamic* value) {
-  if (value == nullptr || !value->isArray()) return {};
-
-  std::vector<T> result;
-  result.reserve(value->size());
-  for (const auto& item : *value) {
-    if constexpr (std::is_same_v<T, int>) {
-      if (!item.isNumber()) return {};
-      result.push_back(static_cast<int>(item.asInt()));
-    } else if constexpr (std::is_same_v<T, double>) {
-      if (!item.isNumber()) return {};
-      result.push_back(item.asDouble());
-    } else if constexpr (std::is_same_v<T, bool>) {
-      if (!item.isBool()) return {};
-      result.push_back(item.getBool());
-    } else {
-      if (!item.isString()) return {};
-      result.emplace_back(item.getString());
-    }
-  }
-
-  return result;
-}
-#endif
-
-bool fragmentHasProps(const ShadowNodeFragment& fragment) {
-  return fragment.props != ShadowNodeFragment::propsPlaceholder();
-}
-
-bool fragmentHasChildren(const ShadowNodeFragment& fragment) {
-  return &fragment.children != &ShadowNodeFragment::childrenPlaceholder();
 }
 
 bool usesIdentityTransform(std::string_view textTransform) {
@@ -771,75 +684,21 @@ std::string utf16ToUtf8(const std::u16string& value) {
 
 } // namespace
 
-RNTextEngineTextViewStateData RNTextEngineTextViewStateData::empty() {
-  return {};
-}
-
-#ifdef RN_SERIALIZABLE_STATE
+#if defined(ANDROID) || defined(RN_SERIALIZABLE_STATE)
 RNTextEngineTextViewStateData::RNTextEngineTextViewStateData(
     const RNTextEngineTextViewStateData& previousState,
-    folly::dynamic data)
-    : RNTextEngineTextViewStateData(previousState) {
-  if (!data.isObject()) return;
-
-  if (const auto* value = data.get_ptr("hasNested"); value != nullptr && value->isBool()) {
-    hasNested = value->getBool();
-  }
-  if (const auto* value = data.get_ptr("hash"); value != nullptr && value->isNumber()) {
-    hash = static_cast<int64_t>(value->asInt());
-  }
-  if (const auto* value = data.get_ptr("text"); value != nullptr && value->isString()) {
-    text = value->getString();
-  }
-
-  if (const auto* value = data.get_ptr("runStarts")) runStarts = vectorFromDynamicArray<int>(value);
-  if (const auto* value = data.get_ptr("runEnds")) runEnds = vectorFromDynamicArray<int>(value);
-  if (const auto* value = data.get_ptr("runStyleMasks")) runStyleMasks = vectorFromDynamicArray<int>(value);
-  if (const auto* value = data.get_ptr("runColors")) runColors = vectorFromDynamicArray<std::string>(value);
-  if (const auto* value = data.get_ptr("runFontFamilies")) runFontFamilies = vectorFromDynamicArray<std::string>(value);
-  if (const auto* value = data.get_ptr("runFontSizes")) runFontSizes = vectorFromDynamicArray<double>(value);
-  if (const auto* value = data.get_ptr("runFontWeights")) runFontWeights = vectorFromDynamicArray<std::string>(value);
-  if (const auto* value = data.get_ptr("runFontStyles")) runFontStyles = vectorFromDynamicArray<std::string>(value);
-  if (const auto* value = data.get_ptr("runLetterSpacings")) runLetterSpacings = vectorFromDynamicArray<double>(value);
-  if (const auto* value = data.get_ptr("runLineHeights")) runLineHeights = vectorFromDynamicArray<double>(value);
-  if (const auto* value = data.get_ptr("runTabularNumbers")) runTabularNumbers = vectorFromDynamicArray<bool>(value);
-}
+    folly::dynamic)
+    : RNTextEngineTextViewStateData(previousState) {}
 
 folly::dynamic RNTextEngineTextViewStateData::getDynamic() const {
-  folly::dynamic dynamic = folly::dynamic::object();
-  dynamic["hasNested"] = hasNested;
-  dynamic["hash"] = hash;
-  dynamic["text"] = text;
-  dynamic["runStarts"] = toDynamic(runStarts);
-  dynamic["runEnds"] = toDynamic(runEnds);
-  dynamic["runStyleMasks"] = toDynamic(runStyleMasks);
-  dynamic["runColors"] = toDynamic(runColors);
-  dynamic["runFontFamilies"] = toDynamic(runFontFamilies);
-  dynamic["runFontSizes"] = toDynamic(runFontSizes);
-  dynamic["runFontWeights"] = toDynamic(runFontWeights);
-  dynamic["runFontStyles"] = toDynamic(runFontStyles);
-  dynamic["runLetterSpacings"] = toDynamic(runLetterSpacings);
-  dynamic["runLineHeights"] = toDynamic(runLineHeights);
-  dynamic["runTabularNumbers"] = toDynamic(runTabularNumbers);
-  return dynamic;
+  return folly::dynamic::object();
 }
 
 MapBuffer RNTextEngineTextViewStateData::getMapBuffer() const {
-  MapBufferBuilder builder(14);
-  builder.putBool(kStateHasNested, hasNested);
-  builder.putLong(kStateHash, hash);
-  builder.putString(kStateText, text);
-  builder.putMapBuffer(kStateRunStarts, buildIntArrayMapBuffer(runStarts));
-  builder.putMapBuffer(kStateRunEnds, buildIntArrayMapBuffer(runEnds));
-  builder.putMapBuffer(kStateRunStyleMasks, buildIntArrayMapBuffer(runStyleMasks));
-  builder.putMapBuffer(kStateRunColors, buildStringArrayMapBuffer(runColors));
-  builder.putMapBuffer(kStateRunFontFamilies, buildStringArrayMapBuffer(runFontFamilies));
-  builder.putMapBuffer(kStateRunFontSizes, buildDoubleArrayMapBuffer(runFontSizes));
-  builder.putMapBuffer(kStateRunFontWeights, buildStringArrayMapBuffer(runFontWeights));
-  builder.putMapBuffer(kStateRunFontStyles, buildStringArrayMapBuffer(runFontStyles));
-  builder.putMapBuffer(kStateRunLetterSpacings, buildDoubleArrayMapBuffer(runLetterSpacings));
-  builder.putMapBuffer(kStateRunLineHeights, buildDoubleArrayMapBuffer(runLineHeights));
-  builder.putMapBuffer(kStateRunTabularNumbers, buildBoolArrayMapBuffer(runTabularNumbers));
+  MapBufferBuilder builder(2);
+  const auto handle = preparedText ? preparedText->handle : 0;
+  builder.putInt(0, static_cast<int32_t>(handle));
+  builder.putInt(1, static_cast<int32_t>(handle >> 32));
   return builder.build();
 }
 #endif
@@ -855,9 +714,40 @@ RNTextEngineTextViewShadowNode::RNTextEngineTextViewShadowNode(
     const ShadowNodeFragment& fragment)
     : BaseShadowNode(sourceShadowNode, fragment) {
   const auto& source = static_cast<const RNTextEngineTextViewShadowNode&>(sourceShadowNode);
-  if (!fragmentHasProps(fragment) && !fragmentHasChildren(fragment)) {
-    measurementCache_ = std::atomic_load(&source.measurementCache_);
+  if (hasSameTextContent(source)) measurementCache_ = std::atomic_load(&source.measurementCache_);
+}
+
+bool RNTextEngineTextViewShadowNode::hasSameTextContent(
+    const RNTextEngineTextViewShadowNode& source, bool asChild) const {
+  const auto& previous = source.getConcreteProps();
+  const auto& props = getConcreteProps();
+  const bool sameProps = &props == &previous || (
+      previous.text == props.text && previous.textTransform == props.textTransform &&
+      previous.allowFontScaling == props.allowFontScaling &&
+      previous.fontFamily == props.fontFamily && previous.fontSize == props.fontSize &&
+      previous.fontStyle == props.fontStyle && previous.fontWeight == props.fontWeight &&
+      previous.letterSpacing == props.letterSpacing && previous.lineHeight == props.lineHeight &&
+      previous.tabularNumbers == props.tabularNumbers &&
+      ((!asChild && getChildren().empty()) || previous.color == props.color) &&
+      previous.runCount == props.runCount && previous.runStarts == props.runStarts &&
+      previous.runEnds == props.runEnds && previous.runStyleMasks == props.runStyleMasks &&
+      previous.runColors == props.runColors && previous.runFontFamilies == props.runFontFamilies &&
+      previous.runFontSizes == props.runFontSizes && previous.runFontStyles == props.runFontStyles &&
+      previous.runFontWeights == props.runFontWeights && previous.runLetterSpacings == props.runLetterSpacings &&
+      previous.runLineHeights == props.runLineHeights && previous.runTabularNumbers == props.runTabularNumbers &&
+      (!asChild || (previous.rnteHasAllowFontScaling == props.rnteHasAllowFontScaling &&
+          previous.rnteHasLetterSpacing == props.rnteHasLetterSpacing &&
+          previous.rnteHasTabularNumbers == props.rnteHasTabularNumbers)));
+  if (!sameProps || getChildren().size() != source.getChildren().size()) return false;
+  for (size_t index = 0; index < getChildren().size(); ++index) {
+    const auto& child = getChildren()[index];
+    const auto& previousChild = source.getChildren()[index];
+    if (child == previousChild) continue;
+    const auto* textChild = dynamic_cast<const RNTextEngineTextViewShadowNode*>(child.get());
+    const auto* previousTextChild = dynamic_cast<const RNTextEngineTextViewShadowNode*>(previousChild.get());
+    if (!textChild || !previousTextChild || !textChild->hasSameTextContent(*previousTextChild, true)) return false;
   }
+  return true;
 }
 
 ShadowNodeTraits RNTextEngineTextViewShadowNode::BaseTraits() {
@@ -885,7 +775,7 @@ Size RNTextEngineTextViewShadowNode::measureContent(
   const auto resolvePreferredWidth = [&]() -> Float {
     if (cache.preferredWidth < 0) {
       cache.preferredWidth =
-          rntextengine::measurePreparedTextMeasurementWidth(cache.handle);
+          rntextengine::measurePreparedTextMeasurementWidth(cache.preparedText->handle);
     }
     return static_cast<Float>(cache.preferredWidth);
   };
@@ -920,7 +810,7 @@ Size RNTextEngineTextViewShadowNode::measureContent(
         .width = layoutWidth,
         .measurement =
             rntextengine::measurePreparedTextMeasurementLayout(
-                cache.handle,
+                cache.preparedText->handle,
                 layoutWidth,
                 maxLines,
                 ellipsizeMode,
@@ -949,19 +839,21 @@ Size RNTextEngineTextViewShadowNode::measureContent(
 
 void RNTextEngineTextViewShadowNode::layout(LayoutContext layoutContext) {
   BaseShadowNode::layout(layoutContext);
-  if (getChildren().empty()) {
-    if (getStateData().hasNested) setStateData(RNTextEngineTextViewStateData::empty());
-    return;
-  }
   auto& cache = ensureMeasurementCache();
   std::lock_guard<std::mutex> lock(cache.mutex);
-  publishStateIfNeeded(resolvePayload(cache));
+  prepareMeasurementHandle(cache);
+  if (getStateData().preparedText != cache.preparedText) {
+    RNTextEngineTextViewStateData state;
+    state.preparedText = cache.preparedText;
+    setStateData(std::move(state));
+  }
 }
 
 bool RNTextEngineTextViewShadowNode::shouldNewRevisionDirtyMeasurement(
     const ShadowNode&,
     const ShadowNodeFragment& fragment) const {
-  return fragmentHasProps(fragment) || fragmentHasChildren(fragment);
+  return fragment.props != ShadowNodeFragment::propsPlaceholder() ||
+      &fragment.children != &ShadowNodeFragment::childrenPlaceholder();
 }
 
 RNTextEngineTextViewShadowNode::MeasurementCache&
@@ -975,14 +867,19 @@ RNTextEngineTextViewShadowNode::ensureMeasurementCache() const {
 }
 
 void RNTextEngineTextViewShadowNode::prepareMeasurementHandle(MeasurementCache& cache) const {
-  if (cache.handle != 0) return;
+  const auto environmentVersion = rntextengine::textEnvironmentVersion();
+  if (cache.environmentVersion != environmentVersion) {
+    cache.preparedText.reset();
+    cache.layouts.clear();
+    cache.preferredWidth = -1;
+    cache.environmentVersion = environmentVersion;
+  }
+  if (cache.preparedText) return;
 
   const auto& props = getConcreteProps();
-  const auto& payload = resolvePayload(cache);
-  const bool useNestedPayload = payload.hasNested;
-
-  if (!useNestedPayload) {
-    cache.handle = rntextengine::prepareTextViewMeasurementHandle(
+  uint64_t handle;
+  if (getChildren().empty()) {
+    handle = rntextengine::prepareTextViewMeasurementHandle(
         props.text,
         resolveOptionalString(props.textTransform),
         props.allowFontScaling,
@@ -993,23 +890,27 @@ void RNTextEngineTextViewShadowNode::prepareMeasurementHandle(MeasurementCache& 
         props.letterSpacing,
         resolveLineHeight(props.lineHeight),
         props.tabularNumbers,
-        buildRuns());
-    return;
+        buildRuns(),
+        environmentVersion);
+  } else {
+    const auto payload = resolvePayload();
+    const auto rootStyle = normalizePreparedStyle(resolveNodeStyle(props, nullptr));
+    handle = rntextengine::prepareTextViewMeasurementHandle(
+        payload.text,
+        std::string{},
+        false,
+        rootStyle.fontFamily,
+        rootStyle.fontSize,
+        rootStyle.fontWeight,
+        rootStyle.fontStyle,
+        rootStyle.letterSpacing,
+        resolveLineHeight(rootStyle.lineHeight),
+        rootStyle.tabularNumbers,
+        payload.runs,
+        environmentVersion,
+        true);
   }
-
-  const auto rootStyle = normalizePreparedStyle(resolveNodeStyle(props, nullptr));
-  cache.handle = rntextengine::prepareTextViewMeasurementHandle(
-      payload.text,
-      std::string{},
-      false,
-      rootStyle.fontFamily,
-      rootStyle.fontSize,
-      rootStyle.fontWeight,
-      rootStyle.fontStyle,
-      rootStyle.letterSpacing,
-      resolveLineHeight(rootStyle.lineHeight),
-      rootStyle.tabularNumbers,
-      buildRuns(payload));
+  cache.preparedText = std::make_shared<const rntextengine::PreparedTextHandle>(handle);
 }
 
 rntextengine::TextViewMeasurementRuns
@@ -1056,45 +957,18 @@ RNTextEngineTextViewShadowNode::buildRuns() const {
   return runs;
 }
 
-rntextengine::TextViewMeasurementRuns
-RNTextEngineTextViewShadowNode::buildRuns(const ResolvedPayload& payload) const {
-  rntextengine::TextViewMeasurementRuns runs;
-  runs.starts = payload.runStarts;
-  runs.ends = payload.runEnds;
-  runs.styleMasks = payload.runStyleMasks;
-  runs.colors = payload.runColors;
-  runs.fontFamilies = payload.runFontFamilies;
-  runs.fontSizes = payload.runFontSizes;
-  runs.fontStyles = payload.runFontStyles;
-  runs.fontWeights = payload.runFontWeights;
-  runs.letterSpacings = payload.runLetterSpacings;
-  runs.lineHeights = payload.runLineHeights;
-  runs.tabularNumbers = payload.runTabularNumbers;
-  return runs;
-}
-
-const RNTextEngineTextViewShadowNode::ResolvedPayload&
-RNTextEngineTextViewShadowNode::resolvePayload(MeasurementCache& cache) const {
-  if (cache.payload.has_value()) {
-    return *cache.payload;
-  }
-
-  if (getChildren().empty()) {
-    cache.payload = ResolvedPayload{};
-    return *cache.payload;
-  }
-
+RNTextEngineTextViewShadowNode::ResolvedPayload
+RNTextEngineTextViewShadowNode::resolvePayload() const {
   const auto rootStyle = resolveNodeStyle(getConcreteProps(), nullptr);
   std::u16string textBuilder;
   std::vector<ResolvedSegment> segments;
   segments.reserve(8);
 
-  const bool hasNested = appendNodePayload(*this, rootStyle, textBuilder, segments);
-  cache.payload = buildPayloadFromSegments(textBuilder, segments, rootStyle, hasNested);
-  return *cache.payload;
+  appendNodePayload(*this, rootStyle, textBuilder, segments);
+  return buildPayloadFromSegments(textBuilder, segments, rootStyle);
 }
 
-bool RNTextEngineTextViewShadowNode::appendNodePayload(
+void RNTextEngineTextViewShadowNode::appendNodePayload(
     const RNTextEngineTextViewShadowNode& node,
     const ResolvedStyle& parentStyle,
     std::u16string& text,
@@ -1107,18 +981,14 @@ bool RNTextEngineTextViewShadowNode::appendNodePayload(
       resolveTransformedText(localText, nodeStyle.textTransform, std::move(localRuns));
   emitStyledText(transformed.first, nodeStyle, transformed.second, text, segments);
 
-  bool hasNested = false;
   for (const auto& child : node.getChildren()) {
     const auto* textChild = dynamic_cast<const RNTextEngineTextViewShadowNode*>(child.get());
     if (textChild == nullptr) {
       throwInvalidTextChild(*child);
     }
 
-    hasNested = true;
     appendNodePayload(*textChild, nodeStyle, text, segments);
   }
-
-  return hasNested;
 }
 
 void RNTextEngineTextViewShadowNode::emitStyledText(
@@ -1209,7 +1079,7 @@ RNTextEngineTextViewShadowNode::resolveNodeStyle(
     const ResolvedStyle* parentStyle) const {
   ResolvedStyle next = parentStyle == nullptr
       ? ResolvedStyle{
-            .color = props.color ? props.color.toString() : std::string{},
+            .color = colorString(props.color),
             .fontFamily = props.fontFamily,
             .fontSize = props.fontSize > 0 ? props.fontSize : 14.0,
             .fontStyle = props.fontStyle,
@@ -1222,7 +1092,7 @@ RNTextEngineTextViewShadowNode::resolveNodeStyle(
         }
       : *parentStyle;
 
-  if (props.color) next.color = props.color.toString();
+  if (props.color) next.color = colorString(props.color);
   if (!props.fontFamily.empty()) next.fontFamily = props.fontFamily;
   if (props.fontSize > 0) next.fontSize = props.fontSize;
   if (!props.fontStyle.empty()) next.fontStyle = props.fontStyle;
@@ -1363,21 +1233,10 @@ RNTextEngineTextViewShadowNode::ResolvedPayload
 RNTextEngineTextViewShadowNode::buildPayloadFromSegments(
     const std::u16string& text,
     const std::vector<ResolvedSegment>& segments,
-    const ResolvedStyle& rootStyle,
-    bool hasNested) const {
+    const ResolvedStyle& rootStyle) const {
   const auto normalizedRootStyle = normalizePreparedStyle(rootStyle);
   ResolvedPayload payload;
-  payload.hasNested = hasNested;
-  if (!hasNested) {
-    return payload;
-  }
-
   payload.text = utf16ToUtf8(text);
-  if (segments.empty()) {
-    hashCombine(payload.hash, payload.text);
-    return payload;
-  }
-
   for (const auto& segment : segments) {
     int styleMask = 0;
     if (segment.style.color != normalizedRootStyle.color) styleMask |= kRunStyleHasColor;
@@ -1393,62 +1252,20 @@ RNTextEngineTextViewShadowNode::buildPayloadFromSegments(
       continue;
     }
 
-    payload.runStarts.push_back(segment.start);
-    payload.runEnds.push_back(segment.end);
-    payload.runStyleMasks.push_back(styleMask);
-    payload.runColors.push_back(segment.style.color);
-    payload.runFontFamilies.push_back(segment.style.fontFamily);
-    payload.runFontSizes.push_back(segment.style.fontSize);
-    payload.runFontWeights.push_back(segment.style.fontWeight);
-    payload.runFontStyles.push_back(segment.style.fontStyle);
-    payload.runLetterSpacings.push_back(segment.style.letterSpacing);
-    payload.runLineHeights.push_back(segment.style.lineHeight);
-    payload.runTabularNumbers.push_back(segment.style.tabularNumbers);
+    payload.runs.starts.push_back(segment.start);
+    payload.runs.ends.push_back(segment.end);
+    payload.runs.styleMasks.push_back(styleMask);
+    payload.runs.colors.push_back(segment.style.color);
+    payload.runs.fontFamilies.push_back(segment.style.fontFamily);
+    payload.runs.fontSizes.push_back(segment.style.fontSize);
+    payload.runs.fontWeights.push_back(segment.style.fontWeight);
+    payload.runs.fontStyles.push_back(segment.style.fontStyle);
+    payload.runs.letterSpacings.push_back(segment.style.letterSpacing);
+    payload.runs.lineHeights.push_back(segment.style.lineHeight);
+    payload.runs.tabularNumbers.push_back(segment.style.tabularNumbers);
   }
 
-  int64_t hash = 17;
-  hashCombine(hash, payload.text);
-  hashVector(hash, payload.runStarts);
-  hashVector(hash, payload.runEnds);
-  hashVector(hash, payload.runStyleMasks);
-  hashVector(hash, payload.runColors);
-  hashVector(hash, payload.runFontFamilies);
-  hashVector(hash, payload.runFontSizes);
-  hashVector(hash, payload.runFontWeights);
-  hashVector(hash, payload.runFontStyles);
-  hashVector(hash, payload.runLetterSpacings);
-  hashVector(hash, payload.runLineHeights);
-  hashVector(hash, payload.runTabularNumbers);
-  payload.hash = hash;
   return payload;
-}
-
-void RNTextEngineTextViewShadowNode::publishStateIfNeeded(const ResolvedPayload& payload) {
-  if (getStateData().hasNested && getStateData().hash == payload.hash) {
-    return;
-  }
-
-  RNTextEngineTextViewStateData state;
-  state.hasNested = true;
-  state.hash = payload.hash;
-  state.text = payload.text;
-  state.runStarts = payload.runStarts;
-  state.runEnds = payload.runEnds;
-  state.runStyleMasks = payload.runStyleMasks;
-  state.runColors = payload.runColors;
-  state.runFontFamilies = payload.runFontFamilies;
-  state.runFontSizes = payload.runFontSizes;
-  state.runFontWeights = payload.runFontWeights;
-  state.runFontStyles = payload.runFontStyles;
-  state.runLetterSpacings = payload.runLetterSpacings;
-  state.runLineHeights = payload.runLineHeights;
-  state.runTabularNumbers = payload.runTabularNumbers;
-
-  setStateData(std::move(state));
-}
-
-RNTextEngineTextViewShadowNode::MeasurementCache::~MeasurementCache() {
-  if (handle != 0) rntextengine::releasePreparedTextMeasurementHandle(handle);
 }
 
 } // namespace facebook::react

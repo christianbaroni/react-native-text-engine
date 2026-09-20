@@ -3,13 +3,13 @@ package com.rntextengine
 import android.content.Context
 import android.content.res.ColorStateList
 import android.content.res.TypedArray
+import android.graphics.Canvas
 import android.graphics.Color
 import android.text.InputType
 import android.view.View
 import androidx.appcompat.content.res.AppCompatResources
 import com.facebook.react.bridge.ReadableArray
 import com.facebook.react.bridge.ReadableMap
-import com.facebook.react.common.mapbuffer.MapBuffer
 import com.facebook.react.module.annotations.ReactModule
 import com.facebook.react.uimanager.PixelUtil
 import com.facebook.react.uimanager.ReactStylesDiffMap
@@ -45,6 +45,10 @@ internal class RNTextEngineTextViewManager :
     override fun getDelegate(): ViewManagerDelegate<RNTextEngineTextView> = delegate
 
     override fun updateExtraData(root: RNTextEngineTextView, extraData: Any) {
+        if (extraData is RNTextEngineBindings.PreparedText) {
+            root.applyFabricPreparedText(extraData)
+            return
+        }
         val payload = extraData as? RNTextEngineTextShadowNode.RNTextEngineResolvedTextPayload
         if (payload == null || !payload.hasNested) {
             root.applyResolvedNestedPayload(null)
@@ -59,8 +63,9 @@ internal class RNTextEngineTextViewManager :
         props: ReactStylesDiffMap,
         stateWrapper: StateWrapper,
     ): Any? {
-        val state = stateWrapper.stateDataMapBuffer ?: return RNTextEngineTextShadowNode.RNTextEngineResolvedTextPayload.EMPTY
-        return parseResolvedPayload(state)
+        val state = stateWrapper.stateDataMapBuffer ?: return null
+        val handle = (state.getInt(1).toLong() shl 32) or (state.getInt(0).toLong() and 0xFFFFFFFFL)
+        return if (handle == 0L) null else requireNotNull(RNTextEngineBindings.preparedText(handle))
     }
 
     override fun setBackgroundColor(view: RNTextEngineTextView, backgroundColor: Int) {
@@ -74,7 +79,7 @@ internal class RNTextEngineTextViewManager :
 
     override fun onAfterUpdateTransaction(view: RNTextEngineTextView) {
         super.onAfterUpdateTransaction(view)
-        view.finishUpdates()
+        view.finishPropsUpdates()
     }
 
     override fun needsCustomLayoutForChildren(): Boolean = true
@@ -107,7 +112,6 @@ internal class RNTextEngineTextViewManager :
     @ReactProp(name = "color", customType = "Color")
     override fun setColor(view: RNTextEngineTextView, color: Int?) {
         view.textColor = color ?: view.defaultTextColor
-        view.invalidateTextDisplay()
     }
 
     @ReactProp(name = "fontFamily")
@@ -329,6 +333,15 @@ internal class RNTextEngineTextViewManager :
         var fontWeight: String? = null
         val defaultTextColor: Int = resolveDefaultTextColor(context)
         var textColor: Int = defaultTextColor
+            set(value) {
+                field = value
+                setTextColorValue(value)
+            }
+
+        init {
+            setTextColorValue(defaultTextColor)
+        }
+
         var runs: List<RNTextEngineTextRun> = emptyList()
         var runColors: ReadableArray? = null
         var runCount: Int = 0
@@ -388,6 +401,24 @@ internal class RNTextEngineTextViewManager :
                 ?.setViewLocalData(id, RNTextEngineTextLocalData(text))
         }
 
+
+        @Suppress("DEPRECATION")
+        private val isFabric: Boolean
+            get() = id != View.NO_ID && ViewUtil.getUIManagerType(this) == UIManagerType.FABRIC
+
+        fun finishPropsUpdates() {
+            val prepared = preparedText
+            if (prepared != null && prepared.environmentVersion != RNTextEngineBindings.textEnvironmentVersion()) {
+                invalidateTextDisplay()
+            }
+            if (!isFabric || !textDisplayDirty) finishUpdates()
+        }
+
+        fun applyFabricPreparedText(prepared: RNTextEngineBindings.PreparedText) {
+            setPreparedText(prepareContent(prepared))
+            textDisplayDirty = false
+            finishUpdates()
+        }
 
         fun applyResolvedNestedPayload(payload: RNTextEngineTextShadowNode.RNTextEngineResolvedTextPayload?) {
             val nextPayload = payload?.takeIf { it.hasNested }
@@ -451,7 +482,7 @@ internal class RNTextEngineTextViewManager :
             return resolvedRuns
         }
 
-        private fun prepareContent(): RNTextEngineBindings.PreparedText {
+        private fun prepareContent(candidate: RNTextEngineBindings.PreparedText? = preparedText): RNTextEngineBindings.PreparedText {
             val nestedPayload = resolvedNestedPayload
             return if (nestedPayload != null) {
                 RNTextEngineBindings.prepareTextViewContent(
@@ -470,7 +501,7 @@ internal class RNTextEngineTextViewManager :
                     runs = buildRunsFromResolvedPayload(nestedPayload),
                 )
             } else {
-                val activeRuns = resolveRunArrayProps() ?: runs
+                val activeRuns = if (candidate?.source?.nested == true) emptyList() else resolveRunArrayProps() ?: runs
                 RNTextEngineBindings.prepareTextViewContent(
                     text = textValue,
                     textTransform = textTransform,
@@ -485,6 +516,9 @@ internal class RNTextEngineTextViewManager :
                     tabularNumbers = tabularNumbers,
                     textBreakStrategy = null,
                     runs = activeRuns,
+                    prepared = candidate,
+                    current = preparedText,
+                    retainSource = isFabric,
                 )
             }
         }
@@ -509,6 +543,11 @@ internal class RNTextEngineTextViewManager :
             if (!textDisplayDirty) return
             setPreparedText(prepareContent())
             textDisplayDirty = false
+        }
+
+        override fun dispatchDraw(canvas: Canvas) {
+            if (textDisplayDirty) finishUpdates()
+            super.dispatchDraw(canvas)
         }
 
         fun invalidateTextDisplay() {
@@ -628,70 +667,6 @@ internal class RNTextEngineTextViewManager :
         return style.hasColor || style.hasFontFamily || style.hasFontSize || style.hasFontStyle || style.hasFontWeight || style.hasLetterSpacing || style.hasLineHeight || style.hasTabularNumbers
     }
 
-    private fun parseResolvedPayload(state: MapBuffer): RNTextEngineTextShadowNode.RNTextEngineResolvedTextPayload {
-        val hasNested = state.contains(STATE_HAS_NESTED_KEY) && state.getBoolean(STATE_HAS_NESTED_KEY)
-        if (!hasNested) return RNTextEngineTextShadowNode.RNTextEngineResolvedTextPayload.EMPTY
-
-        return RNTextEngineTextShadowNode.RNTextEngineResolvedTextPayload(
-            hasNested = true,
-            hash = if (state.contains(STATE_HASH_KEY)) state.getLong(STATE_HASH_KEY) else 0L,
-            text = if (state.contains(STATE_TEXT_KEY)) state.getString(STATE_TEXT_KEY) else "",
-            runStarts = parseIntArray(state, STATE_RUN_STARTS_KEY),
-            runEnds = parseIntArray(state, STATE_RUN_ENDS_KEY),
-            runStyleMasks = parseIntArray(state, STATE_RUN_STYLE_MASKS_KEY),
-            runColors = parseNullableStringArray(state, STATE_RUN_COLORS_KEY),
-            runFontFamilies = parseNullableStringArray(state, STATE_RUN_FONT_FAMILIES_KEY),
-            runFontSizes = parseDoubleArray(state, STATE_RUN_FONT_SIZES_KEY),
-            runFontWeights = parseNullableStringArray(state, STATE_RUN_FONT_WEIGHTS_KEY),
-            runFontStyles = parseNullableStringArray(state, STATE_RUN_FONT_STYLES_KEY),
-            runLetterSpacings = parseDoubleArray(state, STATE_RUN_LETTER_SPACINGS_KEY),
-            runLineHeights = parseDoubleArray(state, STATE_RUN_LINE_HEIGHTS_KEY),
-            runTabularNumbers = parseBooleanArray(state, STATE_RUN_TABULAR_NUMBERS_KEY),
-        )
-    }
-
-    private fun parseIntArray(state: MapBuffer, key: Int): IntArray {
-        if (!state.contains(key)) return IntArray(0)
-        val map = state.getMapBuffer(key)
-        val count = if (map.contains(STATE_ARRAY_LENGTH_KEY)) map.getInt(STATE_ARRAY_LENGTH_KEY).coerceAtLeast(0) else 0
-        return IntArray(count) { index ->
-            val valueKey = index + 1
-            if (map.contains(valueKey)) map.getInt(valueKey) else 0
-        }
-    }
-
-    private fun parseDoubleArray(state: MapBuffer, key: Int): DoubleArray {
-        if (!state.contains(key)) return DoubleArray(0)
-        val map = state.getMapBuffer(key)
-        val count = if (map.contains(STATE_ARRAY_LENGTH_KEY)) map.getInt(STATE_ARRAY_LENGTH_KEY).coerceAtLeast(0) else 0
-        return DoubleArray(count) { index ->
-            val valueKey = index + 1
-            if (map.contains(valueKey)) map.getDouble(valueKey) else 0.0
-        }
-    }
-
-    private fun parseBooleanArray(state: MapBuffer, key: Int): BooleanArray {
-        if (!state.contains(key)) return BooleanArray(0)
-        val map = state.getMapBuffer(key)
-        val count = if (map.contains(STATE_ARRAY_LENGTH_KEY)) map.getInt(STATE_ARRAY_LENGTH_KEY).coerceAtLeast(0) else 0
-        return BooleanArray(count) { index ->
-            val valueKey = index + 1
-            map.contains(valueKey) && map.getBoolean(valueKey)
-        }
-    }
-
-    private fun parseNullableStringArray(state: MapBuffer, key: Int): Array<String?> {
-        if (!state.contains(key)) return emptyArray()
-        val map = state.getMapBuffer(key)
-        val count = if (map.contains(STATE_ARRAY_LENGTH_KEY)) map.getInt(STATE_ARRAY_LENGTH_KEY).coerceAtLeast(0) else 0
-        return Array(count) { index ->
-            val valueKey = index + 1
-            if (!map.contains(valueKey)) return@Array null
-            val value = map.getString(valueKey)
-            if (value.isEmpty()) null else value
-        }
-    }
-
     companion object {
         const val REACT_CLASS = "RNTextEngineTextView"
         private const val RUN_STYLE_HAS_COLOR = 1 shl 0
@@ -702,22 +677,6 @@ internal class RNTextEngineTextViewManager :
         private const val RUN_STYLE_HAS_LETTER_SPACING = 1 shl 5
         private const val RUN_STYLE_HAS_LINE_HEIGHT = 1 shl 6
         private const val RUN_STYLE_HAS_TABULAR_NUMBERS = 1 shl 7
-
-        private const val STATE_HAS_NESTED_KEY = 1
-        private const val STATE_HASH_KEY = 2
-        private const val STATE_TEXT_KEY = 3
-        private const val STATE_RUN_STARTS_KEY = 4
-        private const val STATE_RUN_ENDS_KEY = 5
-        private const val STATE_RUN_STYLE_MASKS_KEY = 6
-        private const val STATE_RUN_COLORS_KEY = 7
-        private const val STATE_RUN_FONT_FAMILIES_KEY = 8
-        private const val STATE_RUN_FONT_SIZES_KEY = 9
-        private const val STATE_RUN_FONT_WEIGHTS_KEY = 10
-        private const val STATE_RUN_FONT_STYLES_KEY = 11
-        private const val STATE_RUN_LETTER_SPACINGS_KEY = 12
-        private const val STATE_RUN_LINE_HEIGHTS_KEY = 13
-        private const val STATE_RUN_TABULAR_NUMBERS_KEY = 14
-        private const val STATE_ARRAY_LENGTH_KEY = 0
     }
 }
 

@@ -130,6 +130,142 @@ class RNTextEngineBindingsInstrumentedTest {
     }
 
     @Test
+    fun fabricPreparedStatePreservesUiOverridesAcrossCommits() {
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            fun prepare(text: String, fontSize: Double) = RNTextEngineBindings.prepareTextView(
+                text, null, null, null, fontSize, null, null, 0.0, Double.NaN, false, false, false, null,
+                environmentVersion = RNTextEngineBindings.textEnvironmentVersion(),
+            )
+            fun draw(view: View) {
+                val bitmap = Bitmap.createBitmap(320, 160, Bitmap.Config.ARGB_8888)
+                try { view.draw(Canvas(bitmap)) } finally { bitmap.recycle() }
+            }
+            val manager = RNTextEngineTextViewManager()
+            val view = RNTextEngineTextViewManager.RNTextEngineTextView(application).apply { id = 2 }
+            val text = "Measured \u0000text 😀"
+            manager.setText(view, text)
+            manager.setFontSize(view, 18.0)
+            val handle = prepare(text, 18.0)
+            val prepared = requireNotNull(RNTextEngineBindings.preparedText(handle))
+            manager.updateExtraData(view, prepared)
+            measureAndLayout(view, 320, 160)
+            val first = requireNotNull(view.displayView.resolveLayout(320))
+            assertSame(prepared.displayText(true), first.text)
+            assertEquals(view.defaultTextColor, first.paint.color)
+            manager.updateProperties(view, ReactStylesDiffMap(JavaOnlyMap.of("color", Color.BLUE)))
+            assertSame(first, view.displayView.resolveLayout(320))
+            assertEquals(Color.BLUE, first.paint.color)
+            RNTextEngineBindings.release(handle)
+            manager.updateProperties(view, ReactStylesDiffMap(JavaOnlyMap.of("selectable", true)))
+            assertEquals(text, view.selectionView?.text.toString())
+
+            manager.updateProperties(view, ReactStylesDiffMap(JavaOnlyMap.of(
+                "text", "Animated input", "fontSize", 42.0,
+            )))
+            draw(view)
+            assertEquals("Animated input", view.selectionView?.text.toString())
+            assertEquals(PixelUtil.toPixelFromDIP(42f), view.selectionView!!.textSize, 0f)
+            val animatedLayout = view.displayView.resolveLayout(320)
+            val selectedText = view.selectionView!!.text as android.text.Spannable
+            android.text.Selection.setSelection(selectedText, 2, 7)
+            manager.updateExtraData(view, prepared)
+            assertSame(animatedLayout, view.displayView.resolveLayout(320))
+            assertSame(selectedText, view.selectionView!!.text)
+            assertEquals(2, view.selectionView!!.selectionStart)
+            assertEquals(7, view.selectionView!!.selectionEnd)
+            val equivalentHandle = prepare("Animated input", 42.0)
+            manager.updateExtraData(view, requireNotNull(RNTextEngineBindings.preparedText(equivalentHandle)))
+            RNTextEngineBindings.release(equivalentHandle)
+            assertSame(animatedLayout, view.displayView.resolveLayout(320))
+            assertSame(selectedText, view.selectionView!!.text)
+            assertEquals(2, view.selectionView!!.selectionStart)
+            assertEquals(7, view.selectionView!!.selectionEnd)
+            assertEquals("Animated input", view.selectionView?.text.toString())
+            assertEquals(PixelUtil.toPixelFromDIP(42f), view.selectionView!!.textSize, 0f)
+
+            manager.updateProperties(view, ReactStylesDiffMap(JavaOnlyMap.of(
+                "text", "Committed text", "fontSize", 24.0,
+            )))
+            val nextHandle = prepare("Committed text", 24.0)
+            val next = requireNotNull(RNTextEngineBindings.preparedText(nextHandle))
+            manager.updateExtraData(view, next)
+            RNTextEngineBindings.release(nextHandle)
+            assertSame(next.displayText(true), view.displayView.resolveLayout(320)?.text)
+            assertEquals(next.text, view.selectionView?.text.toString())
+            assertEquals(next.style.textPaint.textSize, view.selectionView!!.textSize, 0f)
+            assertEquals(Color.BLUE, view.selectionView?.currentTextColor)
+
+            manager.updateProperties(view, ReactStylesDiffMap(JavaOnlyMap.of("text", "")))
+            val emptyHandle = prepare("", 24.0)
+            manager.updateExtraData(view, requireNotNull(RNTextEngineBindings.preparedText(emptyHandle)))
+            RNTextEngineBindings.release(emptyHandle)
+            assertEquals("", view.selectionView?.text.toString())
+            manager.setSelectable(view, false)
+            assertEquals("", view.displayView.resolveLayout(320)?.text.toString())
+        }
+    }
+
+    @Test
+    @Suppress("DEPRECATION")
+    fun uiOnlyUpdatesReadmitPreparedTextAfterEnvironmentChanges() {
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            val configuration = Configuration(application.resources.configuration)
+            val metrics = DisplayMetricsHolder.getScreenDisplayMetrics()
+            val locale = java.util.Locale.getDefault()
+            val manager = RNTextEngineTextViewManager()
+            val failures = ArrayList<String>()
+            val bitmap = Bitmap.createBitmap(360, 240, Bitmap.Config.ARGB_8888)
+            try {
+                for (fabric in listOf(false, true)) {
+                    for (paintOnly in listOf(false, true)) {
+                        fun fontScale(value: Float) {
+                            application.resources.updateConfiguration(Configuration(configuration).apply { fontScale = value },
+                                application.resources.displayMetrics)
+                            DisplayMetricsHolder.setScreenDisplayMetrics(application.resources.displayMetrics)
+                        }
+                        fontScale(1f)
+                        java.util.Locale.setDefault(java.util.Locale.US)
+                        val view = RNTextEngineTextViewManager.RNTextEngineTextView(application).apply {
+                            if (fabric) id = 2
+                        }
+                        manager.updateProperties(view, ReactStylesDiffMap(JavaOnlyMap.of(
+                            "text", "initial i", "textTransform", "uppercase", "fontSize", 18.0, "allowFontScaling", true,
+                        )))
+                        if (fabric) {
+                            val handle = RNTextEngineBindings.prepareTextView("initial i", "uppercase", null, null,
+                                18.0, null, null, 0.0, Double.NaN, true, false, false, null,
+                                environmentVersion = RNTextEngineBindings.textEnvironmentVersion())
+                            manager.updateExtraData(view, requireNotNull(RNTextEngineBindings.preparedText(handle)))
+                            RNTextEngineBindings.release(handle)
+                        }
+                        measureAndLayout(view, 360, 240)
+                        fontScale(1.5f)
+                        manager.updateProperties(view, ReactStylesDiffMap(
+                            if (paintOnly) JavaOnlyMap.of("color", Color.BLUE) else JavaOnlyMap.of("fontSize", 18.0)))
+                        view.draw(Canvas(bitmap))
+                        val label = "fabric=$fabric paintOnly=$paintOnly"
+                        val paint = requireNotNull(view.displayView.resolveLayout(360)).paint
+                        if (paint.textSize != PixelUtil.toPixelFromSP(18f)) failures += "$label: UI font scale remained stale"
+                        java.util.Locale.setDefault(java.util.Locale.forLanguageTag("tr-TR"))
+                        manager.updateProperties(view, ReactStylesDiffMap(
+                            if (paintOnly) JavaOnlyMap.of("color", Color.RED) else JavaOnlyMap.of("textTransform", "uppercase")))
+                        view.draw(Canvas(bitmap))
+                        if (view.displayView.resolveLayout(360)?.text.toString() != "initial i".uppercase(java.util.Locale.getDefault())) {
+                            failures += "$label: UI case transformation remained stale"
+                        }
+                    }
+                }
+                assertTrue(failures.joinToString(), failures.isEmpty())
+            } finally {
+                bitmap.recycle()
+                java.util.Locale.setDefault(locale)
+                application.resources.updateConfiguration(configuration, application.resources.displayMetrics)
+                DisplayMetricsHolder.setScreenDisplayMetrics(metrics)
+            }
+        }
+    }
+
+    @Test
     fun selectionIsLazyAndUsesPreparedContentAcrossUpdates() {
         InstrumentationRegistry.getInstrumentation().runOnMainSync {
             val manager = RNTextEngineTextViewManager()
@@ -399,6 +535,101 @@ class RNTextEngineBindingsInstrumentedTest {
             assertEquals(0, text.getSpans(0, text.length, android.text.style.ForegroundColorSpan::class.java).size)
             before.recycle()
             after.recycle()
+        }
+    }
+
+    @Test
+    fun measuredLayoutsTransferExclusivelyAndMatchFreshDrawing() {
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            val text = "Shared layout 😀 বাংলা 日本語 wraps through a measured paragraph. ".repeat(3)
+            val density = PixelUtil.getDisplayMetricDensity()
+            fun pending(prepared: RNTextEngineBindings.PreparedText): Layout? {
+                val field = prepared.javaClass.getDeclaredField("measuredLayout").apply { isAccessible = true }
+                val slot = field.get(prepared) ?: return null
+                return slot.javaClass.getDeclaredField("layout").apply { isAccessible = true }.get(slot) as Layout
+            }
+            for (styled in listOf(false, true)) {
+                for (lineHeight in doubleArrayOf(Double.NaN, 24.0)) {
+                    for (anchor in listOf(false, true)) {
+                        for (maxLines in intArrayOf(0, 2)) {
+                            for (align in listOf(null, "center", "right", "justify")) {
+                                fun prepare(forMount: Boolean): Long = if (!styled) {
+                                    RNTextEngineBindings.prepareTextView(text, null, null, null, 17.0, null, null,
+                                        0.0, lineHeight, false, false, false, null, environmentVersion = if (forMount) RNTextEngineBindings.textEnvironmentVersion() else 0)
+                                } else {
+                                    RNTextEngineBindings.prepareTextViewWithRuns(text, null, null, null, 17.0, null, null,
+                                        0.0, lineHeight, false, false, false, null,
+                                        intArrayOf(0), intArrayOf(6), intArrayOf((1 shl 2) or 1),
+                                        arrayOf("#ff0000"), arrayOf(null), doubleArrayOf(23.0), arrayOf(null), arrayOf(null),
+                                        doubleArrayOf(0.0), doubleArrayOf(0.0), booleanArrayOf(false), environmentVersion = if (forMount) RNTextEngineBindings.textEnvironmentVersion() else 0)
+                                }
+                                val handle = prepare(true)
+                                val referenceHandle = prepare(false)
+                                try {
+                                    val width = 360
+                                    val contentWidth = width - 3 - 7
+                                    val widthDp = contentWidth.toDouble() / density
+                                    val expected = RNTextEngineBindings.layout(referenceHandle, widthDp, maxLines, "tail", anchor)
+                                    val actual = RNTextEngineBindings.layout(handle, widthDp, maxLines, "tail", anchor)
+                                    org.junit.Assert.assertArrayEquals(expected, actual, 0.0001)
+                                    val prepared = requireNotNull(RNTextEngineBindings.preparedText(handle))
+                                    val measured = pending(prepared)
+                                    val eligible = (styled || lineHeight.isNaN() || !anchor) && align == null
+                                    if (eligible) assertTrue(measured != null)
+                                    fun view(content: RNTextEngineBindings.PreparedText) =
+                                        RNTextEngineAttributedTextDisplayView(application, true).apply {
+                                            setPreparedText(content)
+                                            numberOfLines = maxLines
+                                            ellipsizeMode = "tail"
+                                            setTextAlignValue(align)
+                                            setTextColorValue(Color.BLUE)
+                                            setTextDecorationLineValue("underline line-through")
+                                            setTextShadowColorValue(Color.RED)
+                                            setTextShadowOffsetPx(1f, 2f)
+                                            setTextShadowRadiusPx(1f)
+                                            setPadding(3, 5, 7, 9)
+                                            measureAndLayout(this, width, 1000)
+                                            if (anchor) capHeightTopInsetPx = resolveCapHeightInsets(width).top
+                                        }
+                                    val transferred = view(prepared)
+                                    val fresh = view(requireNotNull(RNTextEngineBindings.preparedText(referenceHandle)))
+                                    val firstLayout = requireNotNull(transferred.resolveLayout(width))
+                                    if (eligible) assertSame("Transfer height=$lineHeight anchor=$anchor lines=$maxLines align=$align measuredWidth=${measured?.width}", measured, firstLayout)
+                                    else if (measured != null) assertTrue(measured !== firstLayout)
+                                    assertEquals(null, pending(prepared))
+                                    RNTextEngineBindings.layout(handle, widthDp - 10, maxLines, "tail", anchor)
+                                    val nextLayout = pending(prepared)
+                                    assertTrue(nextLayout !== firstLayout)
+                                    RNTextEngineBindings.layout(handle, widthDp, maxLines, "tail", anchor)
+                                    assertSame("A scalar cache hit must not rebuild or replace the pending layout", nextLayout, pending(prepared))
+                                    val second = view(prepared)
+                                    val secondLayout = requireNotNull(second.resolveLayout(width))
+                                    assertEquals(null, pending(prepared))
+                                    assertTrue(firstLayout !== secondLayout)
+                                    assertTrue(firstLayout.paint !== secondLayout.paint)
+                                    fun render(view: View) = Bitmap.createBitmap(width, 1000, Bitmap.Config.ARGB_8888).also {
+                                        view.draw(Canvas(it))
+                                    }
+                                    val before = render(transferred)
+                                    val reference = render(fresh)
+                                    assertTrue("Transferred layout differs: height=$lineHeight anchor=$anchor lines=$maxLines align=$align",
+                                        before.sameAs(reference))
+                                    RNTextEngineBindings.release(handle)
+                                    second.setTextColorValue(Color.GREEN)
+                                    val after = render(transferred)
+                                    assertTrue(before.sameAs(after))
+                                    before.recycle()
+                                    reference.recycle()
+                                    after.recycle()
+                                } finally {
+                                    RNTextEngineBindings.release(handle)
+                                    RNTextEngineBindings.release(referenceHandle)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 

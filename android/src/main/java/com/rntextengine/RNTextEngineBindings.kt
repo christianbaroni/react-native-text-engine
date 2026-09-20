@@ -5,6 +5,7 @@ import android.graphics.text.LineBreaker
 import android.graphics.text.MeasuredText
 import android.graphics.Typeface
 import android.os.Build
+import android.os.LocaleList
 import android.text.BoringLayout
 import android.text.Layout
 import android.text.Spannable
@@ -16,10 +17,12 @@ import android.text.TextUtils
 import android.util.LongSparseArray
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.common.assets.ReactFontManager
+import com.facebook.react.uimanager.DisplayMetricsHolder
 import com.facebook.react.uimanager.PixelUtil
 import com.facebook.react.views.text.ReactTypefaceUtils.parseFontWeight
 import java.lang.ref.WeakReference
 import java.nio.ByteBuffer
+import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicLong
@@ -40,6 +43,33 @@ internal object RNTextEngineBindings {
     private val lineBreakerConstraints = ThreadLocal<LineBreaker.ParagraphConstraints>()
     private val lineBreakerScratchBuffers = ThreadLocal<LineBreakerScratchBuffers>()
 
+    @Volatile private var textEnvironment: TextEnvironment? = null
+    private var nextEnvironmentVersion = 1L
+
+    private class TextEnvironment(val version: Long) {
+        val metrics = DisplayMetricsHolder.getScreenDisplayMetrics()
+        val density = PixelUtil.getDisplayMetricDensity()
+        val scaledPixel = PixelUtil.toPixelFromSP(1f)
+        val fontScale = reactContext.resources.configuration.fontScale
+        val locale = Locale.getDefault()
+        val paintLocales = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) LocaleList.getAdjustedDefault() else null
+
+        fun isCurrent(): Boolean =
+            metrics === DisplayMetricsHolder.getScreenDisplayMetrics() &&
+                density == PixelUtil.getDisplayMetricDensity() && scaledPixel == PixelUtil.toPixelFromSP(1f) &&
+                fontScale == reactContext.resources.configuration.fontScale && locale == Locale.getDefault() &&
+                (Build.VERSION.SDK_INT < Build.VERSION_CODES.N || paintLocales == LocaleList.getAdjustedDefault())
+    }
+
+    @JvmStatic
+    fun textEnvironmentVersion(): Long {
+        textEnvironment?.let { if (it.isCurrent()) return it.version }
+        return synchronized(this) {
+            textEnvironment?.takeIf { it.isCurrent() }
+                ?: TextEnvironment(nextEnvironmentVersion++).also { textEnvironment = it }
+        }.version
+    }
+
     internal data class ResolvedTextStyle(
         val fallbackLineHeight: Double,
         val includeFontPadding: Boolean,
@@ -48,7 +78,7 @@ internal object RNTextEngineBindings {
         val textPaint: TextPaint,
     )
 
-    private data class TextStyleConfig(
+    internal data class TextStyleConfig(
         val allowFontScaling: Boolean,
         val fontFamily: String?,
         val fontSize: Double,
@@ -59,29 +89,12 @@ internal object RNTextEngineBindings {
         val tabularNumbers: Boolean,
     )
 
-    private data class TextMeasureRunStyle(
-        val color: String?,
-        val fontFamily: String?,
-        val fontSize: Double,
-        val fontStyle: String?,
-        val fontWeight: String?,
-        val hasColor: Boolean,
-        val hasFontFamily: Boolean,
-        val hasFontSize: Boolean,
-        val hasFontStyle: Boolean,
-        val hasFontWeight: Boolean,
-        val hasLetterSpacing: Boolean,
-        val hasLineHeight: Boolean,
-        val hasTabularNumbers: Boolean,
-        val letterSpacing: Double,
-        val lineHeight: Double,
-        val tabularNumbers: Boolean,
-    )
-
-    private data class TextMeasureRun(
-        val end: Int,
-        val start: Int,
-        val style: TextMeasureRunStyle,
+    internal class TextSource(
+        val text: String,
+        val textTransform: String?,
+        val style: TextStyleConfig,
+        val runs: List<RNTextEngineTextRun>,
+        val nested: Boolean,
     )
 
     internal class PreparedText(
@@ -89,9 +102,35 @@ internal object RNTextEngineBindings {
         val style: ResolvedTextStyle,
         val text: String,
         val textWithLineHeight: CharSequence,
+        val source: TextSource? = null,
+        val environmentVersion: Long = 0,
     ) {
         @Volatile var cachedLayoutText: CharSequence? = null
         @Volatile private var cachedCapHeights: CapHeights? = null
+        private class MeasuredLayout(val layout: Layout, val maxLines: Int, val ellipsize: TextUtils.TruncateAt?)
+        private var measuredLayout: MeasuredLayout? = null
+
+        // Layout mutates its drawing paint, so only one view may own a measured layout.
+        fun takeMeasuredLayout(
+            width: Int,
+            maxLines: Int,
+            ellipsize: TextUtils.TruncateAt?,
+            alignment: Layout.Alignment,
+            justificationMode: Int,
+            nativeLineSpacing: Boolean,
+        ): Layout? = synchronized(this) {
+            val measured = measuredLayout
+            measuredLayout = null
+            measured?.layout?.takeIf {
+                it.width == width && measured.maxLines == maxLines && measured.ellipsize == ellipsize &&
+                    it.alignment == alignment && justificationMode == 0 &&
+                    (nativeLineSpacing || hasInlineStyleRuns || style.lineHeightPx == null)
+            }
+        }
+
+        fun retainMeasuredLayout(layout: Layout, maxLines: Int, ellipsize: TextUtils.TruncateAt?) {
+            synchronized(this) { measuredLayout = MeasuredLayout(layout, maxLines, ellipsize) }
+        }
 
         fun displayText(nativeLineSpacing: Boolean): CharSequence {
             return if (nativeLineSpacing && !hasInlineStyleRuns) text else resolvePreparedLayoutText(this)
@@ -213,13 +252,17 @@ internal object RNTextEngineBindings {
 
     @JvmStatic
     fun initialize(context: ReactApplicationContext) {
-        reactContext = context
+        synchronized(this) {
+            reactContext = context
+            textEnvironment = null
+        }
     }
 
     @JvmStatic
     fun cleanup() {
         preparedTexts.clear()
         glyphFields.clear()
+        synchronized(this) { textEnvironment = null }
     }
 
     @JvmStatic
@@ -475,6 +518,8 @@ internal object RNTextEngineBindings {
         includeFontPadding: Boolean,
         tabularNumbers: Boolean,
         textBreakStrategy: String?,
+        environmentVersion: Long = 0,
+        hasNested: Boolean = false,
     ): Long {
         val style = resolveTextStyle(
             color = color,
@@ -490,7 +535,12 @@ internal object RNTextEngineBindings {
             textBreakStrategy = textBreakStrategy,
         )
         val handle = nextHandle.getAndIncrement()
-        preparedTexts[handle] = PreparedTextData(buildPreparedTextForTextView(text, textTransform, style))
+        val source = if (environmentVersion != 0L) TextSource(
+            text, textTransform,
+            TextStyleConfig(allowFontScaling, fontFamily, fontSize, fontStyle, fontWeight, letterSpacing, lineHeight, tabularNumbers),
+            emptyList(), hasNested,
+        ) else null
+        preparedTexts[handle] = PreparedTextData(buildPreparedTextForTextView(text, textTransform, style, source, environmentVersion))
         return handle
     }
 
@@ -630,6 +680,8 @@ internal object RNTextEngineBindings {
         runLetterSpacings: DoubleArray,
         runLineHeights: DoubleArray,
         runTabularNumbers: BooleanArray,
+        environmentVersion: Long = 0,
+        hasNested: Boolean = false,
     ): Long {
         val baseConfig =
             TextStyleConfig(
@@ -674,7 +726,10 @@ internal object RNTextEngineBindings {
         val handle = nextHandle.getAndIncrement()
         preparedTexts[handle] =
             PreparedTextData(
-                buildPreparedTextForTextView(text, textTransform, baseStyle, runs) { runStyle ->
+                buildPreparedTextForTextView(text, textTransform, baseStyle, runs,
+                    if (environmentVersion != 0L) TextSource(text, textTransform, baseConfig, runs, hasNested) else null,
+                    environmentVersion,
+                ) { runStyle ->
                     resolveRunTextStyle(baseStyle, baseConfig, runStyle)
                 },
             )
@@ -1895,7 +1950,7 @@ internal object RNTextEngineBindings {
     private fun resolveRunTextStyle(
         baseStyle: ResolvedTextStyle,
         baseConfig: TextStyleConfig,
-        runStyle: TextMeasureRunStyle,
+        runStyle: RNTextEngineTextRunStyle,
     ): ResolvedTextStyle {
         val fontFamily = if (runStyle.hasFontFamily) runStyle.fontFamily else baseConfig.fontFamily
         val fontSize = if (runStyle.hasFontSize) runStyle.fontSize else baseConfig.fontSize
@@ -1958,12 +2013,16 @@ internal object RNTextEngineBindings {
         )
     }
 
-    private fun buildPreparedText(text: String, style: ResolvedTextStyle): PreparedText {
+    private fun buildPreparedText(
+        text: String, style: ResolvedTextStyle, source: TextSource? = null, environmentVersion: Long = 0,
+    ): PreparedText {
         return PreparedText(
             hasInlineStyleRuns = false,
             style = style,
             text = text,
             textWithLineHeight = text,
+            source = source,
+            environmentVersion = environmentVersion,
         )
     }
 
@@ -1971,15 +2030,19 @@ internal object RNTextEngineBindings {
         text: String,
         textTransform: String?,
         style: ResolvedTextStyle,
+        source: TextSource? = null,
+        environmentVersion: Long = 0,
     ): PreparedText {
-        return buildPreparedText(applyTextTransform(text, textTransform), style)
+        return buildPreparedText(applyTextTransform(text, textTransform), style, source, environmentVersion)
     }
 
     private fun buildPreparedText(
         text: String,
         style: ResolvedTextStyle,
-        runs: List<TextMeasureRun>,
-        resolveRunStyle: (TextMeasureRunStyle) -> ResolvedTextStyle,
+        runs: List<RNTextEngineTextRun>,
+        source: TextSource? = null,
+        environmentVersion: Long = 0,
+        resolveRunStyle: (RNTextEngineTextRunStyle) -> ResolvedTextStyle,
     ): PreparedText {
         val styledText =
             if (text.isEmpty()) {
@@ -1993,6 +2056,8 @@ internal object RNTextEngineBindings {
             style = style,
             text = text,
             textWithLineHeight = styledText,
+            source = source,
+            environmentVersion = environmentVersion,
         )
     }
 
@@ -2000,10 +2065,12 @@ internal object RNTextEngineBindings {
         text: String,
         textTransform: String?,
         style: ResolvedTextStyle,
-        runs: List<TextMeasureRun>,
-        resolveRunStyle: (TextMeasureRunStyle) -> ResolvedTextStyle,
+        runs: List<RNTextEngineTextRun>,
+        source: TextSource? = null,
+        environmentVersion: Long = 0,
+        resolveRunStyle: (RNTextEngineTextRunStyle) -> ResolvedTextStyle,
     ): PreparedText {
-        if (runs.isEmpty()) return buildPreparedTextForTextView(text, textTransform, style)
+        if (runs.isEmpty()) return buildPreparedTextForTextView(text, textTransform, style, source, environmentVersion)
 
         val boundaries = ArrayList<Int>(runs.size * 2)
         runs.forEach { run ->
@@ -2019,7 +2086,7 @@ internal object RNTextEngineBindings {
                 )
             }
 
-        return buildPreparedText(transformed.text, style, transformedRuns, resolveRunStyle)
+        return buildPreparedText(transformed.text, style, transformedRuns, source, environmentVersion, resolveRunStyle)
     }
 
     private fun resolvePreparedLayoutText(prepared: PreparedText): CharSequence {
@@ -2043,8 +2110,8 @@ internal object RNTextEngineBindings {
     private fun buildStyledText(
         text: String,
         baseStyle: ResolvedTextStyle,
-        runs: List<TextMeasureRun>,
-        resolveRunStyle: (TextMeasureRunStyle) -> ResolvedTextStyle,
+        runs: List<RNTextEngineTextRun>,
+        resolveRunStyle: (RNTextEngineTextRunStyle) -> ResolvedTextStyle,
     ): CharSequence {
         val styledText = SpannableString(text)
 
@@ -2078,7 +2145,7 @@ internal object RNTextEngineBindings {
         styledText: SpannableString,
         textLength: Int,
         lineHeightPx: Float,
-        runs: List<TextMeasureRun>,
+        runs: List<RNTextEngineTextRun>,
     ) {
         var cursor = 0
 
@@ -2120,7 +2187,7 @@ internal object RNTextEngineBindings {
         runLetterSpacings: DoubleArray,
         runLineHeights: DoubleArray,
         runTabularNumbers: BooleanArray,
-    ): List<TextMeasureRun> {
+    ): List<RNTextEngineTextRun> {
         requireAlignedRunArrays(
             runStarts.size,
             runEnds.size,
@@ -2168,8 +2235,8 @@ internal object RNTextEngineBindings {
         runLetterSpacings: DoubleArray,
         runLineHeights: DoubleArray,
         runTabularNumbers: BooleanArray,
-    ): List<TextMeasureRun> {
-        val runs = ArrayList<TextMeasureRun>(runCount)
+    ): List<RNTextEngineTextRun> {
+        val runs = ArrayList<RNTextEngineTextRun>(runCount)
         var previousEnd = 0
 
         for (relativeIndex in 0 until runCount) {
@@ -2185,11 +2252,11 @@ internal object RNTextEngineBindings {
             require(start >= previousEnd) { "RNTextEngine: text runs must be sorted and non-overlapping." }
 
             runs.add(
-                TextMeasureRun(
+                RNTextEngineTextRun(
                     end = end,
                     start = start,
                     style =
-                        TextMeasureRunStyle(
+                        RNTextEngineTextRunStyle(
                             color = runColors[index],
                             fontFamily = runFontFamilies[index],
                             fontSize = runFontSizes[index],
@@ -2229,7 +2296,7 @@ internal object RNTextEngineBindings {
         runLetterSpacings: DoubleArray,
         runLineHeights: DoubleArray,
         runTabularNumbers: BooleanArray,
-    ): List<List<TextMeasureRun>> {
+    ): List<List<RNTextEngineTextRun>> {
         require(runCounts.size == texts.size) { "RNTextEngine: batch text runs must align with the batch text input length." }
         val totalRunCount = runCounts.sum()
         requireAlignedRunArrays(
@@ -2246,7 +2313,7 @@ internal object RNTextEngineBindings {
             runTabularNumbers.size,
         )
 
-        val runsByText = ArrayList<List<TextMeasureRun>>(texts.size)
+        val runsByText = ArrayList<List<RNTextEngineTextRun>>(texts.size)
         var runOffset = 0
 
         texts.forEachIndexed { index, text ->
@@ -2342,6 +2409,9 @@ internal object RNTextEngineBindings {
         val charSequence = if (usesPlainTextLineHeightMetrics) prepared.text else resolvePreparedLayoutText(prepared)
         val paint = TextPaint(prepared.style.textPaint)
         val effectiveMaxLines = if (maxLines > 0) maxLines else Int.MAX_VALUE
+        val retainLayout = prepared.source != null && !includeLines && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
+            prepared.style.textBreakStrategy == Layout.BREAK_STRATEGY_HIGH_QUALITY &&
+            (prepared.hasInlineStyleRuns || prepared.style.lineHeightPx == null || !anchorToCapHeight)
 
         val layout = buildStaticLayoutCompat(
             text = charSequence,
@@ -2352,6 +2422,7 @@ internal object RNTextEngineBindings {
             hyphenationFrequency = Layout.HYPHENATION_FREQUENCY_NORMAL,
             maxLines = effectiveMaxLines,
             ellipsize = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) ellipsize else null,
+            lineSpacingAdd = if (retainLayout && usesPlainTextLineHeightMetrics) prepared.lineSpacingAdd(true) else 0f,
         )
 
         val actualLineCount = min(layout.lineCount, effectiveMaxLines)
@@ -2415,6 +2486,8 @@ internal object RNTextEngineBindings {
         if (hasEllipsizedLine) {
             widestLine = max(widestLine, layout.width.toDouble() / density)
         }
+
+        if (retainLayout) prepared.retainMeasuredLayout(layout, effectiveMaxLines, ellipsize)
 
         return LayoutInfo(
             height = measuredHeight,
@@ -2808,65 +2881,72 @@ internal object RNTextEngineBindings {
         tabularNumbers: Boolean,
         textBreakStrategy: String?,
         runs: List<RNTextEngineTextRun> = emptyList(),
+        prepared: PreparedText? = null,
+        current: PreparedText? = null,
+        retainSource: Boolean = false,
     ): PreparedText {
-        val colorString = color?.toColorString()
-        val baseStyle =
-            resolveTextStyle(
-                color = colorString,
-                fontFamily = fontFamily,
-                fontSize = fontSize,
-                fontWeight = fontWeight,
-                fontStyle = fontStyle,
-                letterSpacing = letterSpacing,
-                lineHeight = lineHeight,
-                allowFontScaling = allowFontScaling,
-                includeFontPadding = includeFontPadding,
-                tabularNumbers = tabularNumbers,
-                textBreakStrategy = textBreakStrategy,
-            )
-        if (runs.isEmpty()) return buildPreparedTextForTextView(text, textTransform, baseStyle)
+        val environmentVersion = textEnvironmentVersion()
+        val source = prepared?.source
+        val nestedSource = source?.takeIf { it.nested }
+        val sourceText = nestedSource?.text ?: text
+        val sourceTransform = if (nestedSource != null) null else textTransform
+        val sourceRuns = nestedSource?.runs ?: runs
+        val scaleRoot = nestedSource != null && allowFontScaling
+        val sourceFontSize = if (scaleRoot) scaleTypographyValue(fontSize) else fontSize
+        val sourceLetterSpacing = if (scaleRoot) scaleTypographyValue(letterSpacing) else letterSpacing
+        val sourceLineHeight = if (scaleRoot && !lineHeight.isNaN()) scaleTypographyValue(lineHeight) else lineHeight
+        val sourceAllowScaling = allowFontScaling && nestedSource == null
+        fun matches(candidate: PreparedText?): Boolean {
+            val input = candidate?.source ?: return false
+            return candidate.environmentVersion == environmentVersion &&
+                input.nested == (nestedSource != null) && input.text == sourceText &&
+                input.textTransform == sourceTransform && input.runs == sourceRuns &&
+                input.style.matches(sourceAllowScaling, fontFamily, sourceFontSize, fontStyle, fontWeight,
+                    sourceLetterSpacing, sourceLineHeight, tabularNumbers)
+        }
+        if (current != null && matches(current)) return current
+        if (prepared != null && prepared !== current && matches(prepared)) return prepared
 
-        val baseConfig =
-            TextStyleConfig(
-                allowFontScaling = allowFontScaling,
-                fontFamily = fontFamily,
-                fontSize = fontSize,
-                fontStyle = fontStyle,
-                fontWeight = fontWeight,
-                letterSpacing = letterSpacing,
-                lineHeight = lineHeight,
-                tabularNumbers = tabularNumbers,
-            )
-        val measureRuns =
-            runs.map { run ->
-                TextMeasureRun(
-                    end = run.end,
-                    start = run.start,
-                    style =
-                        TextMeasureRunStyle(
-                            color = run.style.color,
-                            fontFamily = run.style.fontFamily,
-                            fontSize = run.style.fontSize,
-                            fontStyle = run.style.fontStyle,
-                            fontWeight = run.style.fontWeight,
-                            hasColor = run.style.hasColor,
-                            hasFontFamily = run.style.hasFontFamily,
-                            hasFontSize = run.style.hasFontSize,
-                            hasFontStyle = run.style.hasFontStyle,
-                            hasFontWeight = run.style.hasFontWeight,
-                            hasLetterSpacing = run.style.hasLetterSpacing,
-                            hasLineHeight = run.style.hasLineHeight,
-                            hasTabularNumbers = run.style.hasTabularNumbers,
-                            letterSpacing = run.style.letterSpacing,
-                            lineHeight = run.style.lineHeight,
-                            tabularNumbers = run.style.tabularNumbers,
-                        ),
-                )
-            }
+        val baseStyle = resolveTextStyle(
+            color = color?.toColorString(),
+            fontFamily = fontFamily,
+            fontSize = sourceFontSize,
+            fontWeight = fontWeight,
+            fontStyle = fontStyle,
+            letterSpacing = sourceLetterSpacing,
+            lineHeight = sourceLineHeight,
+            allowFontScaling = sourceAllowScaling,
+            includeFontPadding = includeFontPadding,
+            tabularNumbers = tabularNumbers,
+            textBreakStrategy = textBreakStrategy,
+        )
+        if (sourceRuns.isEmpty() && !retainSource) return buildPreparedTextForTextView(sourceText, sourceTransform, baseStyle, environmentVersion = environmentVersion)
 
-        return buildPreparedTextForTextView(text, textTransform, baseStyle, measureRuns) { runStyle ->
+        val baseConfig = TextStyleConfig(sourceAllowScaling, fontFamily, sourceFontSize, fontStyle, fontWeight,
+            sourceLetterSpacing, sourceLineHeight, tabularNumbers)
+        val nextSource = if (retainSource) TextSource(
+            sourceText, sourceTransform, baseConfig, sourceRuns, nestedSource != null,
+        ) else null
+        if (sourceRuns.isEmpty()) return buildPreparedTextForTextView(sourceText, sourceTransform, baseStyle, nextSource, environmentVersion)
+        return buildPreparedTextForTextView(sourceText, sourceTransform, baseStyle, sourceRuns, nextSource, environmentVersion) { runStyle ->
             resolveRunTextStyle(baseStyle, baseConfig, runStyle)
         }
+    }
+
+    private fun TextStyleConfig.matches(
+        allowScaling: Boolean,
+        family: String?,
+        size: Double,
+        style: String?,
+        weight: String?,
+        spacing: Double,
+        height: Double,
+        tabular: Boolean,
+    ): Boolean {
+        return allowFontScaling == allowScaling && fontFamily == family && fontStyle == style && fontWeight == weight &&
+            fontSize.toFloat().toBits() == size.toFloat().toBits() &&
+            letterSpacing.toFloat().toBits() == spacing.toFloat().toBits() &&
+            lineHeight.toFloat().toBits() == height.toFloat().toBits() && tabularNumbers == tabular
     }
 
     @JvmStatic

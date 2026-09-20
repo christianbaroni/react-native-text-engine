@@ -15,7 +15,8 @@ internal open class RNTextEngineTextContainer(context: Context, private val nati
     val displayView = RNTextEngineAttributedTextDisplayView(context, nativeLineSpacing)
     var selectionView: AppCompatTextView? = null
         private set
-    private var preparedText: RNTextEngineBindings.PreparedText? = null
+    protected var preparedText: RNTextEngineBindings.PreparedText? = null
+        private set
 
     private val activeSelectionView: AppCompatTextView?
         get() = selectionView?.takeIf { it.parent === this }
@@ -50,7 +51,10 @@ internal open class RNTextEngineTextContainer(context: Context, private val nati
         if (preparedText === prepared) return
         preparedText = prepared
         displayView.setPreparedText(prepared)
-        activeSelectionView?.let { applyPreparedText(it, prepared, nativeLineSpacing) }
+        activeSelectionView?.let {
+            applyPreparedText(it, prepared, nativeLineSpacing)
+            displayView.applyDrawingStyle(it)
+        }
         requestTextLayout()
     }
 
@@ -76,6 +80,11 @@ internal open class RNTextEngineTextContainer(context: Context, private val nati
         displayView.setPadding(left, top, right, bottom)
         activeSelectionView?.setPadding(left, top, right, bottom)
         requestTextLayout()
+    }
+
+    fun setTextColorValue(value: Int) {
+        displayView.setTextColorValue(value)
+        activeSelectionView?.let(displayView::applyDrawingStyle)
     }
 
     fun setTextDecorationLineValue(value: String?) {

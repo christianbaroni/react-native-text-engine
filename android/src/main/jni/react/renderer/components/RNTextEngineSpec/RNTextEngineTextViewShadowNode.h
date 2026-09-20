@@ -7,7 +7,7 @@
 #include <react/renderer/core/LayoutConstraints.h>
 #include <react/renderer/core/LayoutContext.h>
 
-#ifdef RN_SERIALIZABLE_STATE
+#if defined(ANDROID) || defined(RN_SERIALIZABLE_STATE)
 #include <folly/dynamic.h>
 #include <react/renderer/mapbuffer/MapBufferBuilder.h>
 #endif
@@ -16,7 +16,6 @@
 #include <limits>
 #include <memory>
 #include <mutex>
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -36,6 +35,7 @@ struct TextViewMeasurementRuns {
   std::vector<bool> tabularNumbers;
 };
 
+uint64_t textEnvironmentVersion();
 uint64_t prepareTextViewMeasurementHandle(
     const std::string& text,
     const std::string& textTransform,
@@ -47,7 +47,9 @@ uint64_t prepareTextViewMeasurementHandle(
     double letterSpacing,
     double lineHeight,
     bool tabularNumbers,
-    const TextViewMeasurementRuns& runs);
+    const TextViewMeasurementRuns& runs,
+    uint64_t environmentVersion,
+    bool hasNested = false);
 double measurePreparedTextMeasurementWidth(uint64_t handle);
 facebook::react::Size measurePreparedTextMeasurementLayout(
     uint64_t handle,
@@ -57,6 +59,12 @@ facebook::react::Size measurePreparedTextMeasurementLayout(
     bool anchorToCapHeight);
 void releasePreparedTextMeasurementHandle(uint64_t handle);
 
+struct PreparedTextHandle {
+  explicit PreparedTextHandle(uint64_t value) : handle(value) {}
+  ~PreparedTextHandle();
+  const uint64_t handle;
+};
+
 } // namespace rntextengine
 
 namespace facebook::react {
@@ -64,24 +72,9 @@ namespace facebook::react {
 extern const char RNTextEngineTextViewComponentName[];
 
 struct RNTextEngineTextViewStateData final {
-  bool hasNested{false};
-  int64_t hash{0};
-  std::string text{};
-  std::vector<int> runStarts{};
-  std::vector<int> runEnds{};
-  std::vector<int> runStyleMasks{};
-  std::vector<std::string> runColors{};
-  std::vector<std::string> runFontFamilies{};
-  std::vector<double> runFontSizes{};
-  std::vector<std::string> runFontWeights{};
-  std::vector<std::string> runFontStyles{};
-  std::vector<double> runLetterSpacings{};
-  std::vector<double> runLineHeights{};
-  std::vector<bool> runTabularNumbers{};
+  std::shared_ptr<const rntextengine::PreparedTextHandle> preparedText{};
 
-  static RNTextEngineTextViewStateData empty();
-
-#ifdef RN_SERIALIZABLE_STATE
+#if defined(ANDROID) || defined(RN_SERIALIZABLE_STATE)
   RNTextEngineTextViewStateData() = default;
   RNTextEngineTextViewStateData(
       const RNTextEngineTextViewStateData& previousState,
@@ -124,9 +117,9 @@ class RNTextEngineTextViewShadowNode final : public ConcreteViewShadowNode<
   void layout(LayoutContext layoutContext) override;
 
  protected:
-  bool shouldNewRevisionDirtyMeasurement(
+  virtual bool shouldNewRevisionDirtyMeasurement(
       const ShadowNode& sourceShadowNode,
-      const ShadowNodeFragment& fragment) const override;
+      const ShadowNodeFragment& fragment) const final;
 
  private:
   struct CachedLayout {
@@ -163,39 +156,25 @@ class RNTextEngineTextViewShadowNode final : public ConcreteViewShadowNode<
   };
 
   struct ResolvedPayload {
-    bool hasNested{false};
-    int64_t hash{0};
-    std::string text{};
-    std::vector<int> runStarts{};
-    std::vector<int> runEnds{};
-    std::vector<int> runStyleMasks{};
-    std::vector<std::string> runColors{};
-    std::vector<std::string> runFontFamilies{};
-    std::vector<double> runFontSizes{};
-    std::vector<std::string> runFontWeights{};
-    std::vector<std::string> runFontStyles{};
-    std::vector<double> runLetterSpacings{};
-    std::vector<double> runLineHeights{};
-    std::vector<bool> runTabularNumbers{};
+    std::string text;
+    rntextengine::TextViewMeasurementRuns runs;
   };
 
   struct MeasurementCache {
-    ~MeasurementCache();
-
     std::mutex mutex;
-    std::optional<ResolvedPayload> payload;
-    uint64_t handle{0};
+    uint64_t environmentVersion{0};
+    std::shared_ptr<const rntextengine::PreparedTextHandle> preparedText;
     double preferredWidth{-1};
     std::vector<CachedLayout> layouts{};
   };
 
+  bool hasSameTextContent(const RNTextEngineTextViewShadowNode& source, bool asChild = false) const;
   MeasurementCache& ensureMeasurementCache() const;
   void prepareMeasurementHandle(MeasurementCache& cache) const;
   rntextengine::TextViewMeasurementRuns buildRuns() const;
-  rntextengine::TextViewMeasurementRuns buildRuns(const ResolvedPayload& payload) const;
 
-  const ResolvedPayload& resolvePayload(MeasurementCache& cache) const;
-  bool appendNodePayload(
+  ResolvedPayload resolvePayload() const;
+  void appendNodePayload(
       const RNTextEngineTextViewShadowNode& node,
       const ResolvedStyle& parentStyle,
       std::u16string& text,
@@ -227,9 +206,7 @@ class RNTextEngineTextViewShadowNode final : public ConcreteViewShadowNode<
   ResolvedPayload buildPayloadFromSegments(
       const std::u16string& text,
       const std::vector<ResolvedSegment>& segments,
-      const ResolvedStyle& rootStyle,
-      bool hasNested) const;
-  void publishStateIfNeeded(const ResolvedPayload& payload);
+      const ResolvedStyle& rootStyle) const;
 
   mutable std::shared_ptr<MeasurementCache> measurementCache_{};
   mutable std::once_flag measurementCacheInitialization_;
