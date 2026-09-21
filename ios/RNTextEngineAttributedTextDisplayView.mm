@@ -7,7 +7,7 @@ static CGFloat RNTextEngineResolveHorizontalDrawOrigin(
     NSTextAlignment textAlignment,
     CGFloat width)
 {
-  if (textAlignment == NSTextAlignmentCenter) return 0;
+  if (textAlignment == NSTextAlignmentCenter || textAlignment == NSTextAlignmentNatural) return 0;
   CGRect glyphBounds = [layoutManager boundingRectForGlyphRange:glyphRange inTextContainer:textContainer];
 
   CGFloat leftInset = MAX(0, -CGRectGetMinX(glyphBounds));
@@ -26,8 +26,15 @@ NSLineBreakMode RNTextEngineResolveLineBreakMode(NSInteger numberOfLines, NSStri
   return NSLineBreakByTruncatingTail;
 }
 
-void RNTextEngineConfigureInteractionTextView(UITextView *textView)
+UITextView *RNTextEngineCreateInteractionTextView(UIView *view)
 {
+  UITextView *textView;
+  if (@available(iOS 16.0, *)) {
+    textView = [UITextView textViewUsingTextLayoutManager:NO];
+  } else {
+    textView = [[UITextView alloc] initWithFrame:view.bounds];
+  }
+  textView.frame = view.bounds;
   textView.backgroundColor = UIColor.clearColor;
   textView.clipsToBounds = NO;
   textView.opaque = NO;
@@ -40,6 +47,7 @@ void RNTextEngineConfigureInteractionTextView(UITextView *textView)
   textView.textContainerInset = UIEdgeInsetsZero;
   textView.textContainer.lineFragmentPadding = 0;
   textView.userInteractionEnabled = YES;
+  return textView;
 }
 
 void RNTextEngineApplyInteractionTextViewFrame(
@@ -82,7 +90,7 @@ void RNTextEngineApplyInteractionTextViewFrame(
 
     _attributedText = [[NSAttributedString alloc] initWithString:@""];
     _contentInsets = UIEdgeInsetsZero;
-    _textAlignment = NSTextAlignmentLeft;
+    _textAlignment = NSTextAlignmentNatural;
     _uniformCapHeight = 0;
     _capHeightInsetsDirty = YES;
     _layoutDirty = YES;

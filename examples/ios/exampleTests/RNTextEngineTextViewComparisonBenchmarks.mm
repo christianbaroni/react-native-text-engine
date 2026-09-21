@@ -535,9 +535,8 @@ static RNTextEngineAttributedTextDisplayView *TextViewDisplay(UIView *component)
   return [[component valueForKey:@"textView"] valueForKey:@"displayView"];
 }
 
-static NSData *TextViewPixels(UIView *component, UIUserInterfaceStyle appearance)
+static NSData *ViewPixels(UIView *view, UIUserInterfaceStyle appearance)
 {
-  RNTextEngineAttributedTextDisplayView *view = TextViewDisplay(component);
   view.overrideUserInterfaceStyle = appearance;
   UIGraphicsImageRendererFormat *format = [UIGraphicsImageRendererFormat defaultFormat];
   format.scale = UIScreen.mainScreen.scale;
@@ -899,7 +898,7 @@ static void MountAndDrawTree(const RootShadowNode &root, BOOL textView, CGContex
   XCTAssertFalse([TextViewDisplay(view) valueForKey:@"layoutManager"] ==
                  [TextViewDisplay(secondView) valueForKey:@"layoutManager"]);
 
-  NSData *originalPixels = TextViewPixels(view, UIUserInterfaceStyleLight);
+  NSData *originalPixels = ViewPixels(TextViewDisplay(view), UIUserInterfaceStyleLight);
   auto selectableProps = std::make_shared<RNTextEngineTextViewProps>(*props);
   selectableProps->selectable = true;
   [view updateProps:selectableProps oldProps:props];
@@ -912,7 +911,7 @@ static void MountAndDrawTree(const RootShadowNode &root, BOOL textView, CGContex
   [view layoutIfNeeded];
   XCTAssertNil([[view valueForKey:@"textView"] valueForKey:@"interactionTextView"]);
   XCTAssertFalse(TextViewDisplay(view).hidden);
-  XCTAssertEqualObjects(TextViewPixels(view, UIUserInterfaceStyleLight), originalPixels);
+  XCTAssertEqualObjects(ViewPixels(TextViewDisplay(view), UIUserInterfaceStyleLight), originalPixels);
 
   auto unrelatedProps = std::make_shared<RNTextEngineTextViewProps>(*props);
   unrelatedProps->opacity = 0.4;
@@ -1217,8 +1216,8 @@ static void MountAndDrawTree(const RootShadowNode &root, BOOL textView, CGContex
         auto reference = makeNode();
         reference->measureContent(context, BuildLayoutConstraints(260));
         reference->layout(context);
-        XCTAssertEqualObjects(TextViewPixels(MountTextViewNode(*node), drawnStyle),
-                              TextViewPixels(MountTextViewNode(*reference), drawnStyle));
+        XCTAssertEqualObjects(ViewPixels(TextViewDisplay(MountTextViewNode(*node)), drawnStyle),
+                              ViewPixels(TextViewDisplay(MountTextViewNode(*reference)), drawnStyle));
       }];
     }
   }
@@ -1364,6 +1363,85 @@ static void MountAndDrawTree(const RootShadowNode &root, BOOL textView, CGContex
   XCTAssertTrue([[view valueForKey:@"layoutDirty"] boolValue]);
   XCTAssertTrue([[view valueForKey:@"capHeightInsetsDirty"] boolValue]);
   XCTAssertEqualObjects(view.attributedText.string, @"Replacement text");
+#endif
+}
+
+- (void)testPreparedNaturalAlignmentMatchesNativeSelection
+{
+#ifdef RCT_NEW_ARCH_ENABLED
+  for (NSString *text in @[@"שלום", @"مرحبا", @"Hello שלום", @"שלום Hello"]) {
+    for (CGFloat width : {35., 240.}) for (NSInteger lines : {0, 1}) {
+      uint64_t handle = rntextengine::createPreparedTextHandleForTextView(text, {.fontSize = 17, .lineHeight = 30});
+      UIView *view = [NSClassFromString(@"RNTextEnginePreparedTextView") new];
+      view.frame = CGRectMake(0, 0, width, 120);
+      [view setValue:@(handle) forKey:@"handle"];
+      [view setValue:@(lines) forKey:@"numberOfLines"];
+      [view setValue:@"tail" forKey:@"ellipsizeMode"];
+      [view layoutIfNeeded];
+      NSData *ordinary = ViewPixels(view, UIUserInterfaceStyleLight);
+      [view setValue:@YES forKey:@"selectable"];
+      [view layoutIfNeeded];
+      NSData *selected = ViewPixels(view, UIUserInterfaceStyleLight);
+      XCTAssertEqualObjects(selected, ordinary, @"%@ width=%g lines=%ld", text, width, (long)lines);
+      [view setValue:@NO forKey:@"selectable"];
+      [view layoutIfNeeded];
+      XCTAssertEqualObjects(ViewPixels(view, UIUserInterfaceStyleLight), ordinary);
+      rntextengine::releasePreparedTextHandle(handle);
+    }
+  }
+#endif
+}
+
+- (void)testParagraphAlignmentPreservesPhysicalEdgesAndPlatformDefault
+{
+#ifdef RCT_NEW_ARCH_ENABLED
+  auto lineBounds = ^CGRect(NSAttributedString *text) {
+    NSTextStorage *storage = [[NSTextStorage alloc] initWithAttributedString:text];
+    NSLayoutManager *manager = [NSLayoutManager new];
+    NSTextContainer *container = [[NSTextContainer alloc] initWithSize:CGSizeMake(240, CGFLOAT_MAX)];
+    container.lineFragmentPadding = 0;
+    [manager addTextContainer:container];
+    [storage addLayoutManager:manager];
+    [manager ensureLayoutForTextContainer:container];
+    return [manager lineFragmentUsedRectForGlyphAtIndex:0 effectiveRange:nil];
+  };
+  for (NSString *string in @[@"שלום", @"مرحبا", @"Hello שלום", @"שלום Hello"]) {
+    UIFont *font = [UIFont systemFontOfSize:17];
+    NSAttributedString *nativeDefault = [[NSAttributedString alloc] initWithString:string
+        attributes:@{NSFontAttributeName: font}];
+    CGFloat naturalOrigin = CGRectGetMinX(lineBounds(nativeDefault));
+    for (NSString *alignment in @[@"", @"auto", @"left", @"right"]) {
+      for (CGFloat rootHeight : {0., 30.}) for (CGFloat runHeight : {-1., 0., 35.}) {
+        RNTextEngineTextAttributes base{.fontSize = 17, .lineHeight = rootHeight, .textAlign = alignment};
+        std::vector<RNTextEngineTextRun> runs;
+        if (runHeight >= 0) runs.push_back({.start = 0, .end = (NSInteger)string.length, .style = {.lineHeight = runHeight}});
+        auto text = RNTextEngineBuildAttributedText(string, base, runs, nil, NO);
+        NSParagraphStyle *paragraph = [text attribute:NSParagraphStyleAttributeName atIndex:0 effectiveRange:nil];
+        NSTextAlignment expected = [alignment isEqual:@"left"] ? NSTextAlignmentLeft :
+            [alignment isEqual:@"right"] ? NSTextAlignmentRight : NSTextAlignmentNatural;
+        XCTAssertEqual((paragraph ?: NSParagraphStyle.defaultParagraphStyle).alignment, expected);
+        XCTAssertEqualWithAccuracy(paragraph.maximumLineHeight, runHeight >= 0 ? runHeight : rootHeight, 0.001);
+        CGRect bounds = lineBounds(text);
+        if (expected == NSTextAlignmentLeft) XCTAssertEqualWithAccuracy(CGRectGetMinX(bounds), 0, 0.01);
+        else if (expected == NSTextAlignmentRight) XCTAssertEqualWithAccuracy(CGRectGetMaxX(bounds), 240, 0.01);
+        else XCTAssertEqualWithAccuracy(CGRectGetMinX(bounds), naturalOrigin, 0.01);
+        auto prepared = rntextengine::prepareAttributedText(text, font.lineHeight, expected);
+        if (expected == NSTextAlignmentNatural) {
+          XCTAssertTrue([(id)prepared valueForKey:@"attributedText"] == text);
+        }
+        for (NSInteger maxLines : {0, 1}) {
+          auto size = rntextengine::measurePreparedTextLayout(prepared, 35, maxLines, @"tail", NO);
+          auto left = base;
+          left.textAlign = @"left";
+          auto leftText = RNTextEngineBuildAttributedText(string, left, runs, nil, NO);
+          auto leftPrepared = rntextengine::prepareAttributedText(leftText, font.lineHeight, NSTextAlignmentLeft);
+          auto leftSize = rntextengine::measurePreparedTextLayout(leftPrepared, 35, maxLines, @"tail", NO);
+          XCTAssertEqualWithAccuracy(size.width, leftSize.width, 0.01);
+          XCTAssertEqualWithAccuracy(size.height, leftSize.height, 0.01);
+        }
+      }
+    }
+  }
 #endif
 }
 

@@ -105,7 +105,8 @@ NSTextAlignment RNTextEngineTextResolveAlignment(NSString *textAlign)
   if ([textAlign isEqualToString:@"center"]) return NSTextAlignmentCenter;
   if ([textAlign isEqualToString:@"right"]) return NSTextAlignmentRight;
   if ([textAlign isEqualToString:@"justify"]) return NSTextAlignmentJustified;
-  return NSTextAlignmentLeft;
+  if ([textAlign isEqualToString:@"left"]) return NSTextAlignmentLeft;
+  return NSTextAlignmentNatural;
 }
 
 static UIFont *ResolveFont(NSString *fontFamily, NSNumber *size, NSString *fontWeight,
@@ -167,7 +168,7 @@ static void RNTextEngineApplyTextDecorationAttributes(
 
 static NSParagraphStyle *BuildParagraphStyle(CGFloat lineHeight, NSTextAlignment alignment)
 {
-  if (!(lineHeight > 0) && alignment == NSTextAlignmentLeft) return nil;
+  if (!(lineHeight > 0) && alignment == NSTextAlignmentNatural) return nil;
   NSMutableParagraphStyle *paragraphStyle = [NSMutableParagraphStyle new];
   if (lineHeight > 0) {
     paragraphStyle.minimumLineHeight = lineHeight;
@@ -233,9 +234,9 @@ static NSDictionary<NSAttributedStringKey, id> *BuildRunOverrides(
   }
   if (style.letterSpacing) attributes[NSKernAttributeName] = @(*style.letterSpacing * runScale);
   if (style.lineHeight && *style.lineHeight * runScale != base.lineHeight * scale) {
-    NSParagraphStyle *baseParagraph = baseAttributes[NSParagraphStyleAttributeName];
-    NSParagraphStyle *paragraphStyle = BuildParagraphStyle(*style.lineHeight * runScale, baseParagraph.alignment);
-    if (paragraphStyle != nil) attributes[NSParagraphStyleAttributeName] = paragraphStyle;
+    attributes[NSParagraphStyleAttributeName] = BuildParagraphStyle(
+        *style.lineHeight * runScale, RNTextEngineTextResolveAlignment(base.textAlign))
+        ?: NSParagraphStyle.defaultParagraphStyle;
   }
   return attributes;
 }

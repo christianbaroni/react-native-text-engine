@@ -21,7 +21,7 @@ NS_ASSUME_NONNULL_BEGIN
 FOUNDATION_EXTERN NSLineBreakMode RNTextEngineResolveLineBreakMode(
     NSInteger numberOfLines,
     NSString * _Nullable ellipsizeMode);
-FOUNDATION_EXTERN void RNTextEngineConfigureInteractionTextView(UITextView *textView);
+FOUNDATION_EXTERN UITextView *RNTextEngineCreateInteractionTextView(UIView *view);
 FOUNDATION_EXTERN void RNTextEngineApplyInteractionTextViewFrame(
     UITextView *textView,
     CGRect frame,

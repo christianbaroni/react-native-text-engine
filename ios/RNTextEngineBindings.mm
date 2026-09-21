@@ -2221,7 +2221,7 @@ void releasePreparedTextHandleInternal(uint64_t handle) {
 RNTextEnginePreparedText *prepareAttributedText(NSAttributedString *text, CGFloat emptyLineHeight, NSTextAlignment alignment) {
   RNTextEnginePreparedText *prepared = [RNTextEnginePreparedText new];
   __block NSMutableAttributedString *measurementText = nil;
-  if (alignment != NSTextAlignmentLeft) {
+  if (alignment != NSTextAlignmentLeft && alignment != NSTextAlignmentNatural) {
     [text enumerateAttribute:NSParagraphStyleAttributeName inRange:NSMakeRange(0, text.length) options:0
                  usingBlock:^(NSParagraphStyle *paragraph, NSRange range, BOOL *) {
       if (paragraph == nil || paragraph.alignment == NSTextAlignmentLeft) return;

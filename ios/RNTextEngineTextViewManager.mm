@@ -273,8 +273,7 @@ static UIEdgeInsets RNTextEngineUIEdgeInsetsAdd(UIEdgeInsets left, UIEdgeInsets 
 {
   if (_interactionTextView != nil) return _interactionTextView;
 
-  _interactionTextView = [[UITextView alloc] initWithFrame:self.bounds];
-  RNTextEngineConfigureInteractionTextView(_interactionTextView);
+  _interactionTextView = RNTextEngineCreateInteractionTextView(self);
   _interactionTextView.textContainer.maximumNumberOfLines = _numberOfLines > 0 ? _numberOfLines : 0;
   _interactionTextView.textContainer.lineBreakMode = RNTextEngineResolveLineBreakMode(_numberOfLines, _ellipsizeMode);
   _interactionTextView.textAlignment = RNTextEngineTextResolveAlignment(_textAlign);
