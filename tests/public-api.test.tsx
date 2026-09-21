@@ -305,6 +305,27 @@ describe('public TS contract', () => {
     expect(nativeTextView.runTabularNumbers).toEqual([true, false]);
   });
 
+  it('makes paragraph roots accessible while preserving explicit props and virtual spans', async () => {
+    installRuntimeBindings();
+    const { TextView, PreparedTextView } = await importIndex();
+    const { getLastNativeComponentProps } = await import('./mocks/react-native');
+    const text = render(<TextView text="Paragraph" />);
+    expect(getLastNativeComponentProps('RNTextEngineTextView')).toMatchObject({ accessible: true });
+    text.rerender(<TextView accessible={false} text="Paragraph" />);
+    expect(getLastNativeComponentProps('RNTextEngineTextView')).toMatchObject({ accessible: false });
+    text.rerender(
+      <TextView>
+        <TextView text="Nested span" />
+      </TextView>
+    );
+    expect(getLastNativeComponentProps('RNTextEngineTextView')).toMatchObject({ accessible: false, rnteIsVirtualTextSpan: true });
+    text.unmount();
+    const prepared = render(<PreparedTextView handle={21} selectable />);
+    expect(getLastNativeComponentProps('RNTextEnginePreparedTextView')).toMatchObject({ accessible: true });
+    prepared.rerender(<PreparedTextView accessible={false} handle={21} selectable />);
+    expect(getLastNativeComponentProps('RNTextEnginePreparedTextView')).toMatchObject({ accessible: false });
+  });
+
   it('forwards anchorToCapHeight through PreparedTextView', async () => {
     installRuntimeBindings();
     const { PreparedTextView } = await importIndex();

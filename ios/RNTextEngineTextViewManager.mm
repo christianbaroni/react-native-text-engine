@@ -19,6 +19,7 @@
 #import <react/renderer/components/RNTextEngineSpec/RCTComponentViewHelpers.h>
 #endif
 #import <React/RCTViewManager.h>
+#import <React/RCTView.h>
 #import <React/UIView+React.h>
 
 @interface RNTextEngineResolvedTextPayload : NSObject
@@ -38,7 +39,11 @@
 @property (nonatomic, copy) NSArray<NSNumber *> *runTabularNumbers;
 @end
 
-@interface RNTextEngineTextView : UIView
+#ifdef RCT_NEW_ARCH_ENABLED
+@interface RNTextEngineTextView : UIView <RNTextEngineAccessibilityOwner>
+#else
+@interface RNTextEngineTextView : RCTView <RNTextEngineAccessibilityOwner>
+#endif
 @property (nonatomic, assign) BOOL allowFontScaling;
 @property (nonatomic, strong) UIColor *color;
 @property (nonatomic, copy) NSString *ellipsizeMode;
@@ -90,12 +95,18 @@
 
 using namespace facebook::react;
 
-@interface RNTextEngineTextViewComponentView : RCTViewComponentView <RCTRNTextEngineTextViewViewProtocol>
+@interface RNTextEngineTextViewComponentView : RCTViewComponentView <RCTRNTextEngineTextViewViewProtocol, RNTextEngineAccessibilityOwner>
 @end
 
 @implementation RNTextEngineTextViewComponentView {
   RNTextEngineTextView *_textView;
 }
+
+- (BOOL)isTextAccessibilityElement { return [super isAccessibilityElement]; }
+- (NSString *)explicitAccessibilityLabel { return [super accessibilityLabel]; }
+- (UIAccessibilityTraits)accessibilityTraits { return [super accessibilityTraits] | UIAccessibilityTraitStaticText; }
+- (BOOL)isAccessibilityElement { return !_textView.selectable && [super isAccessibilityElement]; }
+- (NSString *)accessibilityLabel { return [super accessibilityLabel] ?: _textView.accessibilityLabel; }
 
 + (ComponentDescriptorProvider)componentDescriptorProvider
 {
@@ -205,6 +216,12 @@ static UIEdgeInsets RNTextEngineUIEdgeInsetsAdd(UIEdgeInsets left, UIEdgeInsets 
 }
 
 @synthesize anchorToCapHeight = _anchorToCapHeight;
+
+- (BOOL)isTextAccessibilityElement { return [super isAccessibilityElement]; }
+- (NSString *)explicitAccessibilityLabel { return [super accessibilityLabel]; }
+- (UIAccessibilityTraits)accessibilityTraits { return [super accessibilityTraits] | UIAccessibilityTraitStaticText; }
+- (BOOL)isAccessibilityElement { return !_selectable && [super isAccessibilityElement]; }
+- (NSString *)accessibilityLabel { return [super accessibilityLabel] ?: _displayText.string; }
 
 - (void)commonInit
 {
@@ -702,6 +719,8 @@ static UIEdgeInsets RNTextEngineUIEdgeInsetsAdd(UIEdgeInsets left, UIEdgeInsets 
 - (void)updateTextDisplay
 {
   _displayText = [self buildAttributedText];
+  BOOL textChanged = self.window != nil && UIAccessibilityIsVoiceOverRunning() &&
+      ![_displayView.attributedText.string isEqualToString:_displayText.string ?: @""];
   _displayView.attributedText = _displayText ?: [[NSAttributedString alloc] initWithString:@""];
   _displayView.ellipsizeMode = _ellipsizeMode;
   _displayView.numberOfLines = _numberOfLines;
@@ -712,6 +731,7 @@ static UIEdgeInsets RNTextEngineUIEdgeInsetsAdd(UIEdgeInsets left, UIEdgeInsets 
     interactionTextView.attributedText = _displayText ?: [[NSAttributedString alloc] initWithString:@""];
     [self bringSubviewToFront:interactionTextView];
   }
+  if (textChanged) UIAccessibilityPostNotification(UIAccessibilityLayoutChangedNotification, nil);
 }
 
 @end

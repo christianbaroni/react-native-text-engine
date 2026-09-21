@@ -68,6 +68,21 @@ internal class RNTextEngineTextViewManager :
         return if (handle == 0L) null else requireNotNull(RNTextEngineBindings.preparedText(handle))
     }
 
+    override fun updateProperties(view: RNTextEngineTextView, props: ReactStylesDiffMap) {
+        if (props.hasKey("accessible")) setAccessible(view, props.getBoolean("accessible", false))
+        super.updateProperties(view, props)
+    }
+
+    @ReactProp(name = "accessible")
+    fun setAccessible(view: RNTextEngineTextView, accessible: Boolean) {
+        view.isFocusable = accessible
+    }
+
+    override fun setAccessibilityLabel(view: RNTextEngineTextView, label: String?) {
+        if (label == null) view.contentDescription = null
+        super.setAccessibilityLabel(view, label)
+    }
+
     override fun setBackgroundColor(view: RNTextEngineTextView, backgroundColor: Int) {
         super.setBackgroundColor(view, backgroundColor)
         view.reapplyPaperOpacity()

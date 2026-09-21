@@ -112,6 +112,8 @@ private fun expectedAnchoredContentHeight(hostHeight: Int, insets: RNTextEngineC
     return hostHeight + kotlin.math.floor(insets.top.toDouble()).toInt() + ceil(insets.bottom.toDouble()).toInt()
 }
 
+class RNTextEngineAccessibilityTestActivity : android.app.Activity()
+
 @RunWith(AndroidJUnit4::class)
 class RNTextEngineBindingsInstrumentedTest {
     private lateinit var application: Application
@@ -128,6 +130,157 @@ class RNTextEngineBindingsInstrumentedTest {
     @After
     fun tearDown() {
         RNTextEngineBindings.cleanup()
+    }
+
+    @Test
+    fun paragraphAccessibilityUsesResolvedTextAndPreservesSelectionActions() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val automation = instrumentation.uiAutomation
+        val originalServiceFlags = automation.serviceInfo.flags
+        automation.serviceInfo = automation.serviceInfo.apply {
+            flags = flags and android.accessibilityservice.AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS.inv()
+        }
+        val activity = instrumentation.startActivitySync(android.content.Intent(
+            instrumentation.targetContext, RNTextEngineAccessibilityTestActivity::class.java,
+        ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+        val manager = RNTextEngineTextViewManager()
+        lateinit var view: RNTextEngineTextViewManager.RNTextEngineTextView
+        try {
+            instrumentation.runOnMainSync {
+                view = RNTextEngineTextViewManager.RNTextEngineTextView(activity)
+                activity.setContentView(view)
+                manager.updateProperties(view, ReactStylesDiffMap(JavaOnlyMap.of(
+                    "text", "Straße ", "textTransform", "uppercase", "accessible", true, "testID", "paragraph",
+                )))
+                val paragraphNode = RNTextEngineTextShadowNode().apply {
+                    measureText = "Straße "
+                    measureTextTransform = "uppercase"
+                }
+                val child = RNTextEngineTextShadowNode().apply {
+                    measureRnteIsVirtualTextSpan = true
+                    measureText = "שלום"
+                }
+                paragraphNode.addChildAt(child, 0)
+                val resolvePayload = RNTextEngineTextShadowNode::class.java.getDeclaredMethod("resolvePayload")
+                resolvePayload.isAccessible = true
+                manager.updateExtraData(view, resolvePayload.invoke(paragraphNode))
+                measureAndLayout(view, 320, 160)
+                assertTrue(view.isFocusable)
+                assertEquals("STRASSE שלום", view.createAccessibilityNodeInfo().text.toString())
+                for (selectable in listOf(true, false, true)) {
+                    manager.updateProperties(view, ReactStylesDiffMap(JavaOnlyMap.of(
+                        "selectable", selectable, "accessibilityLabel", "Spoken label", "accessibilityRole", "button",
+                        "accessibilityHint", "Paragraph hint",
+                    )))
+                    measureAndLayout(view, 320, 160)
+                    val info = view.createAccessibilityNodeInfo()
+                    assertEquals("Spoken label", info.contentDescription)
+                    assertEquals("android.widget.Button", info.className)
+                    assertEquals("Paragraph hint", info.tooltipText)
+                    assertEquals("STRASSE שלום", info.text.toString())
+                    if (selectable) {
+                        val action = android.view.accessibility.AccessibilityNodeInfo.ACTION_SET_SELECTION
+                        assertTrue(info.actions and action != 0)
+                        val arguments = android.os.Bundle().apply {
+                            putInt(android.view.accessibility.AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, 1)
+                            putInt(android.view.accessibility.AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, 4)
+                        }
+                        assertTrue(view.performAccessibilityAction(action, arguments))
+                        assertEquals(1, view.selectionView?.selectionStart)
+                        assertEquals(4, view.selectionView?.selectionEnd)
+                        arguments.putInt(android.view.accessibility.AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, 2)
+                        arguments.putInt(android.view.accessibility.AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, 2)
+                        assertTrue(view.performAccessibilityAction(action, arguments))
+                        assertEquals(2, view.selectionView?.selectionStart)
+                        assertEquals(2, view.createAccessibilityNodeInfo().textSelectionStart)
+                        arguments.putInt(android.view.accessibility.AccessibilityNodeInfo.ACTION_ARGUMENT_MOVEMENT_GRANULARITY_INT,
+                            android.view.accessibility.AccessibilityNodeInfo.MOVEMENT_GRANULARITY_CHARACTER)
+                        assertTrue(view.performAccessibilityAction(
+                            android.view.accessibility.AccessibilityNodeInfo.ACTION_NEXT_AT_MOVEMENT_GRANULARITY, arguments))
+                        assertEquals(3, view.selectionView?.selectionEnd)
+                    }
+                    manager.updateProperties(view, ReactStylesDiffMap(JavaOnlyMap.of("accessibilityLabel", null)))
+                    assertTrue(view.createAccessibilityNodeInfo().contentDescription.isNullOrEmpty())
+                }
+            }
+            instrumentation.waitForIdleSync()
+            fun paragraphs(node: android.view.accessibility.AccessibilityNodeInfo): List<android.view.accessibility.AccessibilityNodeInfo> =
+                (if (node.text?.toString() == "STRASSE שלום") listOf(node) else emptyList()) +
+                    (0 until node.childCount).flatMap { index -> node.getChild(index)?.let(::paragraphs).orEmpty() }
+            val exposedParagraphs = paragraphs(automation.rootInActiveWindow)
+            assertEquals(1, exposedParagraphs.size)
+            val paragraph = exposedParagraphs.single()
+            assertEquals("android.widget.Button", paragraph.className)
+            val locationKey = android.view.accessibility.AccessibilityNodeInfo.EXTRA_DATA_TEXT_CHARACTER_LOCATION_KEY
+            assertTrue(paragraph.availableExtraData.contains(locationKey))
+            val locationArguments = android.os.Bundle().apply {
+                putInt(android.view.accessibility.AccessibilityNodeInfo.EXTRA_DATA_TEXT_CHARACTER_LOCATION_ARG_START_INDEX, 2)
+                putInt(android.view.accessibility.AccessibilityNodeInfo.EXTRA_DATA_TEXT_CHARACTER_LOCATION_ARG_LENGTH, 2)
+            }
+            assertTrue(paragraph.refreshWithExtraData(locationKey, locationArguments))
+            val locations = requireNotNull(paragraph.extras.getParcelableArray(locationKey))
+            assertEquals(2, locations.size)
+            assertTrue(locations.all { it is android.graphics.RectF && !it.isEmpty })
+            val movement = android.os.Bundle().apply {
+                putInt(android.view.accessibility.AccessibilityNodeInfo.ACTION_ARGUMENT_MOVEMENT_GRANULARITY_INT,
+                    android.view.accessibility.AccessibilityNodeInfo.MOVEMENT_GRANULARITY_CHARACTER)
+            }
+            val event = automation.executeAndWaitForEvent({
+                assertTrue(paragraph.performAction(
+                    android.view.accessibility.AccessibilityNodeInfo.ACTION_NEXT_AT_MOVEMENT_GRANULARITY, movement))
+            }, { it.eventType == android.view.accessibility.AccessibilityEvent.TYPE_VIEW_TEXT_TRAVERSED_AT_MOVEMENT_GRANULARITY }, 5000)
+            assertEquals("paragraph", event.source?.viewIdResourceName)
+            instrumentation.runOnMainSync {
+                manager.updateProperties(view, ReactStylesDiffMap(JavaOnlyMap.of("accessible", false)))
+            }
+            instrumentation.waitForIdleSync()
+            assertTrue(paragraph.refresh())
+            assertTrue(!paragraph.isFocusable)
+            instrumentation.runOnMainSync {
+                manager.updateProperties(view, ReactStylesDiffMap(JavaOnlyMap.of("importantForAccessibility", "no-hide-descendants")))
+            }
+            instrumentation.waitForIdleSync()
+            assertTrue(paragraphs(automation.rootInActiveWindow).isEmpty())
+        } finally {
+            instrumentation.runOnMainSync { activity.finish() }
+            automation.serviceInfo = automation.serviceInfo.apply { flags = originalServiceFlags }
+        }
+    }
+
+    @Test
+    fun preparedParagraphAccessibilityTracksHandleReplacementAndExplicitProps() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val activity = instrumentation.startActivitySync(android.content.Intent(
+            instrumentation.targetContext, RNTextEngineAccessibilityTestActivity::class.java,
+        ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+        try {
+            instrumentation.runOnMainSync {
+                val manager = RNTextEnginePreparedTextViewManager()
+                val view = RNTextEnginePreparedTextViewManager.RNTextEnginePreparedTextView(activity)
+                activity.setContentView(view)
+                manager.updateProperties(view, ReactStylesDiffMap(JavaOnlyMap.of("accessible", true, "selectable", true)))
+                for (text in listOf("First paragraph", "Replacement שלום")) {
+                    val handle = RNTextEngineBindings.prepareTextView(text, null, null, null, 17.0,
+                        null, null, 0.0, Double.NaN, false, false, false, null)
+                    manager.setHandle(view, handle.toDouble())
+                    measureAndLayout(view, 320, 160)
+                    assertEquals(text, view.createAccessibilityNodeInfo().text.toString())
+                    assertEquals(text, view.selectionView?.text.toString())
+                    RNTextEngineBindings.release(handle)
+                }
+                manager.updateProperties(view, ReactStylesDiffMap(JavaOnlyMap.of("accessibilityValue", JavaOnlyMap.of("text", "Value"),
+                    "accessibilityLabel", "Alias")))
+                assertEquals("Alias, Value", view.createAccessibilityNodeInfo().contentDescription)
+                manager.updateProperties(view, ReactStylesDiffMap(JavaOnlyMap.of("accessibilityLabel", null)))
+                assertEquals("Value", view.createAccessibilityNodeInfo().contentDescription)
+                manager.updateProperties(view, ReactStylesDiffMap(JavaOnlyMap.of("accessible", false)))
+                assertTrue(!view.isFocusable)
+                manager.updateProperties(view, ReactStylesDiffMap(JavaOnlyMap.of("importantForAccessibility", "no-hide-descendants")))
+                assertEquals(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS, view.importantForAccessibility)
+                manager.setHandle(view, 0.0)
+                assertNull(view.createAccessibilityNodeInfo().text)
+            }
+        } finally { instrumentation.runOnMainSync { activity.finish() } }
     }
 
     @Test

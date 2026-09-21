@@ -171,6 +171,7 @@ export const TextView: ForwardRefExoticComponent<PropsWithoutRef<TextViewProps> 
         <NativeTextView
           ref={ref}
           {...props}
+          accessible={props.accessible ?? !isVirtualTextSpan}
           allowFontScaling={props.allowFontScaling ?? textEngineAppDefaults.allowFontScaling}
           anchorToCapHeight={props.anchorToCapHeight ?? textEngineAppDefaults.anchorToCapHeight}
           rnteHasAllowFontScaling={props.allowFontScaling !== undefined}

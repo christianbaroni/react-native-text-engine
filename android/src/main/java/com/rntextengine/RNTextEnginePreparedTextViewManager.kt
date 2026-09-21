@@ -2,6 +2,7 @@ package com.rntextengine
 
 import android.content.Context
 import com.facebook.react.module.annotations.ReactModule
+import com.facebook.react.uimanager.ReactStylesDiffMap
 import com.facebook.react.uimanager.SimpleViewManager
 import com.facebook.react.uimanager.ThemedReactContext
 import com.facebook.react.uimanager.ViewManagerDelegate
@@ -24,6 +25,21 @@ internal class RNTextEnginePreparedTextViewManager :
     }
 
     override fun getDelegate(): ViewManagerDelegate<RNTextEnginePreparedTextView> = delegate
+
+    override fun updateProperties(view: RNTextEnginePreparedTextView, props: ReactStylesDiffMap) {
+        if (props.hasKey("accessible")) setAccessible(view, props.getBoolean("accessible", false))
+        super.updateProperties(view, props)
+    }
+
+    @ReactProp(name = "accessible")
+    fun setAccessible(view: RNTextEnginePreparedTextView, accessible: Boolean) {
+        view.isFocusable = accessible
+    }
+
+    override fun setAccessibilityLabel(view: RNTextEnginePreparedTextView, label: String?) {
+        if (label == null) view.contentDescription = null
+        super.setAccessibilityLabel(view, label)
+    }
 
     override fun setBackgroundColor(view: RNTextEnginePreparedTextView, backgroundColor: Int) {
         super.setBackgroundColor(view, backgroundColor)

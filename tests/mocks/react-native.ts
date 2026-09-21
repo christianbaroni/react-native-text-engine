@@ -49,9 +49,9 @@ export const StyleSheet = {
 };
 
 export function createMockNativeComponent<Props extends object>(name: string) {
-  return forwardRef<unknown, Props>(function MockNativeComponent(props, ref) {
+  return forwardRef<unknown, React.PropsWithChildren<Props>>(function MockNativeComponent(props, ref) {
     nativeComponentProps[name] = { ...props, ref };
-    return React.createElement('div', { 'data-testid': name });
+    return React.createElement('div', { 'data-testid': name }, props.children);
   });
 }
 

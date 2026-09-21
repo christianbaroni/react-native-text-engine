@@ -9,10 +9,15 @@
 #import <react/renderer/components/RNTextEngineSpec/RCTComponentViewHelpers.h>
 #endif
 #import <React/RCTViewManager.h>
+#import <React/RCTView.h>
 
 #import "RNTextEngineBindings.h"
 
-@interface RNTextEnginePreparedTextView : UIView
+#ifdef RCT_NEW_ARCH_ENABLED
+@interface RNTextEnginePreparedTextView : UIView <RNTextEngineAccessibilityOwner>
+#else
+@interface RNTextEnginePreparedTextView : RCTView <RNTextEngineAccessibilityOwner>
+#endif
 @property (nonatomic, assign) NSInteger handle;
 @property (nonatomic, assign) NSInteger numberOfLines;
 @property (nonatomic, copy) NSString *ellipsizeMode;
@@ -24,12 +29,18 @@
 
 using namespace facebook::react;
 
-@interface RNTextEnginePreparedTextViewComponentView : RCTViewComponentView <RCTRNTextEnginePreparedTextViewViewProtocol>
+@interface RNTextEnginePreparedTextViewComponentView : RCTViewComponentView <RCTRNTextEnginePreparedTextViewViewProtocol, RNTextEngineAccessibilityOwner>
 @end
 
 @implementation RNTextEnginePreparedTextViewComponentView {
   RNTextEnginePreparedTextView *_preparedTextView;
 }
+
+- (BOOL)isTextAccessibilityElement { return [super isAccessibilityElement]; }
+- (NSString *)explicitAccessibilityLabel { return [super accessibilityLabel]; }
+- (UIAccessibilityTraits)accessibilityTraits { return [super accessibilityTraits] | UIAccessibilityTraitStaticText; }
+- (BOOL)isAccessibilityElement { return !_preparedTextView.selectable && [super isAccessibilityElement]; }
+- (NSString *)accessibilityLabel { return [super accessibilityLabel] ?: _preparedTextView.accessibilityLabel; }
 
 + (ComponentDescriptorProvider)componentDescriptorProvider
 {
@@ -105,6 +116,12 @@ using namespace facebook::react;
 }
 
 @synthesize anchorToCapHeight = _anchorToCapHeight;
+
+- (BOOL)isTextAccessibilityElement { return [super isAccessibilityElement]; }
+- (NSString *)explicitAccessibilityLabel { return [super accessibilityLabel]; }
+- (UIAccessibilityTraits)accessibilityTraits { return [super accessibilityTraits] | UIAccessibilityTraitStaticText; }
+- (BOOL)isAccessibilityElement { return !_selectable && [super isAccessibilityElement]; }
+- (NSString *)accessibilityLabel { return [super accessibilityLabel] ?: _resolvedText.string; }
 
 - (void)commonInit
 {
@@ -215,6 +232,8 @@ using namespace facebook::react;
 
 - (void)updateTextDisplay
 {
+  BOOL textChanged = self.window != nil && UIAccessibilityIsVoiceOverRunning() &&
+      ![_displayView.attributedText.string isEqualToString:_resolvedText.string ?: @""];
   _displayView.attributedText = _resolvedText ?: [[NSAttributedString alloc] initWithString:@""];
   _displayView.ellipsizeMode = _ellipsizeMode;
   _displayView.numberOfLines = _numberOfLines;
@@ -225,6 +244,7 @@ using namespace facebook::react;
     [self bringSubviewToFront:interactionTextView];
   }
   [self setNeedsLayout];
+  if (textChanged) UIAccessibilityPostNotification(UIAccessibilityLayoutChangedNotification, nil);
 }
 
 - (UIEdgeInsets)resolvedCapHeightInsets

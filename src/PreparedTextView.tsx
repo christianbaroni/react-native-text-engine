@@ -26,6 +26,11 @@ export const PreparedTextView: ForwardRefExoticComponent<
   PropsWithoutRef<PreparedTextViewProps> & RefAttributes<ComponentRef<typeof NativePreparedTextView>>
 > = forwardRef<ComponentRef<typeof NativePreparedTextView>, PreparedTextViewProps>(function PreparedTextView(props, ref) {
   return (
-    <NativePreparedTextView ref={ref} {...props} anchorToCapHeight={props.anchorToCapHeight ?? textEngineAppDefaults.anchorToCapHeight} />
+    <NativePreparedTextView
+      ref={ref}
+      {...props}
+      accessible={props.accessible ?? true}
+      anchorToCapHeight={props.anchorToCapHeight ?? textEngineAppDefaults.anchorToCapHeight}
+    />
   );
 });

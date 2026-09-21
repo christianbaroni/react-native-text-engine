@@ -1,5 +1,31 @@
 #import "RNTextEngineAttributedTextDisplayView.h"
 
+@interface RNTextEngineInteractionTextView : UITextView
+@property (nonatomic, weak) UIView<RNTextEngineAccessibilityOwner> *accessibilityOwner;
+@end
+
+@implementation RNTextEngineInteractionTextView
+
+- (BOOL)isAccessibilityElement { return _accessibilityOwner.isTextAccessibilityElement; }
+
+- (NSString *)accessibilityLabel
+{
+  return _accessibilityOwner.explicitAccessibilityLabel ?: (_accessibilityOwner.accessibilityValue ? self.text : nil);
+}
+
+- (NSString *)accessibilityHint { return _accessibilityOwner.accessibilityHint; }
+- (NSString *)accessibilityLanguage { return _accessibilityOwner.accessibilityLanguage; }
+- (NSString *)accessibilityValue { return _accessibilityOwner.accessibilityValue ?: [super accessibilityValue]; }
+- (UIAccessibilityTraits)accessibilityTraits { return _accessibilityOwner.accessibilityTraits | [super accessibilityTraits]; }
+- (NSArray<UIAccessibilityCustomAction *> *)accessibilityCustomActions { return _accessibilityOwner.accessibilityCustomActions; }
+- (BOOL)accessibilityActivate { return [_accessibilityOwner accessibilityActivate] || [super accessibilityActivate]; }
+- (BOOL)accessibilityPerformMagicTap { return [_accessibilityOwner accessibilityPerformMagicTap] || [super accessibilityPerformMagicTap]; }
+- (BOOL)accessibilityPerformEscape { return [_accessibilityOwner accessibilityPerformEscape] || [super accessibilityPerformEscape]; }
+- (void)accessibilityIncrement { [_accessibilityOwner accessibilityIncrement]; }
+- (void)accessibilityDecrement { [_accessibilityOwner accessibilityDecrement]; }
+
+@end
+
 static CGFloat RNTextEngineResolveHorizontalDrawOrigin(
     NSLayoutManager *layoutManager,
     NSTextContainer *textContainer,
@@ -26,15 +52,17 @@ NSLineBreakMode RNTextEngineResolveLineBreakMode(NSInteger numberOfLines, NSStri
   return NSLineBreakByTruncatingTail;
 }
 
-UITextView *RNTextEngineCreateInteractionTextView(UIView *view)
+UITextView *RNTextEngineCreateInteractionTextView(UIView<RNTextEngineAccessibilityOwner> *view)
 {
-  UITextView *textView;
+  RNTextEngineInteractionTextView *textView;
   if (@available(iOS 16.0, *)) {
-    textView = [UITextView textViewUsingTextLayoutManager:NO];
+    textView = [RNTextEngineInteractionTextView textViewUsingTextLayoutManager:NO];
   } else {
-    textView = [[UITextView alloc] initWithFrame:view.bounds];
+    textView = [[RNTextEngineInteractionTextView alloc] initWithFrame:view.bounds];
   }
   textView.frame = view.bounds;
+  id parent = view.superview;
+  textView.accessibilityOwner = [parent conformsToProtocol:@protocol(RNTextEngineAccessibilityOwner)] ? parent : view;
   textView.backgroundColor = UIColor.clearColor;
   textView.clipsToBounds = NO;
   textView.opaque = NO;

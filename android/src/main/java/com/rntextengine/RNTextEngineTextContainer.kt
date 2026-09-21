@@ -3,7 +3,11 @@ package com.rntextengine
 import android.content.Context
 import android.graphics.drawable.Drawable
 import android.text.Layout
+import android.os.Build
+import android.os.Bundle
 import android.view.View
+import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.FrameLayout
 import androidx.appcompat.widget.AppCompatTextView
 import androidx.core.widget.TextViewCompat
@@ -48,13 +52,59 @@ internal open class RNTextEngineTextContainer(context: Context) : FrameLayout(co
 
     protected fun setPreparedText(prepared: RNTextEngineBindings.PreparedText?) {
         if (preparedText === prepared) return
+        val previousText = preparedText?.text
         preparedText = prepared
         displayView.setPreparedText(prepared)
         activeSelectionView?.let {
             applyPreparedText(it, prepared)
             displayView.applyDrawingStyle(it)
         }
+        if (isAttachedToWindow && previousText != prepared?.text) {
+            sendAccessibilityEvent(AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED)
+        }
         requestTextLayout()
+    }
+
+    override fun getAccessibilityClassName(): CharSequence = android.widget.TextView::class.java.name
+
+    override fun onInitializeAccessibilityNodeInfo(info: AccessibilityNodeInfo) {
+        val selection = activeSelectionView
+        selection?.onInitializeAccessibilityNodeInfo(info)
+        info.text = preparedText?.text
+        val granularities = info.movementGranularities
+        val extraData = if (Build.VERSION.SDK_INT >= 26) info.availableExtraData else emptyList()
+        super.onInitializeAccessibilityNodeInfo(info)
+        if (selection != null) {
+            info.setTextSelection(selection.selectionStart, selection.selectionEnd)
+            info.movementGranularities = granularities
+            if (Build.VERSION.SDK_INT >= 26) info.availableExtraData = extraData
+            info.isFocused = selection.isFocused
+            info.removeAction(if (selection.isFocused) AccessibilityNodeInfo.AccessibilityAction.ACTION_FOCUS
+                else AccessibilityNodeInfo.AccessibilityAction.ACTION_CLEAR_FOCUS)
+        }
+    }
+
+    override fun performAccessibilityAction(action: Int, arguments: Bundle?): Boolean {
+        val selection = activeSelectionView
+        if (selection != null && (action == AccessibilityNodeInfo.ACTION_SET_SELECTION ||
+                action == AccessibilityNodeInfo.ACTION_NEXT_AT_MOVEMENT_GRANULARITY ||
+                action == AccessibilityNodeInfo.ACTION_PREVIOUS_AT_MOVEMENT_GRANULARITY ||
+                action == AccessibilityNodeInfo.ACTION_FOCUS || action == AccessibilityNodeInfo.ACTION_CLEAR_FOCUS)) {
+            return selection.performAccessibilityAction(action, arguments)
+        }
+        return super.performAccessibilityAction(action, arguments) ||
+            selection?.performAccessibilityAction(action, arguments) == true
+    }
+
+    override fun addExtraDataToAccessibilityNodeInfo(info: AccessibilityNodeInfo, key: String, arguments: Bundle?) {
+        val selection = activeSelectionView
+        if (selection != null) selection.addExtraDataToAccessibilityNodeInfo(info, key, arguments)
+        else super.addExtraDataToAccessibilityNodeInfo(info, key, arguments)
+    }
+
+    override fun onRequestSendAccessibilityEvent(child: View, event: AccessibilityEvent): Boolean {
+        if (child === activeSelectionView) event.setSource(this)
+        return super.onRequestSendAccessibilityEvent(child, event)
     }
 
     fun setNumberOfLines(value: Int) {
@@ -111,6 +161,7 @@ internal open class RNTextEngineTextContainer(context: Context) : FrameLayout(co
         if (value) {
             val view = selectionView ?: AppCompatTextView(context, null, 0).also {
                 it.background = null
+                it.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
                 it.setSingleLine(false)
                 it.setHorizontallyScrolling(false)
                 it.transformationMethod = null

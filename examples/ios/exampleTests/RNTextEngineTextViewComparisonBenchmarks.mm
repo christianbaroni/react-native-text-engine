@@ -1,6 +1,9 @@
 #import <XCTest/XCTest.h>
 #import <UIKit/UIKit.h>
+#import <React/RCTView.h>
+#import <React/UIView+React.h>
 #import <objc/runtime.h>
+#include <initializer_list>
 #import "../../../ios/RNTextEngineTextLayoutMetrics.h"
 
 #ifdef RCT_NEW_ARCH_ENABLED
@@ -969,6 +972,203 @@ static void MountAndDrawTree(const RootShadowNode &root, BOOL textView, CGContex
 #endif
 }
 
+- (void)testPaperAccessibilityActionsUseReactViewHandlers
+{
+  for (NSString *className in @[@"RNTextEngineTextView", @"RNTextEnginePreparedTextView"]) {
+    RCTView *view = [NSClassFromString(className) new];
+    XCTSkipIf(![view isKindOfClass:RCTView.class], @"Requires the Paper source configuration");
+    view.frame = CGRectMake(0, 0, 240, 100);
+    view.isAccessibilityElement = YES;
+    view.reactTag = @101;
+    view.accessibilityLabel = @"Paper paragraph";
+    view.accessibilityActions = @[@{@"name": @"activate", @"label": @"Read paragraph"}];
+    __block NSString *actionName;
+    view.onAccessibilityAction = ^(NSDictionary *event) { actionName = event[@"actionName"]; };
+    for (BOOL selectable : {NO, YES, NO}) {
+      [view setValue:@(selectable) forKey:@"selectable"];
+      [view layoutIfNeeded];
+      UIView *target = selectable ? [view valueForKey:@"interactionTextView"] : view;
+      XCTAssertTrue(target.isAccessibilityElement);
+      XCTAssertEqualObjects(target.accessibilityLabel, @"Paper paragraph");
+      XCTAssertEqualObjects(target.accessibilityCustomActions.firstObject.name, @"Read paragraph");
+      actionName = nil;
+      XCTAssertTrue([target accessibilityActivate]);
+      XCTAssertEqualObjects(actionName, @"activate");
+      view.isAccessibilityElement = NO;
+      XCTAssertFalse(target.isAccessibilityElement);
+      view.isAccessibilityElement = YES;
+    }
+  }
+}
+
+- (void)testParagraphAccessibilityPreservesLabelsAndNativeSelection
+{
+#ifdef RCT_NEW_ARCH_ENABLED
+  auto registry = BuildBenchmarkComponentDescriptorRegistry();
+  auto context = BuildFabricLayoutContext();
+  auto props = BuildTextViewProps("Straße ", {.fontSize = 17}, 260);
+  props->textTransform = "uppercase";
+  props->accessible = true;
+  props->accessibilityHint = "Paragraph hint";
+  props->accessibilityActions = {{.name = "activate", .label = "Read paragraph"}};
+  auto childProps = BuildTextViewProps("שלום", {.fontSize = 17}, 260);
+  auto node = BuildBenchmarkShadowNode(registry, Element<RNTextEngineTextViewShadowNode>().props(props)
+      .children({Element<RNTextEngineTextViewShadowNode>().props(childProps)}));
+  node->measureContent(context, BuildLayoutConstraints(260));
+  node->layout(context);
+  auto view = MountTextViewNode(*node);
+  NSString *resolved = node->getStateData().content->attributedText.string;
+  XCTAssertEqualObjects(resolved, @"STRASSE שלום");
+  for (bool selectable : {false, true, false, true}) {
+    auto next = std::make_shared<RNTextEngineTextViewProps>(*props);
+    next->selectable = selectable;
+    next->accessibilityLabel = "Spoken label";
+    [view updateProps:next oldProps:props];
+    [view finalizeUpdates:RNComponentViewUpdateMaskProps];
+    [view layoutIfNeeded];
+    UIView *target = selectable ? [[view valueForKey:@"textView"] valueForKey:@"interactionTextView"] : view;
+    XCTAssertTrue(target.isAccessibilityElement);
+    XCTAssertEqual(view.isAccessibilityElement, !selectable);
+    XCTAssertEqualObjects(target.accessibilityLabel, @"Spoken label");
+    XCTAssertEqualObjects(target.accessibilityHint, @"Paragraph hint");
+    XCTAssertEqualObjects(target.accessibilityCustomActions.firstObject.name, @"Read paragraph");
+    if (selectable) {
+      UITextView *selection = (UITextView *)target;
+      XCTAssertTrue(selection.selectable);
+      selection.selectedRange = NSMakeRange(1, 4);
+      XCTAssertTrue([selection canPerformAction:@selector(copy:) withSender:nil]);
+    }
+    auto unlabeled = std::make_shared<RNTextEngineTextViewProps>(*next);
+    unlabeled->accessibilityLabel.clear();
+    [view updateProps:unlabeled oldProps:next];
+    XCTAssertEqualObjects(target.accessibilityLabel ?: target.accessibilityValue, resolved);
+    if (selectable) XCTAssertNil(target.accessibilityLabel);
+    auto inaccessible = std::make_shared<RNTextEngineTextViewProps>(*unlabeled);
+    inaccessible->accessible = false;
+    [view updateProps:inaccessible oldProps:unlabeled];
+    XCTAssertFalse(target.isAccessibilityElement);
+    [view updateProps:unlabeled oldProps:inaccessible];
+    props = unlabeled;
+  }
+  [view prepareForRecycle];
+  XCTAssertFalse(view.isAccessibilityElement);
+  XCTAssertEqual(view.accessibilityLabel.length, 0u);
+
+  for (NSString *className in @[@"RNTextEngineTextView", @"RNTextEnginePreparedTextView"]) {
+    UIView *paper = [NSClassFromString(className) new];
+    paper.frame = CGRectMake(0, 0, 260, 100);
+    uint64_t handle = 0;
+    if ([className isEqual:@"RNTextEngineTextView"]) {
+      [paper setValue:@"Straße שלום" forKey:@"text"];
+      [paper setValue:@"uppercase" forKey:@"textTransform"];
+    } else {
+      handle = rntextengine::createPreparedTextHandleForTextView(@"Straße שלום", {.fontSize = 17}, {}, @"uppercase");
+      [paper setValue:@(handle) forKey:@"handle"];
+    }
+    paper.isAccessibilityElement = YES;
+    paper.accessibilityHint = @"Paper hint";
+    for (BOOL selectable : {NO, YES, NO}) {
+      [paper setValue:@(selectable) forKey:@"selectable"];
+      [paper layoutIfNeeded];
+      UIView *target = selectable ? [paper valueForKey:@"interactionTextView"] : paper;
+      XCTAssertTrue(target.isAccessibilityElement);
+      XCTAssertEqualObjects(target.accessibilityLabel ?: target.accessibilityValue, @"STRASSE שלום");
+      paper.accessibilityLabel = @"Alias";
+      XCTAssertEqualObjects(target.accessibilityLabel, @"Alias");
+      XCTAssertEqualObjects(target.accessibilityHint, @"Paper hint");
+      paper.accessibilityLabel = nil;
+      XCTAssertEqualObjects(target.accessibilityLabel ?: target.accessibilityValue, @"STRASSE שלום");
+    }
+    if (handle) {
+      [paper setValue:@0 forKey:@"handle"];
+      rntextengine::releasePreparedTextHandle(handle);
+      XCTAssertEqual(paper.accessibilityLabel.length, 0u);
+    }
+  }
+#endif
+}
+
+- (void)testSelectableParagraphAccessibilityPreservesStateAndText
+{
+#ifdef RCT_NEW_ARCH_ENABLED
+  NSString *text = @"Invoice total: $42";
+  auto verify = [&](UIView<RCTComponentViewProtocol> *view, auto props, NSString *innerKey) {
+    using Props = typename decltype(props)::element_type;
+    auto apply = [&](std::shared_ptr<Props> next) {
+      [view updateProps:next oldProps:props];
+      [view finalizeUpdates:RNComponentViewUpdateMaskProps];
+      [view layoutIfNeeded];
+      props = next;
+    };
+    for (AccessibilityState state : {AccessibilityState{.busy = true},
+             AccessibilityState{.expanded = true}, AccessibilityState{.checked = AccessibilityState::Checked}}) {
+      for (bool selectable : {false, true, false, true}) {
+        auto next = std::make_shared<Props>(*props);
+        next->selectable = selectable;
+        next->accessibilityState = state;
+        apply(next);
+        UIView *target = selectable ? [[view valueForKey:innerKey] valueForKey:@"interactionTextView"] : view;
+        XCTAssertTrue(target.isAccessibilityElement);
+        XCTAssertEqual(view.isAccessibilityElement, !selectable);
+        XCTAssertGreaterThan(view.accessibilityValue.length, 0u);
+        XCTAssertEqualObjects(target.accessibilityLabel, text);
+        XCTAssertEqualObjects(target.accessibilityValue, view.accessibilityValue);
+        XCTAssertFalse([target.accessibilityValue containsString:text]);
+        if (selectable) {
+          UITextView *selection = (UITextView *)target;
+          UITextPosition *start = [selection positionFromPosition:selection.beginningOfDocument offset:1];
+          UITextPosition *end = [selection positionFromPosition:start inDirection:UITextLayoutDirectionRight offset:4];
+          selection.selectedTextRange = [selection textRangeFromPosition:start toPosition:end];
+          XCTAssertTrue(NSEqualRanges(selection.selectedRange, NSMakeRange(1, 4)));
+          XCTAssertTrue([selection canPerformAction:@selector(copy:) withSender:nil]);
+        }
+
+        next = std::make_shared<Props>(*props);
+        next->accessibilityLabel = "Spoken label";
+        next->accessibilityValue.text = "Pending";
+        apply(next);
+        XCTAssertEqualObjects(target.accessibilityLabel, @"Spoken label");
+        XCTAssertEqualObjects(target.accessibilityValue, view.accessibilityValue);
+        XCTAssertTrue([target.accessibilityValue containsString:@"Pending"]);
+        next = std::make_shared<Props>(*props);
+        next->accessibilityLabel.clear();
+        next->accessibilityState.reset();
+        apply(next);
+        XCTAssertEqualObjects(target.accessibilityLabel, text);
+        XCTAssertEqualObjects(target.accessibilityValue, @"Pending");
+        next = std::make_shared<Props>(*props);
+        next->accessibilityValue = {};
+        apply(next);
+        XCTAssertNil(view.accessibilityValue);
+        XCTAssertEqualObjects(target.accessibilityLabel, selectable ? nil : text);
+        XCTAssertEqualObjects(target.accessibilityValue, selectable ? text : nil);
+        if (selectable) XCTAssertTrue(NSEqualRanges(((UITextView *)target).selectedRange, NSMakeRange(1, 4)));
+      }
+    }
+  };
+
+  auto registry = BuildBenchmarkComponentDescriptorRegistry();
+  auto context = BuildFabricLayoutContext();
+  auto props = BuildTextViewProps(text.UTF8String, {.fontSize = 17}, 260);
+  props->accessible = true;
+  auto node = BuildBenchmarkShadowNode(registry, Element<RNTextEngineTextViewShadowNode>().props(props));
+  node->measureContent(context, BuildLayoutConstraints(260));
+  node->layout(context);
+  verify(MountTextViewNode(*node), props, @"textView");
+
+  uint64_t handle = rntextengine::createPreparedTextHandleForTextView(text, {.fontSize = 17});
+  auto preparedProps = std::make_shared<RNTextEnginePreparedTextViewProps>();
+  preparedProps->accessible = true;
+  preparedProps->handle = handle;
+  UIView<RCTComponentViewProtocol> *prepared = [NSClassFromString(@"RNTextEnginePreparedTextViewComponentView") new];
+  prepared.frame = CGRectMake(0, 0, 260, 100);
+  [prepared updateProps:preparedProps oldProps:nullptr];
+  [prepared layoutIfNeeded];
+  verify(prepared, preparedProps, @"preparedTextView");
+  rntextengine::releasePreparedTextHandle(handle);
+#endif
+}
+
 - (void)testRecycleReleasesRetiredTextWithoutLayout
 {
 #ifdef RCT_NEW_ARCH_ENABLED
@@ -1019,7 +1219,6 @@ static void MountAndDrawTree(const RootShadowNode &root, BOOL textView, CGContex
   XCTAssertEqualObjects(ViewPixels(TextViewDisplay(pooledView), UIUserInterfaceStyleLight), ViewPixels(TextViewDisplay(freshView), UIUserInterfaceStyleLight));
 #endif
 }
-
 
 - (void)testNestedDrawingOnlyUpdatesPreserveSelectionAndContentLifetime
 {
