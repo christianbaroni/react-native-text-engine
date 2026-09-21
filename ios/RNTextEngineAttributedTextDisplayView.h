@@ -6,7 +6,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 @interface RNTextEngineAttributedTextDisplayView : UIView
 
-@property (nonatomic, copy) NSAttributedString *attributedText;
+@property (nonatomic, copy, null_resettable) NSAttributedString *attributedText;
 @property (nonatomic, assign) UIEdgeInsets contentInsets;
 @property (nonatomic, copy, nullable) NSString *ellipsizeMode;
 @property (nonatomic, assign) NSInteger numberOfLines;

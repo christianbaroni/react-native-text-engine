@@ -82,6 +82,7 @@
 #ifdef RCT_NEW_ARCH_ENABLED
 - (void)setFabricProps:(std::shared_ptr<const facebook::react::RNTextEngineTextViewProps>)props;
 - (void)setPreparedContent:(std::shared_ptr<const RNTextEngineTextContent>)content;
+- (void)prepareForRecycle;
 #endif
 @end
 
@@ -171,7 +172,7 @@ using namespace facebook::react;
   const Props::Shared oldProps = _props;
   static const auto defaultProps = std::make_shared<const RNTextEngineTextViewProps>();
   [self updateProps:defaultProps oldProps:oldProps];
-  [_textView setPreparedContent:nullptr];
+  [_textView prepareForRecycle];
   [super prepareForRecycle];
 }
 
@@ -623,6 +624,14 @@ static UIEdgeInsets RNTextEngineUIEdgeInsetsAdd(UIEdgeInsets left, UIEdgeInsets 
 }
 
 #ifdef RCT_NEW_ARCH_ENABLED
+- (void)prepareForRecycle
+{
+  _preparedContent.reset();
+  _displayText = nil;
+  _displayView.attributedText = nil;
+  _textDisplayDirty = NO;
+}
+
 - (void)setFabricProps:(std::shared_ptr<const RNTextEngineTextViewProps>)props
 {
   if (_fabricProps == nullptr || !RNTextEngineHasSameTextAttributes(*_fabricProps, *props)) {

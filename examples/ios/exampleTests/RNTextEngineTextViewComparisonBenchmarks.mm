@@ -953,11 +953,73 @@ static void MountAndDrawTree(const RootShadowNode &root, BOOL textView, CGContex
   rntextengine::cleanup();
   XCTAssertTrue(node->measureContent(context, BuildLayoutConstraints(260)) == initialSize);
   XCTAssertGreaterThan(node->measureContent(context, BuildLayoutConstraints(160)).height, 0);
+  NSTextStorage *storage = [TextViewDisplay(view) valueForKey:@"textStorage"];
+  NSLayoutManager *manager = [TextViewDisplay(view) valueForKey:@"layoutManager"];
   [view prepareForRecycle];
-  [view layoutIfNeeded];
   XCTAssertEqual(TextViewDisplay(view).attributedText.length, 0u);
+  XCTAssertEqual(storage.length, 0u);
+  XCTAssertEqual(((NSAttributedString *)[[view valueForKey:@"textView"] valueForKey:@"displayText"]).length, 0u);
+  XCTAssertTrue(manager == [TextViewDisplay(view) valueForKey:@"layoutManager"]);
+  XCTAssertTrue(storage == [TextViewDisplay(view) valueForKey:@"textStorage"]);
+  [view updateProps:props oldProps:nullptr];
+  [view updateState:node->getState() oldState:nullptr];
+  [view finalizeUpdates:RNComponentViewUpdateMaskAll];
+  [view layoutIfNeeded];
+  XCTAssertEqualObjects(TextViewDisplay(view).attributedText, content->attributedText);
 #endif
 }
+
+- (void)testRecycleReleasesRetiredTextWithoutLayout
+{
+#ifdef RCT_NEW_ARCH_ENABLED
+  UIView<RCTComponentViewProtocol> *pooledView;
+  __weak NSAttributedString *retiredText;
+  __weak NSObject *retiredPayload;
+  @autoreleasepool {
+    auto registry = BuildBenchmarkComponentDescriptorRegistry();
+    auto context = BuildFabricLayoutContext();
+    auto props = BuildTextViewProps("Retired paragraph with its own shadow.", {.fontSize = 17}, 260);
+    props->textShadowColor = colorFromRGBA(255, 0, 0, 255);
+    auto node = BuildBenchmarkShadowNode(registry, Element<RNTextEngineTextViewShadowNode>().props(props));
+    node->measureContent(context, BuildLayoutConstraints(260));
+    node->layout(context);
+    pooledView = MountTextViewNode(*node);
+    DisplayLayers(pooledView.layer);
+    [CATransaction flush];
+    XCTAssertNotNil(TextViewDisplay(pooledView).layer.contents);
+    retiredText = TextViewDisplay(pooledView).attributedText;
+    NSObject *payload = [NSObject new];
+    retiredPayload = payload;
+    NSTextStorage *storage = [TextViewDisplay(pooledView) valueForKey:@"textStorage"];
+    [storage addAttribute:@"RetiredPayload" value:payload range:NSMakeRange(0, storage.length)];
+  }
+  @autoreleasepool {
+    XCTAssertNotNil(retiredText);
+  }
+  NSTextStorage *storage = [TextViewDisplay(pooledView) valueForKey:@"textStorage"];
+  @autoreleasepool { [pooledView prepareForRecycle]; }
+  XCTAssertNil(retiredText);
+  XCTAssertNil(retiredPayload);
+  XCTAssertEqual(storage.length, 0u);
+  XCTAssertTrue(storage == [TextViewDisplay(pooledView) valueForKey:@"textStorage"]);
+  XCTAssertNil(TextViewDisplay(pooledView).layer.contents);
+  auto registry = BuildBenchmarkComponentDescriptorRegistry();
+  auto context = BuildFabricLayoutContext();
+  auto props = BuildTextViewProps("New paragraph", {.fontSize = 21}, 260);
+  auto node = BuildBenchmarkShadowNode(registry, Element<RNTextEngineTextViewShadowNode>().props(props));
+  node->measureContent(context, BuildLayoutConstraints(260));
+  node->layout(context);
+  [pooledView updateProps:props oldProps:nullptr];
+  [pooledView updateState:node->getState() oldState:nullptr];
+  [pooledView finalizeUpdates:RNComponentViewUpdateMaskAll];
+  [pooledView layoutIfNeeded];
+  XCTAssertEqualObjects(TextViewDisplay(pooledView).attributedText.string, @"New paragraph");
+  XCTAssertNil([TextViewDisplay(pooledView).attributedText attribute:NSShadowAttributeName atIndex:0 effectiveRange:nil]);
+  auto freshView = MountTextViewNode(*node);
+  XCTAssertEqualObjects(ViewPixels(TextViewDisplay(pooledView), UIUserInterfaceStyleLight), ViewPixels(TextViewDisplay(freshView), UIUserInterfaceStyleLight));
+#endif
+}
+
 
 - (void)testNestedDrawingOnlyUpdatesPreserveSelectionAndContentLifetime
 {
