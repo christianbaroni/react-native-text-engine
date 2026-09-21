@@ -56,6 +56,29 @@ static RNTextEngineAttributedTextDisplayView *TextViewDisplay(UIView *component)
   return [[component valueForKey:@"textView"] valueForKey:@"displayView"];
 }
 
+static void AssertDefaultParagraphAccessibility(UIView *target, NSString *text, bool selectable)
+{
+  if (!selectable) {
+    XCTAssertEqualObjects(target.accessibilityLabel, text);
+    XCTAssertNil(target.accessibilityValue);
+    return;
+  }
+
+  UITextView *selection = (UITextView *)target;
+  XCTAssertEqualObjects(selection.text, text);
+  XCTAssertNil(selection.accessibilityLabel);
+  UITextView *native;
+  if (@available(iOS 16.0, *)) native = [UITextView textViewUsingTextLayoutManager:NO];
+  else native = [UITextView new];
+  native.frame = selection.bounds;
+  native.editable = NO;
+  native.selectable = YES;
+  native.attributedText = selection.attributedText;
+  native.selectedRange = selection.selectedRange;
+  // UIKit's native value is nil in some XCTest environments.
+  XCTAssertEqualObjects(selection.accessibilityValue, native.accessibilityValue);
+}
+
 static NSData *ViewPixels(UIView *view, UIUserInterfaceStyle appearance)
 {
   view.overrideUserInterfaceStyle = appearance;
@@ -237,8 +260,7 @@ static NSData *ViewPixels(UIView *view, UIUserInterfaceStyle appearance)
     auto unlabeled = std::make_shared<RNTextEngineTextViewProps>(*next);
     unlabeled->accessibilityLabel.clear();
     [view updateProps:unlabeled oldProps:next];
-    XCTAssertEqualObjects(target.accessibilityLabel ?: target.accessibilityValue, resolved);
-    if (selectable) XCTAssertNil(target.accessibilityLabel);
+    AssertDefaultParagraphAccessibility(target, resolved, selectable);
     auto inaccessible = std::make_shared<RNTextEngineTextViewProps>(*unlabeled);
     inaccessible->accessible = false;
     [view updateProps:inaccessible oldProps:unlabeled];
@@ -268,12 +290,12 @@ static NSData *ViewPixels(UIView *view, UIUserInterfaceStyle appearance)
       [paper layoutIfNeeded];
       UIView *target = selectable ? [paper valueForKey:@"interactionTextView"] : paper;
       XCTAssertTrue(target.isAccessibilityElement);
-      XCTAssertEqualObjects(target.accessibilityLabel ?: target.accessibilityValue, @"STRASSE שלום");
+      AssertDefaultParagraphAccessibility(target, @"STRASSE שלום", selectable);
       paper.accessibilityLabel = @"Alias";
       XCTAssertEqualObjects(target.accessibilityLabel, @"Alias");
       XCTAssertEqualObjects(target.accessibilityHint, @"Paper hint");
       paper.accessibilityLabel = nil;
-      XCTAssertEqualObjects(target.accessibilityLabel ?: target.accessibilityValue, @"STRASSE שלום");
+      AssertDefaultParagraphAccessibility(target, @"STRASSE שלום", selectable);
     }
     if (handle) {
       [paper setValue:@0 forKey:@"handle"];
@@ -312,6 +334,8 @@ static NSData *ViewPixels(UIView *view, UIUserInterfaceStyle appearance)
         XCTAssertFalse([target.accessibilityValue containsString:text]);
         if (selectable) {
           UITextView *selection = (UITextView *)target;
+          selection.accessibilityValue = @"Native value";
+          XCTAssertEqualObjects(selection.accessibilityValue, view.accessibilityValue);
           UITextPosition *start = [selection positionFromPosition:selection.beginningOfDocument offset:1];
           UITextPosition *end = [selection positionFromPosition:start inDirection:UITextLayoutDirectionRight offset:4];
           selection.selectedTextRange = [selection textRangeFromPosition:start toPosition:end];
@@ -336,9 +360,13 @@ static NSData *ViewPixels(UIView *view, UIUserInterfaceStyle appearance)
         next->accessibilityValue = {};
         apply(next);
         XCTAssertNil(view.accessibilityValue);
-        XCTAssertEqualObjects(target.accessibilityLabel, selectable ? nil : text);
-        XCTAssertEqualObjects(target.accessibilityValue, selectable ? text : nil);
-        if (selectable) XCTAssertTrue(NSEqualRanges(((UITextView *)target).selectedRange, NSMakeRange(1, 4)));
+        if (selectable) {
+          UITextView *selection = (UITextView *)target;
+          XCTAssertEqualObjects(selection.accessibilityValue, @"Native value");
+          selection.accessibilityValue = nil;
+          XCTAssertTrue(NSEqualRanges(selection.selectedRange, NSMakeRange(1, 4)));
+        }
+        AssertDefaultParagraphAccessibility(target, text, selectable);
       }
     }
   };
