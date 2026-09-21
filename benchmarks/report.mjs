@@ -245,6 +245,7 @@ function sourceIdentity(platform) {
           'examples/ios/example/AppDelegate.swift',
           'examples/ios/example.xcodeproj/project.pbxproj',
           'examples/ios/exampleTests/RNTextEngineTextViewComparisonBenchmarks.mm',
+          'examples/ios/exampleTests/RNTextEngineTextViewTestHelpers.h',
         ];
   const tracked = execFileSync(
     'git',

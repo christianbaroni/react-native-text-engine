@@ -25,6 +25,7 @@
 		CBCC340D91F04396A48846D7 /* FoundersGroteskText-Regular.otf in Resources */ = {isa = PBXBuildFile; fileRef = 3191E472D61D492DBE165B7A /* FoundersGroteskText-Regular.otf */; };
 		CDD95D5D71914E1CAFA02C8C /* TiemposText-Regular.otf in Resources */ = {isa = PBXBuildFile; fileRef = 6591CA9446A14E29BEF29F70 /* TiemposText-Regular.otf */; };
 		D2D2E852CDF5485D8E1C3C94 /* EpiceneDisplay-Regular.otf in Resources */ = {isa = PBXBuildFile; fileRef = 7DF1342987C44559936A4E1A /* EpiceneDisplay-Regular.otf */; };
+		E149C38B0E5BCF21B9460A45 /* RNTextEngineTextViewTests.mm in Sources */ = {isa = PBXBuildFile; fileRef = 0CB8C905DBD33E2559ED05A9 /* RNTextEngineTextViewTests.mm */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -41,6 +42,7 @@
 		00E356EE1AD99517003FC87E /* exampleTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = exampleTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		00E356F11AD99517003FC87E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		00E356F21AD99517003FC87E /* exampleTests.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = exampleTests.mm; sourceTree = "<group>"; };
+		0CB8C905DBD33E2559ED05A9 /* RNTextEngineTextViewTests.mm */ = {isa = PBXFileReference; includeInIndex = 1; path = RNTextEngineTextViewTests.mm; sourceTree = "<group>"; };
 		13B07F961A680F5B00A75B9A /* example.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = example.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		13B07FB51A68108700A75B9A /* Images.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Images.xcassets; path = example/Images.xcassets; sourceTree = "<group>"; };
 		13B07FB61A68108700A75B9A /* Info.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = Info.plist; path = example/Info.plist; sourceTree = "<group>"; };
@@ -62,6 +64,7 @@
 		87E565FB291B77FF68937FAB /* Pods-exampleTests.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-exampleTests.debug.xcconfig"; path = "Target Support Files/Pods-exampleTests/Pods-exampleTests.debug.xcconfig"; sourceTree = "<group>"; };
 		994E76B6643D47008EA122C1 /* FoundersGroteskText-Medium.otf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = "FoundersGroteskText-Medium.otf"; path = "../assets/fonts/FoundersGroteskText-Medium.otf"; sourceTree = "<group>"; };
 		A8773E2DCCD449EF83BDD2AF /* FoundersGroteskMono-Regular.otf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = "FoundersGroteskMono-Regular.otf"; path = "../assets/fonts/FoundersGroteskMono-Regular.otf"; sourceTree = "<group>"; };
+		A98A9C9078597957F9A97B32 /* RNTextEngineTextViewTestHelpers.h */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.h; path = RNTextEngineTextViewTestHelpers.h; sourceTree = "<group>"; };
 		AA9CB3552DF7B9550072902D /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppDelegate.swift; path = example/AppDelegate.swift; sourceTree = "<group>"; };
 		AA9CB3582DF7B9910072902D /* example-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "example-Bridging-Header.h"; sourceTree = "<group>"; };
 		EB16F2348F04F204ACF4BB8F /* Pods-example.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-example.debug.xcconfig"; path = "Target Support Files/Pods-example/Pods-example.debug.xcconfig"; sourceTree = "<group>"; };
@@ -97,6 +100,8 @@
 				1EAA11BA2EFF001122334455 /* RNTextEnginePerformanceTests.mm */,
 				1EAA11BF2EFF001122334455 /* RNTextEngineTextViewComparisonBenchmarks.mm */,
 				00E356F01AD99517003FC87E /* Supporting Files */,
+				0CB8C905DBD33E2559ED05A9 /* RNTextEngineTextViewTests.mm */,
+				A98A9C9078597957F9A97B32 /* RNTextEngineTextViewTestHelpers.h */,
 			);
 			path = exampleTests;
 			sourceTree = "<group>";
@@ -412,6 +417,7 @@
 				00E356F31AD99517003FC87E /* exampleTests.mm in Sources */,
 				1EAA11BB2EFF001122334455 /* RNTextEnginePerformanceTests.mm in Sources */,
 				1EAA11BE2EFF001122334455 /* RNTextEngineTextViewComparisonBenchmarks.mm in Sources */,
+				E149C38B0E5BCF21B9460A45 /* RNTextEngineTextViewTests.mm in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
