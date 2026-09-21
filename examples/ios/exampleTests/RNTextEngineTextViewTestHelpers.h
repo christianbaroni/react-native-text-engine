@@ -7,6 +7,7 @@
 #import <react/renderer/componentregistry/ComponentDescriptorProviderRegistry.h>
 #import <react/renderer/componentregistry/ComponentDescriptorRegistry.h>
 #import <react/renderer/components/root/RootComponentDescriptor.h>
+#import <React/RCTComponentViewProtocol.h>
 #import <react/renderer/components/text/ParagraphComponentDescriptor.h>
 #import <react/renderer/components/text/RawTextComponentDescriptor.h>
 #import <react/renderer/components/text/TextComponentDescriptor.h>
@@ -68,6 +69,7 @@ static ComponentDescriptorRegistry::Shared BuildComponentDescriptorRegistry()
   providerRegistry.add(concreteComponentDescriptorProvider<TextComponentDescriptor>());
   providerRegistry.add(concreteComponentDescriptorProvider<RawTextComponentDescriptor>());
   providerRegistry.add(concreteComponentDescriptorProvider<RNTextEngineTextViewComponentDescriptor>());
+  providerRegistry.add([NSClassFromString(@"RNTextEnginePreparedTextViewComponentView") componentDescriptorProvider]);
 
   auto descriptorRegistry = providerRegistry.createComponentDescriptorRegistry(ComponentDescriptorParameters{
       .eventDispatcher = {},

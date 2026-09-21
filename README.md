@@ -328,4 +328,4 @@ The example app in [`examples/`](./examples) shows:
 
 ## Benchmarks
 
-See the [TextView vs React Native Text comparison](benchmarks/rn-text/README.md) and [library benchmarks](benchmarks/library/README.md) for results and run instructions.
+See the [TextView and PreparedTextView vs React Native Text comparison](benchmarks/rn-text/README.md) and [library benchmarks](benchmarks/library/README.md) for results and run instructions.

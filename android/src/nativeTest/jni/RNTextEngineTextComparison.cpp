@@ -44,6 +44,22 @@ using namespace facebook::react;
 using namespace rntextengine::test;
 
 namespace {
+// Values cross the test-only JNI boundary to the corresponding view manager.
+enum class Implementation { RNText, TextView, PreparedTextView };
+constexpr const char *kImplementationNames[] = {"RN Text", "TextView", "PreparedTextView"};
+
+struct PreparedHandles {
+  std::vector<jlong> values;
+  PreparedHandles() = default;
+  PreparedHandles(const PreparedHandles &) = delete;
+  ~PreparedHandles() {
+    if (values.empty()) return;
+    static auto bindings = jni::findClassStatic("com/rntextengine/RNTextEngineBindings");
+    static auto release = bindings->getStaticMethod<void(jlong)>("release");
+    for (auto handle : values) release(bindings, handle);
+  }
+};
+
 constexpr int kRunStyleHasFontStyle = 1 << 3;
 constexpr int kRunStyleHasFontWeight = 1 << 4;
 constexpr int kRunStyleHasLetterSpacing = 1 << 5;
@@ -167,6 +183,7 @@ static ComponentDescriptorRegistry::Shared BuildBenchmarkComponentDescriptorRegi
   providerRegistry.add(concreteComponentDescriptorProvider<TextComponentDescriptor>());
   providerRegistry.add(concreteComponentDescriptorProvider<RawTextComponentDescriptor>());
   providerRegistry.add(concreteComponentDescriptorProvider<RNTextEngineTextViewComponentDescriptor>());
+  providerRegistry.add(concreteComponentDescriptorProvider<RNTextEnginePreparedTextViewComponentDescriptor>());
 
   auto descriptorRegistry = providerRegistry.createComponentDescriptorRegistry(ComponentDescriptorParameters{
       .eventDispatcher = {},
@@ -220,6 +237,43 @@ static std::shared_ptr<RootShadowNode> BuildTextViewTree(
   children.reserve(texts.size());
   for (const auto &text : texts) {
     children.push_back(Element<RNTextEngineTextViewShadowNode>().surfaceId(0).props(BuildTextViewProps(text, style, 256)));
+  }
+  return BuildShadowNode(registry, Element<RootShadowNode>()
+      .surfaceId(0).tag(1).props(BuildRootProps(320, density)).children(std::move(children)));
+}
+
+static std::shared_ptr<RootShadowNode> BuildPreparedTextViewTree(
+    const ComponentDescriptorRegistry::Shared &registry,
+    const std::vector<std::string> &texts,
+    const TextStyleFixture &style,
+    float density,
+    PreparedHandles &handles)
+{
+  static auto bindings = jni::findClassStatic("com/rntextengine/RNTextEngineBindings");
+  static auto prepare = bindings->getStaticMethod<jlong(jstring, jstring, jstring, jdouble,
+      jstring, jstring, jdouble, jdouble, jboolean, jboolean, jboolean, jstring)>("prepare");
+  static auto layout = bindings->getStaticMethod<jni::JArrayDouble::javaobject(
+      jlong, jdouble, jint, jstring, jboolean)>("layout");
+  auto fontWeight = jni::make_jstring(style.fontWeight);
+  auto fontStyle = jni::make_jstring(style.fontStyle);
+  auto breakStrategy = jni::make_jstring("highQuality");
+  std::vector<ElementFragment> children;
+  children.reserve(texts.size());
+  handles.values.reserve(texts.size());
+  for (const auto &text : texts) {
+    auto handle = prepare(bindings, jni::make_jstring(text).get(), nullptr, nullptr, style.fontSize,
+        fontWeight.get(), fontStyle.get(), style.letterSpacing, style.lineHeight,
+        false, false, style.tabularNumbers, breakStrategy.get());
+    handles.values.push_back(handle);
+    auto measured = layout(bindings, handle, 256.0, 0, nullptr, false);
+    double height;
+    measured->getRegion(1, 1, &height);
+    auto props = std::make_shared<RNTextEnginePreparedTextViewProps>();
+    props->handle = handle;
+    props->anchorToCapHeight = false;
+    props->yogaStyle.setDimension(yoga::Dimension::Width, yoga::StyleSizeLength::points(256));
+    props->yogaStyle.setDimension(yoga::Dimension::Height, yoga::StyleSizeLength::points(height));
+    children.push_back(Element<RNTextEnginePreparedTextViewShadowNode>().surfaceId(0).props(props));
   }
   return BuildShadowNode(registry, Element<RootShadowNode>()
       .surfaceId(0).tag(1).props(BuildRootProps(320, density)).children(std::move(children)));
@@ -449,8 +503,8 @@ std::vector<double> Measure(const std::function<void()> &work, int repetitions) 
 }
 
 void WriteSamples(std::ostream &output, const std::string &scenario, int operations,
-    bool engine, const std::vector<double> &samples) {
-  output << "{\"scenario\":\"" << scenario << "\",\"implementation\":\"" << (engine ? "TextView" : "RN Text")
+    Implementation implementation, const std::vector<double> &samples) {
+  output << "{\"scenario\":\"" << scenario << "\",\"implementation\":\"" << kImplementationNames[static_cast<int>(implementation)]
       << "\",\"operations\":" << operations << ",\"samplesMs\":[";
   for (size_t index = 0; index < samples.size(); ++index) {
     if (index) output << ',';
@@ -460,7 +514,8 @@ void WriteSamples(std::ostream &output, const std::string &scenario, int operati
   output << "]}";
 }
 
-std::string RunComparison(const jni::global_ref<jobject> &fabricManager, float density, bool prepared, bool engine) {
+std::string RunComparison(const jni::global_ref<jobject> &fabricManager, float density, bool prepared, Implementation implementation) {
+  const bool engine = implementation == Implementation::TextView;
   Require(ReactNativeFeatureFlags::enablePreparedTextLayout() == prepared, "RN prepared mode does not match the request");
   Require(!ReactNativeFeatureFlags::disableTextLayoutManagerCacheAndroid() &&
       ReactNativeFeatureFlags::preparedTextCacheSize() == 200, "RN layout cache defaults changed");
@@ -543,7 +598,11 @@ std::string RunComparison(const jni::global_ref<jobject> &fabricManager, float d
     auto rnRoot = BuildRNTextTree(rnRegistry, chatTexts, chatStyle, density);
     auto tvRegistry = BuildBenchmarkComponentDescriptorRegistry(fabricManager);
     auto tvRoot = BuildTextViewTree(tvRegistry, chatTexts, chatStyle, density);
-    Require(rnRoot->layoutIfNeeded() && tvRoot->layoutIfNeeded(), "Fabric tree did not lay out");
+    auto preparedRegistry = BuildBenchmarkComponentDescriptorRegistry(fabricManager);
+    PreparedHandles handles;
+    auto preparedRoot = BuildPreparedTextViewTree(preparedRegistry, chatTexts, chatStyle, density, handles);
+    Require(rnRoot->layoutIfNeeded() && tvRoot->layoutIfNeeded() && preparedRoot->layoutIfNeeded(), "Fabric tree did not lay out");
+    Require(preparedRoot->getChildren().size() == chatTexts.size(), "Incomplete PreparedTextView tree");
     Require(rnRoot->getChildren().size() == 128 && tvRoot->getChildren().size() == 128, "Incomplete Fabric tree");
     for (size_t i = 0; i < chatTexts.size(); ++i) {
       const auto &rnNode = static_cast<const ParagraphShadowNode &>(*rnRoot->getChildren()[i]);
@@ -554,6 +613,11 @@ std::string RunComparison(const jni::global_ref<jobject> &fabricManager, float d
       Require(std::abs(rn.size.width - tv.size.width) <= 1.0 / density &&
           std::abs(rn.origin.x - tv.origin.x) <= 1.0 / density &&
           std::abs(rn.origin.y - tv.origin.y) <= 1.0 / density, "Fabric frame mismatch: " + std::to_string(i));
+      auto ptv = static_cast<const LayoutableShadowNode &>(*preparedRoot->getChildren()[i]).getLayoutMetrics().frame;
+      CheckSizes(rn.size, ptv.size, 256, density, "PreparedTextView child " + std::to_string(i));
+      Require(std::abs(rn.size.width - ptv.size.width) <= 1.0 / density &&
+          std::abs(rn.origin.x - ptv.origin.x) <= 1.0 / density &&
+          std::abs(rn.origin.y - ptv.origin.y) <= 1.0 / density, "PreparedTextView frame mismatch: " + std::to_string(i));
     }
   }
 
@@ -566,17 +630,21 @@ std::string RunComparison(const jni::global_ref<jobject> &fabricManager, float d
   auto record = [&](const std::string &scenario, int operations, const std::vector<double> &samples) {
     if (!first) output << ',';
     first = false;
-    WriteSamples(output, scenario, operations, engine, samples);
+    WriteSamples(output, scenario, operations, implementation, samples);
   };
-  record("fabric_chat_shadow_tree_layout", 512, measure([&] {
+  record("fabric_chat_shadow_tree_layout", 512, Measure([&] {
     auto registry = BuildBenchmarkComponentDescriptorRegistry(fabricManager);
-    auto root = BuildRNTextTree(registry, chatTexts, chatStyle, density);
-    sink = sink + root->layoutIfNeeded();
-  }, [&] {
-    auto registry = BuildBenchmarkComponentDescriptorRegistry(fabricManager);
-    auto root = BuildTextViewTree(registry, chatTexts, chatStyle, density);
+    PreparedHandles handles;
+    auto root = implementation == Implementation::PreparedTextView
+        ? BuildPreparedTextViewTree(registry, chatTexts, chatStyle, density, handles)
+        : engine ? BuildTextViewTree(registry, chatTexts, chatStyle, density)
+                 : BuildRNTextTree(registry, chatTexts, chatStyle, density);
     sink = sink + root->layoutIfNeeded();
   }, 4));
+  if (implementation == Implementation::PreparedTextView) {
+    output << ']';
+    return output.str();
+  }
   {
     auto registry = BuildBenchmarkComponentDescriptorRegistry(fabricManager);
     auto root = engine ? BuildTextViewTree(registry, chatTexts, chatStyle, density)
@@ -661,15 +729,18 @@ std::string RunComparison(const jni::global_ref<jobject> &fabricManager, float d
 }
 
 std::string RunFirstDraw(jni::alias_ref<jobject> receiver,
-    const jni::global_ref<jobject> &fabricManager, float density, bool engine) {
-  auto mountAndDraw = receiver->getClass()->getMethod<void(jboolean, ReadableNativeMap::javaobject,
+    const jni::global_ref<jobject> &fabricManager, float density, Implementation implementation) {
+  auto mountAndDraw = receiver->getClass()->getMethod<void(jint, ReadableNativeMap::javaobject,
       StateWrapper::javaobject, jint, jint, jstring)>("mountAndDraw");
   const auto texts = ChatTexts();
   const TextStyleFixture style{.fontSize = 16, .letterSpacing = 0.1, .lineHeight = 24, .fontWeight = "700"};
   auto draw = [&](bool validate) {
     auto registry = BuildBenchmarkComponentDescriptorRegistry(fabricManager);
-    auto root = engine ? BuildTextViewTree(registry, texts, style, density)
-                       : BuildRNTextTree(registry, texts, style, density);
+    PreparedHandles handles;
+    auto root = implementation == Implementation::PreparedTextView
+        ? BuildPreparedTextViewTree(registry, texts, style, density, handles)
+        : implementation == Implementation::TextView ? BuildTextViewTree(registry, texts, style, density)
+                                                   : BuildRNTextTree(registry, texts, style, density);
     Require(root->layoutIfNeeded(), "Mounted tree did not lay out");
     for (size_t index = 0; index < root->getChildren().size(); ++index) {
       const auto &node = static_cast<const LayoutableShadowNode &>(*root->getChildren()[index]);
@@ -678,7 +749,7 @@ std::string RunFirstDraw(jni::alias_ref<jobject> receiver,
       jni::cthis(state)->setState(node.getState());
       const auto &metrics = node.getLayoutMetrics();
       auto expectedText = validate ? jni::make_jstring(texts[index]) : nullptr;
-      mountAndDraw(receiver, engine, props.get(), state.get(),
+      mountAndDraw(receiver, static_cast<jint>(implementation), props.get(), state.get(),
           std::round(metrics.frame.size.width * density), std::round(metrics.frame.size.height * density), expectedText.get());
     }
   };
@@ -686,7 +757,7 @@ std::string RunFirstDraw(jni::alias_ref<jobject> receiver,
   const auto samples = Measure([&] { draw(false); }, 4);
   std::ostringstream output;
   output << std::setprecision(17) << '[';
-  WriteSamples(output, "fabric_mount_and_first_draw", 512, engine, samples);
+  WriteSamples(output, "fabric_mount_and_first_draw", 512, implementation, samples);
   output << ']';
   return output.str();
 }
@@ -705,9 +776,9 @@ Java_com_rntextengine_RNTextEngineTextComparisonBenchmark_checkNativeMeasurement
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_rntextengine_RNTextEngineTextComparisonBenchmark_runNativeComparison(
-    JNIEnv *env, jobject, jobject manager, jfloat density, jboolean prepared, jboolean engine) {
+    JNIEnv *env, jobject, jobject manager, jfloat density, jboolean prepared, jint implementation) {
   try {
-    return env->NewStringUTF(RunComparison(jni::make_global(manager), density, prepared, engine).c_str());
+    return env->NewStringUTF(RunComparison(jni::make_global(manager), density, prepared, static_cast<Implementation>(implementation)).c_str());
   } catch (const std::exception &error) {
     env->ThrowNew(env->FindClass("java/lang/RuntimeException"), error.what());
     return nullptr;
@@ -716,9 +787,9 @@ Java_com_rntextengine_RNTextEngineTextComparisonBenchmark_runNativeComparison(
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_rntextengine_RNTextEngineTextComparisonBenchmark_runNativeFirstDraw(
-    JNIEnv *env, jobject receiver, jobject manager, jfloat density, jboolean engine) {
+    JNIEnv *env, jobject receiver, jobject manager, jfloat density, jint implementation) {
   try {
-    return env->NewStringUTF(RunFirstDraw(jni::wrap_alias(receiver), jni::make_global(manager), density, engine).c_str());
+    return env->NewStringUTF(RunFirstDraw(jni::wrap_alias(receiver), jni::make_global(manager), density, static_cast<Implementation>(implementation)).c_str());
   } catch (const std::exception &error) {
     env->ThrowNew(env->FindClass("java/lang/RuntimeException"), error.what());
     return nullptr;

@@ -40,17 +40,24 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class RNTextEngineTextComparisonBenchmark {
     private external fun checkNativeMeasurement(): String
-    private external fun runNativeComparison(manager: FabricUIManager, density: Float, prepared: Boolean, engine: Boolean): String
-    private external fun runNativeFirstDraw(manager: FabricUIManager, density: Float, engine: Boolean): String
+    private external fun runNativeComparison(manager: FabricUIManager, density: Float, prepared: Boolean, implementation: Int): String
+    private external fun runNativeFirstDraw(manager: FabricUIManager, density: Float, implementation: Int): String
 
     private lateinit var textManager: ViewManager<*, *>
     private val engineManager = RNTextEngineTextViewManager()
+    private val preparedManager = RNTextEnginePreparedTextViewManager()
     private lateinit var themedContext: ThemedReactContext
     private lateinit var bitmap: Bitmap
     private lateinit var canvas: Canvas
 
-    private fun mountAndDraw(engine: Boolean, props: ReadableNativeMap, state: StateWrapper, width: Int, height: Int, expectedText: String?) {
-        drawMounted(if (engine) engineManager else textManager, props, state, width, height, expectedText)
+    private fun mountAndDraw(implementation: Int, props: ReadableNativeMap, state: StateWrapper, width: Int, height: Int, expectedText: String?) {
+        val manager = when (implementation) {
+            0 -> textManager
+            1 -> engineManager
+            2 -> preparedManager
+            else -> error("Unknown implementation: $implementation")
+        }
+        drawMounted(manager, props, state, width, height, expectedText)
     }
 
     private fun <T : View> drawMounted(manager: ViewManager<T, *>, props: ReadableNativeMap, state: StateWrapper, width: Int, height: Int, expectedText: String?) {
@@ -67,7 +74,7 @@ class RNTextEngineTextComparisonBenchmark {
                 canvas.restoreToCount(saveCount)
             }
             if (expectedText != null) {
-                val actualText = if (view is RNTextEngineTextViewManager.RNTextEngineTextView) {
+                val actualText = if (view is RNTextEngineTextContainer) {
                     requireNotNull(view.displayView.resolveLayout(width)).text
                 } else {
                     view.javaClass.getMethod("getText").invoke(view) as CharSequence
@@ -103,10 +110,11 @@ class RNTextEngineTextComparisonBenchmark {
         val run = requireNotNull(arguments.getString("rnteRun")).toInt()
         val prepared = requireNotNull(arguments.getString("rntePreparedTextLayout")).toBooleanStrict()
         require(run in 1..3)
-        val engine = when (arguments.getString("rnteImplementation")) {
-            "rn" -> false
-            "textview" -> true
-            else -> error("Choose rnteImplementation=rn or textview")
+        val implementation = when (arguments.getString("rnteImplementation")) {
+            "rn" -> 0
+            "textview" -> 1
+            "preparedtextview" -> 2
+            else -> error("Choose rnteImplementation=rn, textview, or preparedtextview")
         }
         val application = ApplicationProvider.getApplicationContext<Application>()
         SoLoader.init(application, OpenSourceMergedSoMapping)
@@ -135,22 +143,22 @@ class RNTextEngineTextComparisonBenchmark {
             val density = application.resources.displayMetrics.density
             // Native validation precedes all timing; an exception prevents result emission.
             val measurementChecksum = checkNativeMeasurement()
-            val results = JSONArray(runNativeComparison(manager, density, prepared, engine))
+            val results = JSONArray(runNativeComparison(manager, density, prepared, implementation))
             instrumentation.runOnMainSync {
                 val pixels = (320 * density).roundToInt()
                 bitmap = Bitmap.createBitmap(pixels, pixels, Bitmap.Config.ARGB_8888)
                 canvas = Canvas(bitmap)
                 try {
-                    val drawResults = JSONArray(runNativeFirstDraw(manager, density, engine))
+                    val drawResults = JSONArray(runNativeFirstDraw(manager, density, implementation))
                     for (index in 0 until drawResults.length()) results.put(drawResults.getJSONObject(index))
                 } finally {
                     bitmap.recycle()
                 }
             }
-            assertTrue(results.length() == 8)
+            assertTrue(results.length() == if (implementation == 2) 2 else 8)
             val meta = JSONObject()
                 .put("platform", "android")
-                .put("implementation", if (engine) "TextView" else "RN Text")
+                .put("implementation", listOf("RN Text", "TextView", "PreparedTextView")[implementation])
                 .put("deviceName", Build.MODEL)
                 .put("osVersion", Build.VERSION.RELEASE)
                 .put("apiLevel", Build.VERSION.SDK_INT)

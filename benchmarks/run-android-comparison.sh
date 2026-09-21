@@ -42,8 +42,11 @@ for run in 1 2 3; do
   for mode in "${MODES[@]}"; do
     PREPARED=false
     if [[ "${mode}" == prepared ]]; then PREPARED=true; fi
-    IMPLEMENTATIONS=(rn textview)
-    if [[ ${run} -eq 2 ]]; then IMPLEMENTATIONS=(textview rn); fi
+    case "${run}" in
+      1) IMPLEMENTATIONS=(rn textview preparedtextview) ;;
+      2) IMPLEMENTATIONS=(textview preparedtextview rn) ;;
+      3) IMPLEMENTATIONS=(preparedtextview rn textview) ;;
+    esac
     for implementation in "${IMPLEMENTATIONS[@]}"; do
       adb shell am force-stop com.rntextengine.test
       adb shell am instrument -w -r \

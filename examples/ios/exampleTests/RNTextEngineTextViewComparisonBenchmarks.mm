@@ -4,6 +4,7 @@
 
 #ifdef RCT_NEW_ARCH_ENABLED
 #import "../../../ios/RNTextEngineBindings.h"
+#import <hermes/hermes.h>
 #import <React/RCTParagraphComponentView.h>
 #import <React/RCTConversions.h>
 #import <React/RCTUtils.h>
@@ -54,9 +55,15 @@ struct RunFixture {
   TextStyleFixture style{};
 };
 
-struct BenchmarkSamples {
-  std::vector<double> rn;
-  std::vector<double> textView;
+enum class Implementation { RNText, TextView, PreparedTextView };
+
+struct PreparedHandles {
+  std::vector<uint64_t> values;
+  PreparedHandles() = default;
+  PreparedHandles(const PreparedHandles &) = delete;
+  ~PreparedHandles() {
+    for (auto handle : values) rntextengine::releasePreparedTextHandle(handle);
+  }
 };
 
 static uint64_t NowNanos()
@@ -187,27 +194,18 @@ static double MeasureBlock(dispatch_block_t block, NSInteger repetitions)
   return static_cast<double>(NowNanos() - started) / 1000000.0;
 }
 
-static BenchmarkSamples MeasurePair(dispatch_block_t rn, dispatch_block_t textView, NSInteger repetitions, NSInteger run)
+static std::vector<std::vector<double>> MeasureImplementations(
+    NSArray<dispatch_block_t> *blocks, NSInteger repetitions, NSInteger run)
 {
   constexpr NSInteger warmups = 2;
   constexpr NSInteger samples = 9;
-  BenchmarkSamples result;
-  result.rn.reserve(samples);
-  result.textView.reserve(samples);
-
-  for (NSInteger index = -warmups; index < samples; index += 1) {
-    double rnMs;
-    double textViewMs;
-    if ((index + warmups + run - 1) % 2 == 0) {
-      rnMs = MeasureBlock(rn, repetitions);
-      textViewMs = MeasureBlock(textView, repetitions);
-    } else {
-      textViewMs = MeasureBlock(textView, repetitions);
-      rnMs = MeasureBlock(rn, repetitions);
-    }
-    if (index >= 0) {
-      result.rn.push_back(rnMs);
-      result.textView.push_back(textViewMs);
+  std::vector<std::vector<double>> result(blocks.count);
+  for (auto &values : result) values.reserve(samples);
+  for (NSInteger index = -warmups; index < samples; ++index) {
+    for (NSUInteger offset = 0; offset < blocks.count; ++offset) {
+      NSUInteger implementation = (index + warmups + run - 1 + offset) % blocks.count;
+      double elapsed = MeasureBlock(blocks[implementation], repetitions);
+      if (index >= 0) result[implementation].push_back(elapsed);
     }
   }
   return result;
@@ -351,6 +349,55 @@ static std::shared_ptr<RootShadowNode> BuildTextViewTree(
       .surfaceId(1).tag(1).props(BuildRootProps(320)).children(std::move(children)));
 }
 
+struct PreparedTextFixture {
+  jsi::Runtime &runtime;
+  jsi::HostFunctionType prepare;
+  jsi::Object style;
+  std::vector<jsi::String> texts;
+
+  PreparedTextFixture(jsi::Runtime &runtime, const std::vector<std::string> &texts, const TextStyleFixture &style)
+      : runtime(runtime),
+        prepare(runtime.global().getPropertyAsFunction(runtime, "__RNTextEnginePrepare").getHostFunction(runtime)),
+        style(runtime) {
+    this->style.setProperty(runtime, "fontSize", style.fontSize);
+    this->style.setProperty(runtime, "fontWeight", jsi::String::createFromUtf8(runtime, style.fontWeight));
+    this->style.setProperty(runtime, "fontStyle", jsi::String::createFromUtf8(runtime, style.fontStyle));
+    this->style.setProperty(runtime, "letterSpacing", style.letterSpacing);
+    this->style.setProperty(runtime, "lineHeight", style.lineHeight);
+    this->style.setProperty(runtime, "tabularNumbers", style.tabularNumbers);
+    this->style.setProperty(runtime, "allowFontScaling", false);
+    for (const auto &text : texts) this->texts.push_back(jsi::String::createFromUtf8(runtime, text));
+  }
+};
+
+static std::shared_ptr<RootShadowNode> BuildPreparedTextViewTree(
+    const ComponentDescriptorRegistry::Shared &registry,
+    const PreparedTextFixture &fixture,
+    PreparedHandles &handles)
+{
+  std::vector<ElementFragment> children;
+  children.reserve(fixture.texts.size());
+  handles.values.reserve(fixture.texts.size());
+  const auto &descriptor = registry->at("RNTextEnginePreparedTextView");
+  for (const auto &text : fixture.texts) {
+    jsi::Value arguments[] = {jsi::Value(fixture.runtime, text), jsi::Value(fixture.runtime, fixture.style)};
+    auto handle = static_cast<uint64_t>(fixture.prepare(fixture.runtime, jsi::Value::undefined(), arguments, 2).asNumber());
+    handles.values.push_back(handle);
+    CGSize size = rntextengine::measurePreparedTextLayoutForHandle(handle, 260, 0, nil, NO);
+    auto props = std::make_shared<RNTextEnginePreparedTextViewProps>();
+    props->handle = handle;
+    props->anchorToCapHeight = false;
+    props->yogaStyle.setDimension(yoga::Dimension::Width, yoga::StyleSizeLength::points(260));
+    props->yogaStyle.setDimension(yoga::Dimension::Height, yoga::StyleSizeLength::points(size.height));
+    ElementFragment child{};
+    child.componentHandle = descriptor.getComponentHandle();
+    child.props = props;
+    children.push_back(std::move(child));
+  }
+  return BuildShadowNode(registry, Element<RootShadowNode>()
+      .surfaceId(1).tag(1).props(BuildRootProps(320)).children(std::move(children)));
+}
+
 static NSUInteger ValidateDrawingLeaf(UIView *view, NSString *expectedText)
 {
   NSUInteger count = 0;
@@ -369,11 +416,15 @@ static NSUInteger ValidateDrawingLeaf(UIView *view, NSString *expectedText)
   return count;
 }
 
-static void MountAndDrawTree(const RootShadowNode &root, BOOL textView, CGContextRef validationContext = nullptr)
+static void MountAndDrawTree(const RootShadowNode &root, Implementation implementation, CGContextRef validationContext = nullptr,
+    const std::vector<std::string> &expectedTexts = {})
 {
   @autoreleasepool {
     RCTViewComponentView *parent = [RCTViewComponentView new];
-    Class componentClass = textView ? NSClassFromString(@"RNTextEngineTextViewComponentView") : RCTParagraphComponentView.class;
+    Class componentClass = implementation == Implementation::RNText ? RCTParagraphComponentView.class
+        : NSClassFromString(implementation == Implementation::TextView
+            ? @"RNTextEngineTextViewComponentView" : @"RNTextEnginePreparedTextViewComponentView");
+    size_t index = 0;
     for (const auto &child : root.getChildren()) {
       const auto &node = static_cast<const LayoutableShadowNode &>(*child);
       UIView<RCTComponentViewProtocol> *view = [componentClass new];
@@ -387,11 +438,9 @@ static void MountAndDrawTree(const RootShadowNode &root, BOOL textView, CGContex
       [view layoutIfNeeded];
       DisplayLayers(view.layer);
       if (validationContext != nullptr) {
-        NSString *expectedText = ToNSString(textView
-            ? static_cast<const RNTextEngineTextViewShadowNode &>(node).getConcreteProps().text
-            : static_cast<const ParagraphShadowNode &>(node).getStateData().attributedString.getString());
+        NSString *expectedText = ToNSString(expectedTexts.at(index));
         XCTAssertEqual(ValidateDrawingLeaf(view, expectedText), 1u);
-        if (!textView) XCTAssertEqualObjects(((RCTParagraphComponentView *)view).attributedText.string, expectedText);
+        if (implementation == Implementation::RNText) XCTAssertEqualObjects(((RCTParagraphComponentView *)view).attributedText.string, expectedText);
         XCTAssertGreaterThan(view.bounds.size.width, 0);
         XCTAssertGreaterThan(view.bounds.size.height, 0);
         XCTAssertLessThanOrEqual(view.bounds.size.height, 320);
@@ -413,6 +462,7 @@ static void MountAndDrawTree(const RootShadowNode &root, BOOL textView, CGContex
         XCTAssertTrue(inkFits, @"Mounted text exceeds measured bounds");
       }
       [parent unmountChildComponentView:view index:0];
+      ++index;
     }
   }
   // Offscreen layers retain backing stores until their Core Animation transaction commits.
@@ -565,6 +615,7 @@ static void MountAndDrawTree(const RootShadowNode &root, BOOL textView, CGContex
 - (BOOL)validateLayoutsWithChatStyle:(const TextStyleFixture &)chatStyle
                           richStyle:(const TextStyleFixture &)richStyle
                              widths:(const std::vector<double> &)widths
+                    preparedFixture:(const PreparedTextFixture &)preparedFixture
 {
   auto contextContainer = std::make_shared<ContextContainer>();
   TextLayoutManager manager(contextContainer);
@@ -606,7 +657,10 @@ static void MountAndDrawTree(const RootShadowNode &root, BOOL textView, CGContex
   auto rnRoot = BuildRNTextTree(rnRegistry, _chatStdTexts, chatStyle);
   auto textViewRegistry = BuildComponentDescriptorRegistry();
   auto textViewRoot = BuildTextViewTree(textViewRegistry, _chatStdTexts, chatStyle);
-  bool laidOut = rnRoot->layoutIfNeeded() && textViewRoot->layoutIfNeeded();
+  auto preparedRegistry = BuildComponentDescriptorRegistry();
+  PreparedHandles handles;
+  auto preparedRoot = BuildPreparedTextViewTree(preparedRegistry, preparedFixture, handles);
+  bool laidOut = rnRoot->layoutIfNeeded() && textViewRoot->layoutIfNeeded() && preparedRoot->layoutIfNeeded();
   XCTAssertTrue(laidOut);
   if (!laidOut) return NO;
   const auto &rnChildren = rnRoot->getChildren();
@@ -614,6 +668,7 @@ static void MountAndDrawTree(const RootShadowNode &root, BOOL textView, CGContex
   XCTAssertEqual(rnChildren.size(), _chatTexts.count);
   XCTAssertEqual(textViewChildren.size(), _chatTexts.count);
   if (rnChildren.size() != _chatTexts.count || textViewChildren.size() != _chatTexts.count) return NO;
+  XCTAssertEqual(preparedRoot->getChildren().size(), _chatTexts.count);
   const double tolerance = 1.0 / UIScreen.mainScreen.scale;
   for (NSUInteger index = 0; index < _chatTexts.count; index += 1) {
     auto rn = static_cast<const ParagraphShadowNode &>(*rnChildren[index]).getLayoutMetrics().frame;
@@ -626,6 +681,12 @@ static void MountAndDrawTree(const RootShadowNode &root, BOOL textView, CGContex
         std::abs(rn.origin.x - textView.origin.x) <= tolerance && std::abs(rn.origin.y - textView.origin.y) <= tolerance;
     XCTAssertTrue(sameFrame, @"Fabric frame mismatch at child %lu", (unsigned long)index);
     if (!sameFrame) return NO;
+    auto prepared = static_cast<const LayoutableShadowNode &>(*preparedRoot->getChildren()[index]).getLayoutMetrics().frame;
+    bool samePreparedFrame = std::abs(rn.size.width - prepared.size.width) <= tolerance &&
+        std::abs(rn.size.height - prepared.size.height) <= tolerance &&
+        std::abs(rn.origin.x - prepared.origin.x) <= tolerance && std::abs(rn.origin.y - prepared.origin.y) <= tolerance;
+    XCTAssertTrue(samePreparedFrame, @"PreparedTextView frame mismatch at child %lu", (unsigned long)index);
+    if (!samePreparedFrame) return NO;
   }
   return YES;
 }
@@ -690,11 +751,15 @@ static void MountAndDrawTree(const RootShadowNode &root, BOOL textView, CGContex
      repetitions:(NSInteger)repetitions
               rn:(dispatch_block_t)rn
         textView:(dispatch_block_t)textView
+preparedTextView:(dispatch_block_t)preparedTextView
 {
   NSInteger run = [NSProcessInfo.processInfo.environment[@"RNTE_BENCHMARK_RUN"] integerValue];
-  auto samples = MeasurePair(rn, textView, repetitions, run);
-  [self emitResult:scenario implementation:@"RN Text" operations:operations * repetitions samples:samples.rn];
-  [self emitResult:scenario implementation:@"TextView" operations:operations * repetitions samples:samples.textView];
+  NSArray<dispatch_block_t> *blocks = preparedTextView ? @[rn, textView, preparedTextView] : @[rn, textView];
+  NSArray<NSString *> *names = @[@"RN Text", @"TextView", @"PreparedTextView"];
+  auto samples = MeasureImplementations(blocks, repetitions, run);
+  for (NSUInteger index = 0; index < blocks.count; ++index) {
+    [self emitResult:scenario implementation:names[index] operations:operations * repetitions samples:samples[index]];
+  }
 }
 
 #endif
@@ -723,7 +788,12 @@ static void MountAndDrawTree(const RootShadowNode &root, BOOL textView, CGContex
       .fontWeight = "400",
   };
   const std::vector<double> widths = {260, 220, 300, 240, 280, 200};
-  if (![self validateLayoutsWithChatStyle:chatStyle richStyle:richStyle widths:widths]) return;
+  auto runtimeOwner = facebook::hermes::makeHermesRuntime();
+  auto *runtime = runtimeOwner.get();
+  rntextengine::install(*runtime);
+  PreparedTextFixture preparedInputs(*runtime, _chatStdTexts, chatStyle);
+  const auto *preparedFixture = &preparedInputs;
+  if (![self validateLayoutsWithChatStyle:chatStyle richStyle:richStyle widths:widths preparedFixture:*preparedFixture]) return;
   const TextStyleFixture labelStyle = {.fontSize = 17};
   NSArray<NSString *> *labelPrefixes = @[@"OK", @"Done 🙂", @"日本語", @"বাংলা"];
   NSMutableArray<NSString *> *labelTexts = [NSMutableArray arrayWithCapacity:128];
@@ -778,6 +848,12 @@ static void MountAndDrawTree(const RootShadowNode &root, BOOL textView, CGContex
                  auto registry = BuildComponentDescriptorRegistry();
                  auto root = BuildTextViewTree(registry, *chatStdTexts, chatStyle);
                  RNTextBenchmarkSink += root->layoutIfNeeded() ? 1 : 0;
+               }
+preparedTextView:^{
+                 auto registry = BuildComponentDescriptorRegistry();
+                 PreparedHandles handles;
+                 auto root = BuildPreparedTextViewTree(registry, *preparedFixture, handles);
+                 RNTextBenchmarkSink += root->layoutIfNeeded() ? 1 : 0;
                }];
 
   dispatch_block_t firstDraw = ^{
@@ -796,7 +872,14 @@ static void MountAndDrawTree(const RootShadowNode &root, BOOL textView, CGContex
       auto root = textView ? BuildTextViewTree(registry, *chatStdTexts, chatStyle)
                            : BuildRNTextTree(registry, *chatStdTexts, chatStyle);
       XCTAssertTrue(root->layoutIfNeeded());
-      MountAndDrawTree(*root, textView, context);
+      MountAndDrawTree(*root, textView ? Implementation::TextView : Implementation::RNText, context, *chatStdTexts);
+    }
+    {
+      auto registry = BuildComponentDescriptorRegistry();
+      PreparedHandles handles;
+      auto root = BuildPreparedTextViewTree(registry, *preparedFixture, handles);
+      XCTAssertTrue(root->layoutIfNeeded());
+      MountAndDrawTree(*root, Implementation::PreparedTextView, context, *chatStdTexts);
     }
     [self benchmark:@"fabric_mount_and_first_draw"
         operations:chatTexts.count
@@ -805,13 +888,20 @@ static void MountAndDrawTree(const RootShadowNode &root, BOOL textView, CGContex
                    auto registry = BuildComponentDescriptorRegistry();
                    auto root = BuildRNTextTree(registry, *chatStdTexts, chatStyle);
                    root->layoutIfNeeded();
-                   MountAndDrawTree(*root, NO);
+                   MountAndDrawTree(*root, Implementation::RNText);
                  }
           textView:^{
                    auto registry = BuildComponentDescriptorRegistry();
                    auto root = BuildTextViewTree(registry, *chatStdTexts, chatStyle);
                    root->layoutIfNeeded();
-                   MountAndDrawTree(*root, YES);
+                   MountAndDrawTree(*root, Implementation::TextView);
+                 }
+preparedTextView:^{
+                   auto registry = BuildComponentDescriptorRegistry();
+                   PreparedHandles handles;
+                   auto root = BuildPreparedTextViewTree(registry, *preparedFixture, handles);
+                   root->layoutIfNeeded();
+                   MountAndDrawTree(*root, Implementation::PreparedTextView);
                  }];
     CGContextRelease(context);
   };
@@ -844,7 +934,7 @@ static void MountAndDrawTree(const RootShadowNode &root, BOOL textView, CGContex
                          retainedContext, retainedConstraints);
                      RNTextBenchmarkSink += size.height;
                    }
-                 }];
+                 } preparedTextView:nil];
   }
 
   [self benchmark:@"cold_uniform_chat_layout"
@@ -867,7 +957,7 @@ static void MountAndDrawTree(const RootShadowNode &root, BOOL textView, CGContex
                    MeasureTextViewLayout(handle, 260, 0);
                    rntextengine::releasePreparedTextHandle(handle);
                  }
-               }];
+               } preparedTextView:nil];
 
   [self benchmark:@"cold_short_label_layout"
       operations:labelTexts.count
@@ -885,7 +975,7 @@ static void MountAndDrawTree(const RootShadowNode &root, BOOL textView, CGContex
                    MeasureTextViewLayout(handle, 160, 0);
                    rntextengine::releasePreparedTextHandle(handle);
                  }
-               }];
+               } preparedTextView:nil];
 
   NSMutableArray<NSNumber *> *handles = [NSMutableArray arrayWithCapacity:chatTexts.count];
   for (NSString *text in chatTexts) {
@@ -919,7 +1009,7 @@ static void MountAndDrawTree(const RootShadowNode &root, BOOL textView, CGContex
                      MeasureTextViewLayout(handle.unsignedLongLongValue, width, 0);
                    }
                  }
-               }];
+               } preparedTextView:nil];
 
   auto warmTruncatedContextContainer = std::make_shared<ContextContainer>();
   auto warmTruncatedManager = std::make_shared<TextLayoutManager>(warmTruncatedContextContainer);
@@ -942,7 +1032,7 @@ static void MountAndDrawTree(const RootShadowNode &root, BOOL textView, CGContex
                      MeasureTextViewLayout(handle.unsignedLongLongValue, width, 2);
                    }
                  }
-               }];
+               } preparedTextView:nil];
 
   for (NSNumber *handle in handles) {
     rntextengine::releasePreparedTextHandle(handle.unsignedLongLongValue);
@@ -979,7 +1069,7 @@ static void MountAndDrawTree(const RootShadowNode &root, BOOL textView, CGContex
                    MeasureTextViewLayout(handle, 280, 0);
                    rntextengine::releasePreparedTextHandle(handle);
                  }
-               }];
+               } preparedTextView:nil];
 
   const double sink = RNTextBenchmarkSink;
   XCTAssertTrue(std::isfinite(sink));

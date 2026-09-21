@@ -32,10 +32,15 @@ const metadata = {
   xcode: 'Xcode 26.3',
 };
 
-function runLog(run: number, platform: Platform, scale = 1, { sdk = 'iphonesimulator26.2', prepared = false, implementation = 'RN Text' } = {}): string {
+function runLog(
+  run: number,
+  platform: Platform,
+  scale = 1,
+  { sdk = 'iphonesimulator26.2', prepared = false, implementation = 'RN Text' } = {}
+): string {
   const meta = {
     run,
-    pid: 1000 + run + (prepared ? 10 : 0) + (implementation === 'TextView' ? 100 : 0),
+    pid: 1000 + run + (prepared ? 10 : 0) + ['RN Text', 'TextView', 'PreparedTextView'].indexOf(implementation) * 100,
     implementation,
     platform,
     deviceName: 'Test device',
@@ -55,12 +60,14 @@ function runLog(run: number, platform: Platform, scale = 1, { sdk = 'iphonesimul
     density: 2,
   };
   const records = Object.entries(workloads).flatMap(([scenario, operations]) =>
-    (platform === 'android' ? [implementation] : ['RN Text', 'TextView']).map(implementation => ({
-      scenario,
-      operations: platform === 'android' && scenario.startsWith('cached_') ? 6144 : operations,
-      implementation,
-      samplesMs: [1, 9, 3, 7, 5, 8, 2, 4, 100].map(value => value * scale * (implementation === 'RN Text' ? 2 : 1)),
-    }))
+    (platform === 'android' ? [implementation] : ['RN Text', 'TextView', 'PreparedTextView'])
+      .filter(name => name !== 'PreparedTextView' || ['fabric_chat_shadow_tree_layout', 'fabric_mount_and_first_draw'].includes(scenario))
+      .map(implementation => ({
+        scenario,
+        operations: platform === 'android' && scenario.startsWith('cached_') ? 6144 : operations,
+        implementation,
+        samplesMs: [1, 9, 3, 7, 5, 8, 2, 4, 100].map(value => value * scale * (implementation === 'RN Text' ? 2 : 1)),
+      }))
   );
   return [
     `RNTEXT_BENCHMARK_META ${JSON.stringify(meta)}`,
@@ -76,27 +83,27 @@ it.each(['iphonesimulator26.2', 'iphoneos26.2'])('reports %s measurements with d
   );
   expect(report).toContain(`${sdk.startsWith('iphonesimulator') ? 'Test device simulator' : 'Test device'}, iOS 26.2.`);
   expect(report).toContain(`SDK ${sdk};`);
-  expect(report).toContain('| Chat list layout | 512 | 40.000 ± 30.000 | 20.000 ± 15.000 | 0.500× |');
+  expect(report).toContain('| Chat list layout | 512 | 40.000 ± 30.000 | 20.000 ± 15.000 | 20.000 ± 15.000 | 0.500× | 0.500× |');
   expect(report).toContain(
     '| Chat list layout | RN Text | 1 | 2.000000, 18.000000, 6.000000, 14.000000, 10.000000, 16.000000, 4.000000, 8.000000, 200.000000 |'
   );
-  expect(report.split('\n').filter(line => /\| (RN Text|TextView) \| [123] \|/.test(line))).toHaveLength(48);
+  expect(report.split('\n').filter(line => /\| (RN Text|TextView|PreparedTextView) \| [123] \|/.test(line))).toHaveLength(54);
 });
 
 it('requires isolated Android processes for each implementation and layout configuration', () => {
   const androidMetadata = { ...metadata, platform: 'android', compilation: 'speed', apkSha256: 'a'.repeat(64) };
   const logs = [false, true].flatMap(prepared =>
-    ['RN Text', 'TextView'].flatMap(implementation =>
+    ['RN Text', 'TextView', 'PreparedTextView'].flatMap(implementation =>
       (prepared ? [2, 6, 12] : [1, 4, 10]).map((scale, index) => runLog(index + 1, 'android', scale, { prepared, implementation }))
     )
   );
   const report = renderComparison(androidMetadata, logs);
   expect(report).toContain('### RN Text with default layout');
   expect(report).toContain('### RN Text with prepared layout');
-  expect(report).toContain('| Chat list layout | 512 | 40.000 ± 30.000 | 20.000 ± 15.000 | 0.500× |');
-  expect(report).toContain('| Chat list layout | 512 | 60.000 ± 40.000 | 30.000 ± 20.000 | 0.500× |');
+  expect(report).toContain('| Chat list layout | 512 | 40.000 ± 30.000 | 20.000 ± 15.000 | 20.000 ± 15.000 | 0.500× | 0.500× |');
+  expect(report).toContain('| Chat list layout | 512 | 60.000 ± 40.000 | 30.000 ± 20.000 | 30.000 ± 20.000 | 0.500× | 0.500× |');
   expect(report).toContain('| Manager queries, 768 keys | 6,144 |');
-  expect(report.split('\n').filter(line => /\| (Default|Prepared) \| [123] \|/.test(line))).toHaveLength(96);
+  expect(report.split('\n').filter(line => /\| (Default|Prepared) \| [123] \|/.test(line))).toHaveLength(108);
   expect(() => renderComparison(androidMetadata, logs.slice(0, 3))).toThrow();
   expect(() =>
     renderComparison(
@@ -108,6 +115,16 @@ it('requires isolated Android processes for each implementation and layout confi
   expect(() => parseRun(log.replace('"implementation":"RN Text"', '"implementation":"TextView"'), 1, 'android')).toThrow();
   expect(() => parseRun(log.replace('"preparedTextCacheSize":200', '"preparedTextCacheSize":1024'), 1, 'android')).toThrow();
   expect(() => parseRun(log.replace('"operations":6144', '"operations":98304'), 1, 'android')).toThrow();
+});
+
+it.each<Platform>(['ios', 'android'])('requires exactly the applicable PreparedTextView rows on %s', platform => {
+  const log = runLog(1, platform, 1, { implementation: 'PreparedTextView' });
+  expect(() => parseRun(log, 1, platform)).not.toThrow();
+  const lines = log.split('\n');
+  const firstPrepared = lines.findIndex(line => line.startsWith('RNTEXT_BENCHMARK_RESULT ') && line.includes('"PreparedTextView"'));
+  expect(() => parseRun(lines.filter((_, index) => index !== firstPrepared).join('\n'), 1, platform)).toThrow('Incomplete comparison');
+  lines[firstPrepared] = lines[firstPrepared].replace('fabric_chat_shadow_tree_layout', 'cold_uniform_chat_layout');
+  expect(() => parseRun(lines.join('\n'), 1, platform)).toThrow('Unsupported comparison');
 });
 
 it.each<Platform>(['ios', 'android'])('rejects failed %s runs even when the log also reports success', platform => {

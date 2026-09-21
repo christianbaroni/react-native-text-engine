@@ -7,27 +7,41 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const scenarios = new Map([
-  ['fabric_chat_shadow_tree_layout', { label: 'Chat list layout', operations: 512 }],
-  ['fabric_mount_and_first_draw', { label: 'Native layout, mount, and first draw', operations: 512 }],
-  ['retained_paragraph_measurement', { label: 'Retained paragraph measurement', operations: 16384 }],
-  ['cold_short_label_layout', { label: 'Short labels, natural line height', operations: 512 }],
-  ['cold_uniform_chat_layout', { label: 'Plain text creation and layout', operations: 512 }],
-  [
-    'cached_uniform_layout_queries',
-    { label: 'Manager queries, 768 keys', operations: 98304, androidOperations: 6144 },
-  ],
-  [
-    'cached_truncated_layout_queries',
-    {
-      label: 'Manager queries, 768 keys, two-line limit',
-      operations: 98304,
-      androidOperations: 6144,
-    },
-  ],
-  ['cold_rich_inline_layout', { label: 'Styled text creation and layout', operations: 384 }],
-]);
-const implementations = ['RN Text', 'TextView'];
+const implementations = ['RN Text', 'TextView', 'PreparedTextView'];
+const scenarioGroups = [
+  {
+    label: 'Component lifecycle',
+    implementations,
+    scenarios: [
+      ['fabric_chat_shadow_tree_layout', { label: 'Chat list layout', operations: 512 }],
+      ['fabric_mount_and_first_draw', { label: 'Native layout, mount, and first draw', operations: 512 }],
+    ],
+  },
+  {
+    label: 'Measurement',
+    implementations: ['RN Text', 'TextView'],
+    scenarios: [
+      ['retained_paragraph_measurement', { label: 'Retained paragraph measurement', operations: 16384 }],
+      ['cold_short_label_layout', { label: 'Short labels, natural line height', operations: 512 }],
+      ['cold_uniform_chat_layout', { label: 'Plain text creation and layout', operations: 512 }],
+      ['cached_uniform_layout_queries', { label: 'Manager queries, 768 keys', operations: 98304, androidOperations: 6144 }],
+      [
+        'cached_truncated_layout_queries',
+        {
+          label: 'Manager queries, 768 keys, two-line limit',
+          operations: 98304,
+          androidOperations: 6144,
+        },
+      ],
+      ['cold_rich_inline_layout', { label: 'Styled text creation and layout', operations: 384 }],
+    ],
+  },
+];
+const scenarios = new Map(
+  scenarioGroups.flatMap(group =>
+    group.scenarios.map(([name, definition]) => [name, { ...definition, implementations: group.implementations }])
+  )
+);
 
 export function parseRun(log, run, platform = 'ios') {
   assert(['ios', 'android'].includes(platform), 'Unknown benchmark platform');
@@ -77,7 +91,12 @@ export function parseRun(log, run, platform = 'ios') {
   assert(Number.isInteger(meta.pid) && meta.pid > 0, 'Missing test process identity');
   assert(typeof meta.deviceName === 'string' && meta.deviceName.trim().length > 0 && meta.deviceName !== 'unknown');
   assert(typeof meta.osVersion === 'string' && meta.osVersion.trim().length > 0 && meta.osVersion !== 'unknown');
-  assert.equal(records.length, scenarios.size * (platform === 'android' ? 1 : implementations.length), 'Incomplete comparison');
+  const expectedCount = [...scenarios.values()].reduce(
+    (count, scenario) =>
+      count + (platform === 'android' ? Number(scenario.implementations.includes(meta.implementation)) : scenario.implementations.length),
+    0
+  );
+  assert.equal(records.length, expectedCount, 'Incomplete comparison');
   const seen = new Set();
   for (const record of records) {
     assert(scenarios.has(record.scenario), `Unknown scenario: ${record.scenario}`);
@@ -87,6 +106,7 @@ export function parseRun(log, run, platform = 'ios') {
     assert(!seen.has(key), `Duplicate result: ${key}`);
     seen.add(key);
     const scenario = scenarios.get(record.scenario);
+    assert(scenario.implementations.includes(record.implementation), `Unsupported comparison: ${key}`);
     const operations = platform === 'android' ? (scenario.androidOperations ?? scenario.operations) : scenario.operations;
     assert.equal(record.operations, operations, `Incorrect operation count: ${key}`);
     assert(Array.isArray(record.samplesMs) && record.samplesMs.length === 9, `Incomplete samples: ${key}`);
@@ -106,7 +126,7 @@ const median = values => {
 
 export function renderComparison(metadata, logs) {
   const platform = metadata.platform ?? 'ios';
-  assert.equal(logs.length, platform === 'android' ? 12 : 3, 'Three fresh processes per implementation and configuration are required');
+  assert.equal(logs.length, platform === 'android' ? 18 : 3, 'Three fresh processes per implementation and configuration are required');
   const runs = logs.map((log, index) => parseRun(log, (index % 3) + 1, platform));
   assert.equal(new Set(runs.map(run => run.meta.pid)).size, runs.length, 'Each run must use a fresh process');
   assert.equal(new Set(runs.map(run => `${run.meta.deviceName}/${run.meta.osVersion}`)).size, 1, 'Runs used different devices');
@@ -119,7 +139,9 @@ export function renderComparison(metadata, logs) {
     for (const prepared of [false, true]) {
       for (const implementation of implementations) {
         assert.deepEqual(
-          runs.filter(run => run.meta.enablePreparedTextLayout === prepared && run.meta.implementation === implementation).map(run => run.meta.run),
+          runs
+            .filter(run => run.meta.enablePreparedTextLayout === prepared && run.meta.implementation === implementation)
+            .map(run => run.meta.run),
           [1, 2, 3],
           'Each Android implementation and configuration requires runs 1, 2, and 3'
         );
@@ -148,25 +170,43 @@ export function renderComparison(metadata, logs) {
   for (const prepared of configurations) {
     const group = platform === 'android' ? runs.filter(run => run.meta.enablePreparedTextLayout === prepared) : runs;
     if (platform === 'android') lines.push(`### RN Text${prepared ? ' with prepared layout' : ' with default layout'}`, '');
-    lines.push('| Test | Operations/sample | RN Text (ms) | TextView (ms) | TextView / RN |', '| --- | ---: | ---: | ---: | ---: |');
-    for (const [scenario, definition] of scenarios) {
-      const label = definition.label;
-      const operations = platform === 'android' ? (definition.androidOperations ?? definition.operations) : definition.operations;
-      const stats = implementations.map(implementation => {
-        const implementationRuns = platform === 'android' ? group.filter(run => run.meta.implementation === implementation) : group;
-        const values = implementationRuns.map(run =>
-          median(run.records.find(record => record.scenario === scenario && record.implementation === implementation).samplesMs)
-        );
-        const value = median(values);
-        return { median: value, mad: median(values.map(sample => Math.abs(sample - value))) };
-      });
+    for (const scenarioGroup of scenarioGroups) {
+      const names = scenarioGroup.implementations;
       lines.push(
-        `| ${label} | ${operations.toLocaleString('en-US')} | ${stats[0].median.toFixed(3)} ± ${stats[0].mad.toFixed(3)} | ${stats[1].median.toFixed(3)} ± ${stats[1].mad.toFixed(3)} | ${(stats[1].median / stats[0].median).toFixed(3)}× |`
+        `${platform === 'android' ? '####' : '###'} ${scenarioGroup.label}`,
+        '',
+        `| Test | Operations/sample | ${names.map(name => `${name} (ms)`).join(' | ')} | ${names
+          .slice(1)
+          .map(name => `${name} / RN`)
+          .join(' | ')} |`,
+        `| --- | ${Array(names.length * 2)
+          .fill('---:')
+          .join(' | ')} |`
       );
+      for (const [scenario, definition] of scenarioGroup.scenarios) {
+        const operations = platform === 'android' ? (definition.androidOperations ?? definition.operations) : definition.operations;
+        const stats = names.map(implementation => {
+          const implementationRuns = platform === 'android' ? group.filter(run => run.meta.implementation === implementation) : group;
+          const values = implementationRuns.map(run =>
+            median(run.records.find(record => record.scenario === scenario && record.implementation === implementation).samplesMs)
+          );
+          const value = median(values);
+          return { median: value, mad: median(values.map(sample => Math.abs(sample - value))) };
+        });
+        lines.push(
+          `| ${definition.label} | ${operations.toLocaleString('en-US')} | ${stats.map(stat => `${stat.median.toFixed(3)} ± ${stat.mad.toFixed(3)}`).join(' | ')} | ${stats
+            .slice(1)
+            .map(stat => `${(stat.median / stats[0].median).toFixed(3)}×`)
+            .join(' | ')} |`
+        );
+      }
+      lines.push('');
     }
-    lines.push('');
     if (platform === 'android' && prepared) {
-      lines.push('The manager-query rows miss RN’s 200-entry prepared-layout cache on every query. The retained-paragraph row measures repeated calls on the same paragraph nodes at unchanged constraints.', '');
+      lines.push(
+        'The manager-query rows miss RN’s 200-entry prepared-layout cache on every query. The retained-paragraph row measures repeated calls on the same paragraph nodes at unchanged constraints.',
+        ''
+      );
     }
   }
   lines.push(
@@ -355,8 +395,11 @@ function main() {
     }
     const names =
       platform === 'android'
-        ? ['default', 'prepared'].flatMap(mode => ['rn', 'textview'].flatMap(implementation =>
-            [1, 2, 3].map(run => `run-${run}-${mode}-${implementation}.log`)))
+        ? ['default', 'prepared'].flatMap(mode =>
+            ['rn', 'textview', 'preparedtextview'].flatMap(implementation =>
+              [1, 2, 3].map(run => `run-${run}-${mode}-${implementation}.log`)
+            )
+          )
         : [1, 2, 3].map(run => `run-${run}.log`);
     const logs = names.map(name => readFileSync(join(runDirectory, name), 'utf8'));
     const section = renderComparison(metadata, logs);
