@@ -2408,7 +2408,9 @@ void install(Runtime& runtime) {
 
         if (!workletRuntime) return Value(false);
 
-        install(workletRuntime->getJSIRuntime());
+        workletRuntime->runSync([](Runtime &targetRuntime) {
+          rntextengine::install(targetRuntime);
+        });
         return Value(true);
       });
 #endif

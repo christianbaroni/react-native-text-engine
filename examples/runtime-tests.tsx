@@ -1,3 +1,4 @@
+import './runtime-tests-ui';
 import React, { useEffect, useRef, useState } from 'react';
 import { AppRegistry, Text, View, type LayoutChangeEvent } from 'react-native';
 import { createGlyphField, createPreparedText, GlyphFieldView, measureText, PreparedTextView, TextView } from 'react-native-text-engine';
@@ -12,9 +13,23 @@ const options = { width: 180 };
 function createFixtures() {
   const expected = measureText(text, style, options);
   const prepared = createPreparedText(text, style);
-  const runtime = createTextEngineRuntime({ name: 'text-engine-tests' });
+  const bindingNames = Object.getOwnPropertyNames(globalThis).filter(name => name.startsWith('__RNTextEngine'));
+  if (bindingNames.length === 0) throw new Error('No native bindings available for the runtime test');
+  const runtime = createTextEngineRuntime({
+    name: 'text-engine-tests',
+    initializer: () => {
+      'worklet';
+      for (const name of bindingNames) {
+        if (typeof Reflect.get(globalThis, name) !== 'function') throw new Error(`Initializer missing ${name}`);
+      }
+      console.info(`RNTE_RUNTIME_INITIALIZER_PASS ${bindingNames.length}`);
+    },
+  });
   const uiLayout = runOnUISync(() => {
     'worklet';
+    for (const name of bindingNames) {
+      if (typeof Reflect.get(globalThis, name) !== 'function') throw new Error(`UI runtime missing ${name}`);
+    }
     return measureTextsInRuntime([text], style, options)[0];
   });
   const workerLayout = runOnRuntimeSync(runtime, () => {
