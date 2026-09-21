@@ -71,6 +71,45 @@ testLayoutNextLineVariableWidthSequenceAnchoredToCapHeight
 
 </details>
 
+### Memory
+
+2026-09-21T05:50:04.007Z. iPhone 17 Pro simulator, iOS 26.2 (scale 3). Release build; React Native 0.87.1, Text Engine 0.3.1.
+
+Changes from each pass’s baseline, in KiB: median of three process medians ± median absolute deviation. Each process records five passes after two warm-ups. “Released” is the change remaining after dropping the workload and collecting/draining it; it includes allocator and platform caches and is not a leak measurement.
+
+| Workload | Counter | State | Text Engine |
+| --- | --- | --- | ---: |
+| 128 prepared and laid-out texts | Native heap | Held | 999.8 ± 0.0 |
+| 128 prepared and laid-out texts | Native heap | Released | 0.0 ± 0.0 |
+| 128 prepared and laid-out texts | Process footprint | Held | 0.0 ± 0.0 |
+| 128 prepared and laid-out texts | Process footprint | Released | 0.0 ± 0.0 |
+| 64 independent 80 × 24 glyph fields | Native heap | Held | 332.0 ± 0.0 |
+| 64 independent 80 × 24 glyph fields | Native heap | Released | 0.0 ± 0.0 |
+| 64 independent 80 × 24 glyph fields | Process footprint | Held | 0.0 ± 0.0 |
+| 64 independent 80 × 24 glyph fields | Process footprint | Released | 0.0 ± 0.0 |
+
+Native heap counts malloc allocations in use. Process footprint also reflects non-heap costs such as drawing backing stores; the counters overlap and must not be added.
+
+<details>
+<summary>Memory snapshots (bytes)</summary>
+
+| Workload | Implementation | RN configuration | Run | Counter | Baseline | Held | Released |
+| --- | --- | --- | ---: | --- | --- | --- | --- |
+| prepared_chat | Text Engine | — | 1 | Native heap | 11288608, 11288880, 11288880, 11288880, 11535664 | 12312704, 12312704, 12312704, 12559488, 12559488 | 11288880, 11288880, 11288880, 11535664, 11535664 |
+| prepared_chat | Text Engine | — | 1 | Process footprint | 42655424, 42655424, 42655424, 42655424, 44752640 | 42655424, 42655424, 42655424, 44736256, 44752640 | 42655424, 42655424, 42655424, 44752640, 44736256 |
+| glyph_fields | Text Engine | — | 1 | Native heap | 11742400, 11742400, 11742400, 11742400, 12004544 | 12082368, 12082368, 12082368, 12344512, 12344512 | 11742400, 11742400, 11742400, 12004544, 12004544 |
+| glyph_fields | Text Engine | — | 1 | Process footprint | 46259968, 46259968, 46259968, 46259968, 47685440 | 46259968, 46259968, 46259968, 47701824, 47701824 | 46259968, 46259968, 46259968, 47685440, 47701824 |
+| prepared_chat | Text Engine | — | 2 | Native heap | 10798448, 10798272, 10798272, 11045056, 11045056 | 11822032, 11822032, 12068816, 12068816, 12068816 | 10798272, 10798272, 11045056, 11045056, 11045056 |
+| prepared_chat | Text Engine | — | 2 | Process footprint | 39902720, 39902720, 39919104, 42032704, 42032704 | 39902720, 39902720, 42032704, 42032704, 42032704 | 39902720, 39902720, 42032704, 42032704, 42032704 |
+| glyph_fields | Text Engine | — | 2 | Native heap | 11271760, 11271760, 11271760, 11271760, 11271760 | 11611728, 11611728, 11611728, 11611728, 11611728 | 11271760, 11271760, 11271760, 11271760, 11271760 |
+| glyph_fields | Text Engine | — | 2 | Process footprint | 43490880, 43474496, 43458112, 43458112, 43458112 | 43490880, 43474496, 43458112, 43458112, 43458112 | 43474496, 43458112, 43458112, 43458112, 43458112 |
+| prepared_chat | Text Engine | — | 3 | Native heap | 11122544, 11369600, 11369600, 11369600, 11354240 | 12393424, 12393424, 12393424, 12378064, 12378064 | 11369600, 11369600, 11369600, 11354240, 11354240 |
+| prepared_chat | Text Engine | — | 3 | Process footprint | 39870080, 41918144, 41918144, 41918144, 43589312 | 41918144, 41918144, 41918144, 43589312, 43589312 | 41918144, 41918144, 41918144, 43589312, 43572928 |
+| glyph_fields | Text Engine | — | 3 | Native heap | 11384336, 11384336, 11398672, 11398672, 11398672 | 11724304, 11724304, 11738640, 11738640, 11738640 | 11384336, 11384336, 11398672, 11398672, 11398672 |
+| glyph_fields | Text Engine | — | 3 | Process footprint | 43589312, 43589312, 43589312, 43589312, 43572928 | 43589312, 43589312, 43605696, 43589312, 43572928 | 43589312, 43589312, 43589312, 43572928, 43572928 |
+
+</details>
+
 ## Android
 
 - Recorded September 20, 2026, 21:36–21:42 EDT
@@ -134,5 +173,44 @@ layoutNextLineVariableWidthSequence
 layoutNextLineVariableWidthSequenceAnchoredToCapHeight
 41,555 ns   869 allocs
 ```
+
+</details>
+
+### Memory
+
+2026-09-21T06:00:30.036Z. sdk_gphone64_arm64, Android 14 (API 34, arm64-v8a, density 3). Release build; React Native 0.87.1, Text Engine 0.3.1.
+
+Changes from each pass’s baseline, in KiB: median of three process medians ± median absolute deviation. Each process records five passes after two warm-ups. “Released” is the change remaining after dropping the workload and collecting/draining it; it includes allocator and platform caches and is not a leak measurement.
+
+| Workload | Counter | State | Text Engine |
+| --- | --- | --- | ---: |
+| 128 prepared and laid-out texts | Native heap | Held | 0.2 ± 0.0 |
+| 128 prepared and laid-out texts | Native heap | Released | 0.0 ± 0.0 |
+| 128 prepared and laid-out texts | Managed heap | Held | 44.0 ± 0.0 |
+| 128 prepared and laid-out texts | Managed heap | Released | 0.0 ± 0.0 |
+| 64 independent 80 × 24 glyph fields | Native heap | Held | 42.0 ± 0.0 |
+| 64 independent 80 × 24 glyph fields | Native heap | Released | 0.0 ± 0.0 |
+| 64 independent 80 × 24 glyph fields | Managed heap | Held | 376.0 ± 0.0 |
+| 64 independent 80 × 24 glyph fields | Managed heap | Released | 0.0 ± 0.0 |
+
+Managed heap is sampled after explicit garbage collection, with collection progress checked. Native heap uses the allocator’s allocated-byte counter.
+
+<details>
+<summary>Memory snapshots (bytes)</summary>
+
+| Workload | Implementation | RN configuration | Run | Counter | Baseline | Held | Released |
+| --- | --- | --- | ---: | --- | --- | --- | --- |
+| prepared_chat | Text Engine | — | 1 | Native heap | 16388288, 16442160, 16432432, 16432432, 16432432 | 16388512, 16432656, 16432656, 16432656, 16432720 | 16397792, 16432432, 16432432, 16432432, 16432496 |
+| prepared_chat | Text Engine | — | 1 | Managed heap | 2560080, 2850896, 3097152, 3097152, 3101248 | 2601040, 3142208, 3142208, 3142208, 3146304 | 2617424, 3097152, 3097152, 3097152, 3101248 |
+| glyph_fields | Text Engine | — | 1 | Native heap | 16562896, 16562896, 16562896, 16562896, 16562896 | 16605904, 16605904, 16605904, 16605904, 16605904 | 16562896, 16562896, 16562896, 16562896, 16562896 |
+| glyph_fields | Text Engine | — | 1 | Managed heap | 3105344, 3105344, 3105344, 3109440, 3109440 | 3490368, 3490368, 3494464, 3494464, 3494464 | 3105344, 3105344, 3105344, 3109440, 3109440 |
+| prepared_chat | Text Engine | — | 2 | Native heap | 16387888, 16387888, 16399696, 16431824, 16431824 | 16388112, 16388112, 16432048, 16432048, 16432112 | 16387888, 16387888, 16431824, 16431824, 16431888 |
+| prepared_chat | Text Engine | — | 2 | Managed heap | 2555984, 2560080, 2625616, 3097152, 3097152 | 2601040, 2601040, 3142208, 3142208, 3142208 | 2555984, 2560080, 3097152, 3097152, 3097152 |
+| glyph_fields | Text Engine | — | 2 | Native heap | 16562288, 16562288, 16562288, 16562288, 16562288 | 16605296, 16605296, 16605296, 16605296, 16605296 | 16562288, 16562288, 16562288, 16562288, 16562288 |
+| glyph_fields | Text Engine | — | 2 | Managed heap | 3105344, 3105344, 3105344, 3105344, 3109440 | 3490368, 3490368, 3490368, 3490368, 3494464 | 3105344, 3105344, 3105344, 3105344, 3109440 |
+| prepared_chat | Text Engine | — | 3 | Native heap | 16387840, 16387840, 16387840, 16431904, 16431808 | 16388064, 16388064, 16397456, 16432032, 16432096 | 16387840, 16387840, 16402384, 16431808, 16431872 |
+| prepared_chat | Text Engine | — | 3 | Managed heap | 2555984, 2560080, 2560080, 3101248, 3097152 | 2601040, 2601040, 2650192, 3142208, 3142208 | 2555984, 2560080, 2670672, 3097152, 3097152 |
+| glyph_fields | Text Engine | — | 3 | Native heap | 16562272, 16562272, 16562272, 16562272, 16562272 | 16605280, 16605280, 16605280, 16605280, 16605280 | 16562272, 16562272, 16562272, 16562272, 16562272 |
+| glyph_fields | Text Engine | — | 3 | Managed heap | 3105344, 3105344, 3105344, 3105344, 3109440 | 3490368, 3490368, 3490368, 3494464, 3494464 | 3105344, 3105344, 3105344, 3105344, 3109440 |
 
 </details>

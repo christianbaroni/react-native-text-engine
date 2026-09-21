@@ -11,6 +11,8 @@ import kotlin.math.min
 import org.junit.After
 import org.junit.Before
 import org.junit.Rule
+import org.junit.Assume.assumeTrue
+import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -44,6 +46,40 @@ class RNTextEnginePerformanceBenchmark {
     @After
     fun tearDown() {
         RNTextEngineBindings.cleanup()
+    }
+
+    @Test
+    fun memoryFootprint() {
+        assumeTrue(InstrumentationRegistry.getArguments().getString("rnteMemory") == "true")
+        BenchmarkMemory.validateCounter()
+        var handles = longArrayOf()
+        val prepared = BenchmarkMemory.measure({
+            handles = RNTextEngineBindings.prepareBatch(
+                texts = chatTexts, color = null, fontFamily = null, fontSize = 17.0, fontWeight = "500", fontStyle = null,
+                letterSpacing = 0.1, lineHeight = 24.0, allowFontScaling = false, includeFontPadding = false,
+                tabularNumbers = false, textBreakStrategy = "highQuality",
+            )
+            check(handles.size == 128)
+            RNTextEngineBindings.layoutBatch(handles, 260.0, 0, null, false)
+        }, {
+            RNTextEngineBindings.releaseMany(handles)
+            handles = longArrayOf()
+        })
+        BenchmarkMemory.emit("library", "prepared_chat", "Text Engine", 128, prepared)
+        val glyphHandles = ArrayList<Long>(64)
+        val glyphs = BenchmarkMemory.measure({
+            val state = glyphFieldStates.lowChurn[0]
+            repeat(64) {
+                val handle = createBenchmarkGlyphFieldHandle()
+                glyphHandles.add(handle)
+                RNTextEngineBindings.updateGlyphFieldIndices(handle, state.glyphIndices, state.variantIndices)
+                check(RNTextEngineBindings.getGlyphFieldCellCount(handle) == 1920)
+            }
+        }, {
+            glyphHandles.forEach { RNTextEngineBindings.releaseGlyphField(it) }
+            glyphHandles.clear()
+        })
+        BenchmarkMemory.emit("library", "glyph_fields", "Text Engine", 64, glyphs)
     }
 
     @Test

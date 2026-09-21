@@ -22,18 +22,36 @@ XCODE_ARGS=(
   -scheme example
   -configuration Release
   -destination "id=${DESTINATION_ID}"
-  -derivedDataPath benchmarks/.results/derived-data
+  -derivedDataPath benchmarks/.results/derived-data-memory
   -parallel-testing-enabled NO
   'GCC_PREPROCESSOR_DEFINITIONS=$(inherited) RCT_NEW_ARCH_ENABLED=1'
-  -only-testing:exampleTests/RNTextEngineTextViewComparisonBenchmarks/testTextViewComparisonBenchmarks
 )
 xcodebuild build-for-testing "${XCODE_ARGS[@]}" 2>&1 | tee "${RESULT_DIR}/build.log"
 
 for run in 1 2 3; do
-  TEST_RUNNER_RNTE_BENCHMARK=1 TEST_RUNNER_RNTE_BENCHMARK_RUN="${run}" \
-    xcodebuild test-without-building "${XCODE_ARGS[@]}" \
-      -resultBundlePath "${RESULT_DIR}/run-${run}.xcresult" \
-      2>&1 | tee "${RESULT_DIR}/run-${run}.log"
+  if [[ "${BENCHMARK_MEMORY_ONLY:-0}" != 1 ]]; then
+    TEST_RUNNER_RNTE_BENCHMARK=1 TEST_RUNNER_RNTE_BENCHMARK_RUN="${run}" \
+      xcodebuild test-without-building "${XCODE_ARGS[@]}" \
+        -only-testing:exampleTests/RNTextEngineTextViewComparisonBenchmarks/testTextViewComparisonBenchmarks \
+        -resultBundlePath "${RESULT_DIR}/run-${run}.xcresult" \
+        2>&1 | tee "${RESULT_DIR}/run-${run}.log"
+  fi
+  case "${run}" in
+    1) IMPLEMENTATIONS=(rn textview preparedtextview) ;;
+    2) IMPLEMENTATIONS=(textview preparedtextview rn) ;;
+    3) IMPLEMENTATIONS=(preparedtextview rn textview) ;;
+  esac
+  for implementation in "${IMPLEMENTATIONS[@]}"; do
+    TEST_RUNNER_RNTE_BENCHMARK=1 TEST_RUNNER_RNTE_BENCHMARK_RUN="${run}" TEST_RUNNER_RNTE_MEMORY_IMPLEMENTATION="${implementation}" \
+      xcodebuild test-without-building "${XCODE_ARGS[@]}" \
+        -only-testing:exampleTests/RNTextEngineTextViewComparisonBenchmarks/testTextViewMemory \
+        -resultBundlePath "${RESULT_DIR}/memory-${run}-${implementation}.xcresult" \
+        2>&1 | tee "${RESULT_DIR}/memory-${run}-${implementation}.log"
+  done
 done
 
-"${NODE_BINARY}" --import jiti/register benchmarks/report.mts write "${RESULT_DIR}"
+if [[ "${BENCHMARK_MEMORY_ONLY:-0}" == 1 ]]; then
+  "${NODE_BINARY}" --import jiti/register benchmarks/report.mts memory "${RESULT_DIR}" rn-text
+else
+  "${NODE_BINARY}" --import jiti/register benchmarks/report.mts write "${RESULT_DIR}"
+fi

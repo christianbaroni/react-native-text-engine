@@ -1,6 +1,7 @@
 #import <XCTest/XCTest.h>
 #import <UIKit/UIKit.h>
 #import "RNTextEngineTextViewTestHelpers.h"
+#import "RNTextEngineMemoryBenchmark.h"
 
 #ifdef RCT_NEW_ARCH_ENABLED
 #import "../../../ios/RNTextEngineBindings.h"
@@ -417,7 +418,7 @@ static NSUInteger ValidateDrawingLeaf(UIView *view, NSString *expectedText)
 }
 
 static void MountAndDrawTree(const RootShadowNode &root, Implementation implementation, CGContextRef validationContext = nullptr,
-    const std::vector<std::string> &expectedTexts = {})
+    const std::vector<std::string> &expectedTexts = {}, NSMutableArray<UIView *> *retainedViews = nil)
 {
   @autoreleasepool {
     RCTViewComponentView *parent = [RCTViewComponentView new];
@@ -461,6 +462,7 @@ static void MountAndDrawTree(const RootShadowNode &root, Implementation implemen
         XCTAssertLessThan(inkCount, CGRectGetWidth(expectedBounds) * CGRectGetHeight(expectedBounds));
         XCTAssertTrue(inkFits, @"Mounted text exceeds measured bounds");
       }
+      if (retainedViews) [retainedViews addObject:view];
       [parent unmountChildComponentView:view index:0];
       ++index;
     }
@@ -763,6 +765,70 @@ preparedTextView:(dispatch_block_t)preparedTextView
 }
 
 #endif
+
+- (void)testTextViewMemory
+{
+  NSDictionary *environment = NSProcessInfo.processInfo.environment;
+  XCTSkipIf(![environment[@"RNTE_BENCHMARK"] isEqualToString:@"1"], @"Run with the comparison benchmark runner.");
+#ifndef RCT_NEW_ARCH_ENABLED
+  XCTFail(@"Memory comparison requires Fabric.");
+#else
+  NSString *name = environment[@"RNTE_MEMORY_IMPLEMENTATION"];
+  NSArray<NSString *> *keys = @[@"rn", @"textview", @"preparedtextview"];
+  NSUInteger index = [keys indexOfObject:name];
+  XCTAssertNotEqual(index, NSNotFound);
+  if (index == NSNotFound) return;
+  Implementation implementation = static_cast<Implementation>(index);
+  NSString *label = @[@"RN Text", @"TextView", @"PreparedTextView"][index];
+  dispatch_block_t work = ^{
+    rntextengine::benchmark::ValidateMemoryCounter();
+    const TextStyleFixture style{.fontSize = 17, .letterSpacing = 0.1, .lineHeight = 24, .fontWeight = "500"};
+    auto runtime = facebook::hermes::makeHermesRuntime();
+    rntextengine::install(*runtime);
+    PreparedTextFixture fixture(*runtime, _chatStdTexts, style);
+    for (bool draw : {false, true}) {
+      ComponentDescriptorRegistry::Shared registry;
+      std::shared_ptr<RootShadowNode> root;
+      std::unique_ptr<PreparedHandles> handles;
+      NSMutableArray<UIView *> *views = [NSMutableArray new];
+      std::weak_ptr<RootShadowNode> retiredRoot;
+      __weak UIView *retiredView = nil;
+      auto samples = rntextengine::benchmark::MeasureMemory([&] {
+        registry = BuildComponentDescriptorRegistry();
+        handles = std::make_unique<PreparedHandles>();
+        root = implementation == Implementation::PreparedTextView ? BuildPreparedTextViewTree(registry, fixture, *handles)
+            : implementation == Implementation::TextView ? BuildTextViewTree(registry, _chatStdTexts, style)
+            : BuildRNTextTree(registry, _chatStdTexts, style);
+        XCTAssertTrue(root->layoutIfNeeded());
+        XCTAssertEqual(root->getChildren().size(), 128u);
+        retiredRoot = root;
+        if (draw) {
+          MountAndDrawTree(*root, implementation, nullptr, {}, views);
+          XCTAssertEqual(views.count, 128u);
+          for (NSUInteger index = 0; index < views.count; ++index) {
+            XCTAssertEqual(ValidateDrawingLeaf(views[index], _chatTexts[index]), 1u);
+            if (implementation == Implementation::RNText) XCTAssertEqualObjects(((RCTParagraphComponentView *)views[index]).attributedText.string, _chatTexts[index]);
+          }
+          retiredView = views.firstObject;
+        }
+      }, [&] {
+        [views removeAllObjects];
+        root.reset();
+        registry.reset();
+        handles.reset();
+      }, [&] {
+        if (!root) {
+          XCTAssertTrue(retiredRoot.expired());
+          XCTAssertNil(retiredView);
+        }
+      });
+      rntextengine::benchmark::EmitMemory(@"rn-text", draw ? @"mounted_chat" : @"laid_out_chat", label, 128, samples);
+    }
+  };
+  if (NSThread.isMainThread) work();
+  else dispatch_sync(dispatch_get_main_queue(), work);
+#endif
+}
 
 - (void)testTextViewComparisonBenchmarks
 {

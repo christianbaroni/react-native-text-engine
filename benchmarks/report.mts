@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { copyFileSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
+import { copyFileSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assertRunSucceeded, median, updateResults, type Platform } from './reporting.mts';
+import { renderMemoryResults, updateMemoryResults } from './memory-report.mts';
 
 const implementations = ['RN Text', 'TextView', 'PreparedTextView'] as const;
-type Platform = 'ios' | 'android';
 type Implementation = (typeof implementations)[number];
 type Scenario = {
   label: string;
@@ -86,17 +87,7 @@ const scenarios = new Map(
 
 export function parseRun(log: string, run: number, platform: Platform = 'ios') {
   assert(['ios', 'android'].includes(platform), 'Unknown benchmark platform');
-  if (platform === 'android') {
-    assert.match(log, /^OK \(1 test\)\s*$/m, `Android run ${run} did not pass`);
-    const completion = [...log.matchAll(/^INSTRUMENTATION_CODE: (-?\d+)\s*$/gm)];
-    assert.equal(completion.length, 1, 'Expected one instrumentation completion');
-    assert.equal(completion[0]?.[1], '-1', 'Instrumentation did not finish successfully');
-    assert.doesNotMatch(log, /^INSTRUMENTATION_STATUS_CODE: -\d+\s*$/m, 'Instrumentation reported a failed or skipped test');
-    assert.doesNotMatch(log, /FAILURES!!!|INSTRUMENTATION_FAILED|INSTRUMENTATION_ABORTED/);
-  } else {
-    assert.match(log, /^\*\* TEST(?: EXECUTE)? SUCCEEDED \*\*\s*$/m, `Run ${run} did not complete successfully`);
-    assert.doesNotMatch(log, /^\*\* TEST(?: EXECUTE)? FAILED \*\*\s*$/m, `Run ${run} includes a failed test invocation`);
-  }
+  assertRunSucceeded(log, run, platform);
   const records: Record<string, unknown>[] = [];
   const metadata: Record<string, unknown>[] = [];
   for (const line of log.split(/\r?\n/)) {
@@ -180,14 +171,6 @@ export function parseRun(log: string, run: number, platform: Platform = 'ios') {
   }
   return { ...runMetadata, records: measurements };
 }
-
-const median = (values: number[]): number => {
-  const sorted = [...values].sort((a, b) => a - b);
-  const middle = Math.floor(sorted.length / 2);
-  const upper = sorted[middle];
-  assert(upper !== undefined, 'Cannot summarize empty samples');
-  return sorted.length % 2 ? upper : ((sorted[middle - 1] ?? upper) + upper) / 2;
-};
 
 export function renderComparison(metadata: Record<string, unknown>, logs: string[]) {
   const platform = metadata.platform ?? 'ios';
@@ -320,24 +303,6 @@ export function renderComparison(metadata: Record<string, unknown>, logs: string
   return lines.join('\n');
 }
 
-export function updateResults(path: string, section: string, platform: Platform = 'ios') {
-  assert(['ios', 'android'].includes(platform), 'Unknown benchmark platform');
-  const heading = `## ${platform === 'android' ? 'Android' : 'iOS'}`;
-  assert(section.startsWith(heading + '\n'), 'Report does not match the target platform');
-  const original = readFileSync(path, 'utf8');
-  const headings = [...original.matchAll(/^## .+$/gm)];
-  assert.equal(headings.filter(match => match[0] === heading).length, 1, `Expected one ${heading} section`);
-  const index = headings.findIndex(match => match[0] === heading);
-  const first = headings[index]?.index;
-  assert(first !== undefined);
-  const last = headings[index + 1]?.index ?? original.length;
-  const suffix = original.slice(last);
-  const next = original.slice(0, first) + section.trimEnd() + (suffix ? '\n\n' + suffix : '\n');
-  const temporary = `${path}.tmp`;
-  writeFileSync(temporary, next);
-  renameSync(temporary, path);
-}
-
 function sourceIdentity(platform: Platform) {
   const platformPaths =
     platform === 'android'
@@ -358,8 +323,7 @@ function sourceIdentity(platform: Platform) {
           'examples/ios/Podfile.lock',
           'examples/ios/example/AppDelegate.swift',
           'examples/ios/example.xcodeproj/project.pbxproj',
-          'examples/ios/exampleTests/RNTextEngineTextViewComparisonBenchmarks.mm',
-          'examples/ios/exampleTests/RNTextEngineTextViewTestHelpers.h',
+          'examples/ios/exampleTests',
         ];
   const tracked = execFileSync(
     'git',
@@ -403,8 +367,8 @@ function sourceIdentity(platform: Platform) {
 function main() {
   const [command, directory, option] = process.argv.slice(2);
   assert(
-    directory && command && ['capture', 'artifact', 'write'].includes(command),
-    'Usage: node --import jiti/register benchmarks/report.mts <capture|artifact|write> <run-directory> [platform|apk]'
+    directory && command && ['capture', 'artifact', 'write', 'memory'].includes(command),
+    'Usage: node --import jiti/register benchmarks/report.mts <capture|artifact|write|memory> <run-directory> [platform|apk]'
   );
   const runDirectory = resolve(directory);
   const metadataPath = join(runDirectory, 'metadata.json');
@@ -467,6 +431,12 @@ function main() {
         'Benchmark APK changed during the run'
       );
     }
+    if (command === 'memory') {
+      assert(option === 'library' || option === 'rn-text', 'Choose library or rn-text');
+      const section = renderMemoryResults(metadata, runDirectory, option);
+      updateMemoryResults(join(root, `benchmarks/${option}/results.md`), section, platform);
+      return;
+    }
     const names =
       platform === 'android'
         ? ['default', 'prepared'].flatMap(mode =>
@@ -476,7 +446,7 @@ function main() {
           )
         : [1, 2, 3].map(run => `run-${run}.log`);
     const logs = names.map(name => readFileSync(join(runDirectory, name), 'utf8'));
-    const section = renderComparison(metadata, logs);
+    const section = renderComparison(metadata, logs) + '\n\n' + renderMemoryResults(metadata, runDirectory, 'rn-text');
     updateResults(join(root, 'benchmarks/rn-text/results.md'), section, platform);
     console.log('Updated benchmarks/rn-text/results.md.');
   }

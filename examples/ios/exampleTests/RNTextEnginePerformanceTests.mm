@@ -4,6 +4,8 @@
 
 #import "../../../ios/RNTextEngineBindings.h"
 #import "RNTextEngineTestRuntimeHelpers.h"
+#import "RNTextEngineMemoryBenchmark.h"
+#import <jsi/instrumentation.h>
 
 #import <memory>
 #import <string>
@@ -331,6 +333,19 @@ static NSDictionary *BuildGlyphFixtures(void)
       "  }"
       "  return true;"
       "},"
+      "installMemoryGlyphFields() {"
+      "  globalThis.__memoryGlyphFields = [];"
+      "  const state = GLYPH_LOW[0];"
+      "  for (let index = 0; index < 64; ++index) {"
+      "    const handle = __RNTextEngineCreateGlyphField(GLYPH_CONFIG);"
+      "    globalThis.__memoryGlyphFields.push(handle);"
+      "    __RNTextEngineUpdateGlyphFieldIndices(handle, state.glyphIndices, state.variantIndices);"
+      "  }"
+      "},"
+      "releaseMemoryGlyphFields() {"
+      "  globalThis.__memoryGlyphFields.forEach(handle => __RNTextEngineReleaseGlyphField(handle));"
+      "  globalThis.__memoryGlyphFields = null;"
+      "},"
       "installGlyphIndexFieldLowChurn() {"
       "  if (globalThis.__glyphIndexFieldLow) __RNTextEngineReleaseGlyphField(globalThis.__glyphIndexFieldLow);"
       "  globalThis.__glyphIndexFieldLow = __RNTextEngineCreateGlyphField(GLYPH_CONFIG);"
@@ -442,6 +457,23 @@ static NSDictionary *BuildGlyphFixtures(void)
                       [self evaluateSource:teardown];
                     }
                   }];
+}
+
+- (void)testMemoryFootprint
+{
+  XCTSkipIf(![NSProcessInfo.processInfo.environment[@"RNTE_BENCHMARK"] isEqualToString:@"1"], @"Run with the library benchmark runner.");
+  rntextengine::benchmark::ValidateMemoryCounter();
+  auto collect = [&] { _runtime->instrumentation().collectGarbage("Memory benchmark"); };
+  auto prepared = rntextengine::benchmark::MeasureMemory([&] {
+    [self evaluateSource:"__perf.installChatLayoutHandles(); __perf.layoutChatBatch(1)"];
+    XCTAssertEqual([self evaluateSource:"__chatHandles.length"].asNumber(), 128);
+  }, [&] { [self evaluateSource:"__perf.releaseChatLayoutHandles()"]; }, collect);
+  rntextengine::benchmark::EmitMemory(@"library", @"prepared_chat", @"Text Engine", 128, prepared);
+  auto glyphs = rntextengine::benchmark::MeasureMemory([&] {
+    [self evaluateSource:"__perf.installMemoryGlyphFields()"];
+    XCTAssertEqual([self evaluateSource:"__memoryGlyphFields.length"].asNumber(), 64);
+  }, [&] { [self evaluateSource:"__perf.releaseMemoryGlyphFields()"]; }, collect);
+  rntextengine::benchmark::EmitMemory(@"library", @"glyph_fields", @"Text Engine", 64, glyphs);
 }
 
 - (void)testPreparedBatchCreateChatLifecycle

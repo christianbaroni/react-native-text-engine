@@ -27,6 +27,7 @@
 
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstring>
@@ -784,6 +785,83 @@ std::string RunFirstDraw(jni::alias_ref<jobject> receiver,
   return output.str();
 }
 
+std::string RunMemory(jni::alias_ref<jobject> receiver,
+    const jni::global_ref<jobject> &fabricManager, float density, bool prepared, Implementation implementation) {
+  Require(ReactNativeFeatureFlags::enablePreparedTextLayout() == prepared, "RN prepared mode does not match the memory request");
+  Require(!ReactNativeFeatureFlags::disableTextLayoutManagerCacheAndroid() &&
+      ReactNativeFeatureFlags::preparedTextCacheSize() == 200, "RN layout cache defaults changed");
+  auto capture = receiver->getClass()->getMethod<jni::JArrayLong::javaobject()>("captureMemory");
+  auto drop = receiver->getClass()->getMethod<void()>("releaseMemoryViews");
+  auto mount = receiver->getClass()->getMethod<void(jint, ReadableNativeMap::javaobject,
+      StateWrapper::javaobject, jint, jint, jstring)>("mountMemoryAndDraw");
+  auto snapshot = [&] {
+    std::array<jlong, 2> values{};
+    capture(receiver)->getRegion(0, values.size(), values.data());
+    return values;
+  };
+  {
+    constexpr size_t bytes = 8 * 1024 * 1024;
+    auto baseline = snapshot();
+    auto allocation = std::make_unique<uint8_t[]>(bytes);
+    volatile uint8_t *pages = allocation.get();
+    for (size_t index = 0; index < bytes; index += 4096) pages[index] = 1;
+    auto retained = snapshot();
+    Require(retained[0] >= baseline[0] + bytes, "Native memory counter did not track a retained allocation");
+  }
+  auto writeSnapshot = [](std::ostream &out, const std::array<jlong, 2> &value) {
+    out << "{\"nativeHeapBytes\":" << value[0] << ",\"managedHeapBytes\":" << value[1] << '}';
+  };
+  const auto texts = ChatTexts();
+  const TextStyleFixture style{.fontSize = 16, .letterSpacing = 0.1, .lineHeight = 24, .fontWeight = "700"};
+  std::ostringstream output;
+  output << '[';
+  for (bool draw : {false, true}) {
+    if (draw) output << ',';
+    output << "{\"scenario\":\"" << (draw ? "mounted_chat" : "laid_out_chat") << "\",\"samples\":[";
+    for (int pass = -2; pass < 5; ++pass) {
+      auto baseline = snapshot();
+      std::array<jlong, 2> retained{};
+      std::weak_ptr<RootShadowNode> retiredRoot;
+      {
+        auto registry = BuildBenchmarkComponentDescriptorRegistry(fabricManager);
+        PreparedHandles handles;
+        auto root = implementation == Implementation::PreparedTextView
+            ? BuildPreparedTextViewTree(registry, texts, style, density, handles)
+            : implementation == Implementation::TextView ? BuildTextViewTree(registry, texts, style, density)
+                                                       : BuildRNTextTree(registry, texts, style, density);
+        Require(root->layoutIfNeeded() && root->getChildren().size() == 128, "Memory tree must contain 128 laid-out paragraphs");
+        retiredRoot = root;
+        if (draw) {
+          for (size_t index = 0; index < root->getChildren().size(); ++index) {
+            const auto &node = static_cast<const LayoutableShadowNode &>(*root->getChildren()[index]);
+            auto props = ReadableNativeMap::newObjectCxxArgs(node.getProps()->getDiffProps(nullptr));
+            auto state = StateWrapperImpl::newObjectJavaArgs();
+            jni::cthis(state)->setState(node.getState());
+            const auto &metrics = node.getLayoutMetrics();
+            auto expected = pass == -2 ? jni::make_jstring(texts[index]) : nullptr;
+            mount(receiver, static_cast<jint>(implementation), props.get(), state.get(),
+                std::round(metrics.frame.size.width * density), std::round(metrics.frame.size.height * density), expected.get());
+          }
+        }
+        retained = snapshot();
+        drop(receiver);
+      }
+      Require(retiredRoot.expired(), "Memory workload retained its released tree");
+      auto released = snapshot();
+      if (pass >= 0) {
+        if (pass) output << ',';
+        output << "{\"baseline\":"; writeSnapshot(output, baseline);
+        output << ",\"retained\":"; writeSnapshot(output, retained);
+        output << ",\"released\":"; writeSnapshot(output, released);
+        output << '}';
+      }
+    }
+    output << "]}";
+  }
+  output << ']';
+  return output.str();
+}
+
 } // namespace
 
 extern "C" JNIEXPORT jstring JNICALL
@@ -812,6 +890,18 @@ Java_com_rntextengine_RNTextEngineTextComparisonBenchmark_runNativeFirstDraw(
     JNIEnv *env, jobject receiver, jobject manager, jfloat density, jint implementation) {
   try {
     return env->NewStringUTF(RunFirstDraw(jni::wrap_alias(receiver), jni::make_global(manager), density, static_cast<Implementation>(implementation)).c_str());
+  } catch (const std::exception &error) {
+    env->ThrowNew(env->FindClass("java/lang/RuntimeException"), error.what());
+    return nullptr;
+  }
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_rntextengine_RNTextEngineTextComparisonBenchmark_runNativeMemory(
+    JNIEnv *env, jobject receiver, jobject manager, jfloat density, jboolean prepared, jint implementation) {
+  try {
+    return env->NewStringUTF(RunMemory(jni::wrap_alias(receiver), jni::make_global(manager), density, prepared,
+        static_cast<Implementation>(implementation)).c_str());
   } catch (const std::exception &error) {
     env->ThrowNew(env->FindClass("java/lang/RuntimeException"), error.what());
     return nullptr;

@@ -48,16 +48,25 @@ for run in 1 2 3; do
       3) IMPLEMENTATIONS=(preparedtextview rn textview) ;;
     esac
     for implementation in "${IMPLEMENTATIONS[@]}"; do
-      adb shell am force-stop com.rntextengine.test
-      adb shell am instrument -w -r \
-        -e class com.rntextengine.RNTextEngineTextComparisonBenchmark#compareTextLayout \
-        -e rnteComparison true -e rnteRun "${run}" -e rntePreparedTextLayout "${PREPARED}" \
-        -e rnteImplementation "${implementation}" \
-        com.rntextengine.test/androidx.test.runner.AndroidJUnitRunner \
-        2>&1 | tee "${RESULT_DIR}/run-${run}-${mode}-${implementation}.log"
-      grep -qx 'OK (1 test)' "${RESULT_DIR}/run-${run}-${mode}-${implementation}.log"
-      grep -qx 'INSTRUMENTATION_CODE: -1' "${RESULT_DIR}/run-${run}-${mode}-${implementation}.log"
+      for kind in run memory; do
+        if [[ "${kind}" == run && "${BENCHMARK_MEMORY_ONLY:-0}" == 1 ]]; then continue; fi
+        MEMORY=false
+        if [[ "${kind}" == memory ]]; then MEMORY=true; fi
+        adb shell am force-stop com.rntextengine.test
+        adb shell am instrument -w -r \
+          -e class com.rntextengine.RNTextEngineTextComparisonBenchmark#compareTextLayout \
+          -e rnteComparison true -e rnteRun "${run}" -e rntePreparedTextLayout "${PREPARED}" \
+          -e rnteImplementation "${implementation}" -e rnteMemory "${MEMORY}" \
+          com.rntextengine.test/androidx.test.runner.AndroidJUnitRunner \
+          2>&1 | tee "${RESULT_DIR}/${kind}-${run}-${mode}-${implementation}.log"
+        grep -qx 'OK (1 test)' "${RESULT_DIR}/${kind}-${run}-${mode}-${implementation}.log"
+        grep -qx 'INSTRUMENTATION_CODE: -1' "${RESULT_DIR}/${kind}-${run}-${mode}-${implementation}.log"
+      done
     done
   done
 done
-"${NODE_BINARY}" --import jiti/register benchmarks/report.mts write "${RESULT_DIR}"
+if [[ "${BENCHMARK_MEMORY_ONLY:-0}" == 1 ]]; then
+  "${NODE_BINARY}" --import jiti/register benchmarks/report.mts memory "${RESULT_DIR}" rn-text
+else
+  "${NODE_BINARY}" --import jiti/register benchmarks/report.mts write "${RESULT_DIR}"
+fi

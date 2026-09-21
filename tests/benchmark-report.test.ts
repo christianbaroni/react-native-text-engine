@@ -4,7 +4,8 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it, onTestFinished } from 'vitest';
-import { parseRun, renderComparison, updateResults } from '../benchmarks/report.mts';
+import { parseRun, renderComparison } from '../benchmarks/report.mts';
+import { updateResults } from '../benchmarks/reporting.mts';
 
 type Platform = 'ios' | 'android';
 

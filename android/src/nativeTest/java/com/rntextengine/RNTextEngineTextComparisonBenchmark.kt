@@ -43,6 +43,27 @@ class RNTextEngineTextComparisonBenchmark {
     private external fun runNativeComparison(manager: FabricUIManager, density: Float, prepared: Boolean, implementation: Int): String
     private external fun runNativeFirstDraw(manager: FabricUIManager, density: Float, implementation: Int): String
 
+    private external fun runNativeMemory(manager: FabricUIManager, density: Float, prepared: Boolean, implementation: Int): String
+    private var retainingViews = false
+    private val retainedDrops = ArrayList<() -> Unit>(128)
+    private fun captureMemory(): LongArray {
+        // Allow queued view work to finish before collecting and sampling.
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+        return BenchmarkMemory.snapshot()
+    }
+    private fun releaseMemoryViews() {
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            check(retainedDrops.size == 128 || retainedDrops.isEmpty())
+            retainedDrops.forEach { it() }
+            retainedDrops.clear()
+        }
+    }
+    private fun mountMemoryAndDraw(implementation: Int, props: ReadableNativeMap, state: StateWrapper, width: Int, height: Int, expectedText: String?) {
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            mountAndDraw(implementation, props, state, width, height, expectedText)
+        }
+    }
+
     private lateinit var textManager: ViewManager<*, *>
     private val engineManager = RNTextEngineTextViewManager()
     private val preparedManager = RNTextEnginePreparedTextViewManager()
@@ -97,8 +118,15 @@ class RNTextEngineTextComparisonBenchmark {
                 check(right <= width && bottom <= height) { "Mounted text exceeds measured bounds: $right,$bottom vs $width,$height" }
             }
         } finally {
-            state.destroyState()
-            manager.onDropViewInstance(view)
+            if (retainingViews) {
+                retainedDrops.add {
+                    state.destroyState()
+                    manager.onDropViewInstance(view)
+                }
+            } else {
+                state.destroyState()
+                manager.onDropViewInstance(view)
+            }
         }
     }
 
@@ -141,6 +169,30 @@ class RNTextEngineTextComparisonBenchmark {
         }
         try {
             val density = application.resources.displayMetrics.density
+            if (arguments.getString("rnteMemory") == "true") {
+                instrumentation.runOnMainSync {
+                    val pixels = (320 * density).roundToInt()
+                    bitmap = Bitmap.createBitmap(pixels, pixels, Bitmap.Config.ARGB_8888)
+                    canvas = Canvas(bitmap)
+                }
+                BenchmarkMemory.validateCounter()
+                retainingViews = true
+                try {
+                    val memory = JSONArray(runNativeMemory(manager, density, prepared, implementation))
+                    check(memory.length() == 2)
+                    for (index in 0 until memory.length()) {
+                        val result = memory.getJSONObject(index)
+                        BenchmarkMemory.emit("rn-text", result.getString("scenario"),
+                            listOf("RN Text", "TextView", "PreparedTextView")[implementation], 128,
+                            result.getJSONArray("samples"), prepared)
+                    }
+                } finally {
+                    releaseMemoryViews()
+                    retainingViews = false
+                    bitmap.recycle()
+                }
+                return
+            }
             // Native validation precedes all timing; an exception prevents result emission.
             val measurementChecksum = checkNativeMeasurement()
             val results = JSONArray(runNativeComparison(manager, density, prepared, implementation))

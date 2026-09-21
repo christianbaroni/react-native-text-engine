@@ -3,14 +3,46 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
-if ! adb devices | awk 'NR > 1 && $2 == "device" { found = 1 } END { exit found ? 0 : 1 }'; then
-  echo "No Android device or emulator is connected. Start one before running Android performance benchmarks." >&2
-  exit 1
+NODE_BINARY="${NODE_BINARY:-$(command -v node)}"
+export NODE_BINARY
+if [[ -z "${ANDROID_SERIAL:-}" ]]; then
+  DEVICES=($(adb devices | awk 'NR > 1 && $2 == "device" { print $1 }'))
+  if [[ ${#DEVICES[@]} -ne 1 ]]; then
+    echo "Connect one Android device, or set ANDROID_SERIAL to select one." >&2
+    exit 1
+  fi
+  export ANDROID_SERIAL="${DEVICES[0]}"
 fi
+
+ABI="$(adb shell getprop ro.product.cpu.abi | tr -d '\r')"
+case "${ABI}" in
+  arm64-v8a|armeabi-v7a|x86|x86_64) ;;
+  *) echo "Unsupported Android ABI: ${ABI}" >&2; exit 1 ;;
+esac
 
 mkdir -p "${ROOT_DIR}/benchmarks/.results"
 RESULT_DIR="$(mktemp -d "${ROOT_DIR}/benchmarks/.results/android-calibration-$(date -u +%Y%m%dT%H%M%SZ)-XXXXXX")"
-cd "${ROOT_DIR}/examples/android"
-./gradlew :react-native-text-engine:connectedReleaseAndroidTest \
-  -Pandroid.testInstrumentationRunnerArguments.class=com.rntextengine.RNTextEnginePerformanceBenchmark \
-  2>&1 | tee "${RESULT_DIR}/gradle.log"
+cd "${ROOT_DIR}"
+"${NODE_BINARY}" --import jiti/register benchmarks/report.mts capture "${RESULT_DIR}" android
+(
+  cd examples/android
+  if [[ "${BENCHMARK_MEMORY_ONLY:-0}" == 1 ]]; then
+    ./gradlew :react-native-text-engine:assembleReleaseAndroidTest "-PreactNativeArchitectures=${ABI}"
+  else
+    ./gradlew :react-native-text-engine:connectedReleaseAndroidTest "-PreactNativeArchitectures=${ABI}" \
+      -Pandroid.testInstrumentationRunnerArguments.class=com.rntextengine.RNTextEnginePerformanceBenchmark
+  fi
+) 2>&1 | tee "${RESULT_DIR}/gradle.log"
+"${NODE_BINARY}" --import jiti/register benchmarks/report.mts artifact "${RESULT_DIR}" \
+  android/build/outputs/apk/androidTest/release/react-native-text-engine-release-androidTest.apk
+adb install -r -t "${RESULT_DIR}/benchmark.apk" | tee "${RESULT_DIR}/install.log"
+adb shell cmd package compile -m speed -f com.rntextengine.test | tee "${RESULT_DIR}/compilation.log"
+for run in 1 2 3; do
+  adb shell am force-stop com.rntextengine.test
+  adb shell am instrument -w -r \
+    -e class com.rntextengine.RNTextEnginePerformanceBenchmark#memoryFootprint \
+    -e rnteMemory true -e rnteRun "${run}" \
+    com.rntextengine.test/androidx.benchmark.junit4.AndroidBenchmarkRunner \
+    2>&1 | tee "${RESULT_DIR}/memory-${run}.log"
+done
+"${NODE_BINARY}" --import jiti/register benchmarks/report.mts memory "${RESULT_DIR}" library

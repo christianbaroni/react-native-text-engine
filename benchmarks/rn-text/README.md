@@ -1,6 +1,6 @@
 # TextView and PreparedTextView vs React Native Text
 
-This benchmark compares native layout, mounting, and first drawing in TextView, PreparedTextView, and React Native's `Text` on iOS and Android. It also compares TextView and RN Text measurement. Each platform uses the same text, styles, and widths across implementations. [View results](results.md).
+This benchmark compares native layout, mounting, first drawing, and held/released memory in TextView, PreparedTextView, and React Native's `Text` on iOS and Android. It also compares TextView and RN Text measurement. Each platform uses the same text, styles, and widths across implementations. [View results](results.md).
 
 ## Run
 
@@ -12,7 +12,7 @@ yarn perf:compare:ios
 yarn perf:compare:android
 ```
 
-Each command builds the tests in Release. iOS runs three separate processes. Android runs each implementation in three separate processes with the default RN layout and three with `enablePreparedTextLayout`. Implementation order rotates between repetitions; Android configuration order alternates. Android runs 18 processes in total. It updates its platform’s section in [results.md](results.md) after all required runs pass. A failed run leaves the existing results unchanged.
+Each command builds the tests in Release. iOS runs three separate processes. Android runs each implementation in three separate processes with the default RN layout and three with `enablePreparedTextLayout`. Implementation order rotates between repetitions; Android configuration order alternates. The timing runs use 18 Android processes in total. Memory adds nine isolated processes on iOS and 18 on Android, with the same order rotation and Android flag configurations. The runner updates its platform’s section in [results.md](results.md) after all required timing and memory runs pass. `BENCHMARK_MEMORY_ONLY=1` runs only memory and preserves the existing timing results. A failed run leaves the existing results unchanged.
 
 Set `IOS_DESTINATION_ID` to select an iOS simulator or connected physical device by UDID, or `ANDROID_SERIAL` to select an Android device. Xcode selects the iOS SDK from the destination. Physical iOS devices must be unlocked, have Developer Mode enabled, and have signing configured for the example and test targets in Xcode. The test installs the example app on the selected device.
 
@@ -50,6 +50,12 @@ On iOS, all three implementations include object release and autorelease-pool cl
 Before timing, the test checks every measured text and width combination, including truncation, inline styles, and natural-height labels. Mounted views must contain the expected text and produce nonblank text within their measured bounds; iOS also checks that the drawing layers have backing stores at the device scale. Heights and Fabric frames must agree within one device pixel. Android also checks line breaks and single-line glyph widths. Widths must fit their constraints: React Native can report the full container width for wrapped text, while TextView reports the width used by the glyphs.
 
 Each results table shows the median of its three run medians, with median absolute deviation to show variation between runs. All recorded samples are available below the table.
+
+## Memory workloads
+
+The memory comparison retains 128 laid-out paragraph nodes, then separately measures the same population with 128 drawn native views also held alive. Both include their layout managers and caches. PreparedTextView includes all caller-owned preparation handles. Views are created through the same props/state path as the first-draw timing; the held iOS views retain their drawn backing stores. Android draws into the same shared software canvas as its timing workload, allocated before the baseline.
+
+The workload releases views, trees, registries, and public handles before the released snapshot. Memory is measured in separate processes so collection and heap residency do not affect the timing passes. See the [counter definitions and sampling method](../README.md#memory).
 
 ## Android prepared layout
 
