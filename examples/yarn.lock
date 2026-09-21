@@ -1882,7 +1882,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@babel/preset-typescript@npm:^7.28.5":
+"@babel/preset-typescript@npm:^7.25.2, @babel/preset-typescript@npm:^7.28.5":
   version: 7.29.7
   resolution: "@babel/preset-typescript@npm:7.29.7"
   dependencies:
@@ -3102,7 +3102,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@types/babel__core@npm:^7.1.14":
+"@types/babel__core@npm:^7.1.14, @types/babel__core@npm:^7.20.5":
   version: 7.20.5
   resolution: "@types/babel__core@npm:7.20.5"
   dependencies:
@@ -4763,16 +4763,19 @@ __metadata:
   dependencies:
     "@babel/core": "npm:^7.25.2"
     "@babel/preset-env": "npm:^7.25.3"
+    "@babel/preset-typescript": "npm:^7.25.2"
     "@babel/runtime": "npm:^7.25.0"
     "@callstack/liquid-glass": "npm:^0.8.2"
     "@react-native-community/cli": "npm:20.2.0"
     "@react-native-community/cli-platform-android": "npm:20.2.0"
     "@react-native-community/cli-platform-ios": "npm:20.2.0"
+    "@react-native-community/cli-types": "npm:20.2.0"
     "@react-native/babel-preset": "npm:0.87.1"
     "@react-native/jest-preset": "npm:0.87.1"
     "@react-native/metro-config": "npm:0.87.1"
     "@react-native/typescript-config": "npm:0.87.1"
     "@storesjs/stores": "npm:0.8.7"
+    "@types/babel__core": "npm:^7.20.5"
     "@types/jest": "npm:^29.5.13"
     "@types/react": "npm:^19.2.0"
     "@types/react-test-renderer": "npm:^19.1.0"
@@ -7565,6 +7568,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "react-native-text-engine@portal:..::locator=example%40workspace%3A."
   dependencies:
+    "@types/babel__core": "npm:^7.20.5"
     jiti: "npm:^2.6.1"
   peerDependencies:
     react: ">=18.2.0"

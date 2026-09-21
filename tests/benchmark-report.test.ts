@@ -1,9 +1,10 @@
 // @vitest-environment node
+import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it, onTestFinished } from 'vitest';
-import { parseRun, renderComparison, updateResults } from '../benchmarks/report.mjs';
+import { parseRun, renderComparison, updateResults } from '../benchmarks/report.mts';
 
 type Platform = 'ios' | 'android';
 
@@ -128,7 +129,9 @@ it.each<Platform>(['ios', 'android'])('requires both 200-key rows with exact ope
     const index = lines.findIndex(line => line.includes(`"scenario":"${scenario}"`));
     expect(index).toBeGreaterThanOrEqual(0);
     expect(() => parseRun(lines.filter((_, i) => i !== index).join('\n'), 1, platform)).toThrow('Incomplete comparison');
-    lines[index] = lines[index].replace(`"operations":${platform === 'android' ? 1600 : 25600}`, '"operations":200');
+    const line = lines[index];
+    assert(line);
+    lines[index] = line.replace(`"operations":${platform === 'android' ? 1600 : 25600}`, '"operations":200');
     expect(() => parseRun(lines.join('\n'), 1, platform)).toThrow('Incorrect operation count');
   }
 });
@@ -139,7 +142,9 @@ it.each<Platform>(['ios', 'android'])('requires exactly the applicable PreparedT
   const lines = log.split('\n');
   const firstPrepared = lines.findIndex(line => line.startsWith('RNTEXT_BENCHMARK_RESULT ') && line.includes('"PreparedTextView"'));
   expect(() => parseRun(lines.filter((_, index) => index !== firstPrepared).join('\n'), 1, platform)).toThrow('Incomplete comparison');
-  lines[firstPrepared] = lines[firstPrepared].replace('fabric_chat_shadow_tree_layout', 'cold_uniform_chat_layout');
+  const first = lines[firstPrepared];
+  assert(first);
+  lines[firstPrepared] = first.replace('fabric_chat_shadow_tree_layout', 'cold_uniform_chat_layout');
   expect(() => parseRun(lines.join('\n'), 1, platform)).toThrow('Unsupported comparison');
 });
 

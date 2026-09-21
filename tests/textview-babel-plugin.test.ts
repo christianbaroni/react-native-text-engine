@@ -1,16 +1,8 @@
 import { transformSync } from '@babel/core';
 import * as fs from 'node:fs';
-import { createRequire } from 'node:module';
 import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import textViewBabelPlugin from '../scripts/babel-plugin-textview.cjs';
-
-const require = createRequire(import.meta.url);
-
-type BabelConfig = {
-  plugins?: unknown[];
-  presets?: unknown[];
-};
+import textViewBabelPlugin from '../lib/babel-plugin/babel-plugin-textview.cjs';
 
 function transform(code: string): string {
   const result = transformSync(code, {
@@ -28,31 +20,14 @@ function transform(code: string): string {
 
 function transformFileWithExamplesBabelConfig(relativeFilePath: string): string {
   const filename = path.resolve(relativeFilePath);
-  const { plugins, presets } = loadBabelConfig(path.resolve('examples/babel.config.js'));
   const result = transformSync(fs.readFileSync(filename, 'utf8'), {
     babelrc: false,
-    configFile: false,
+    configFile: path.resolve('examples/babel.config.cts'),
     cwd: path.resolve('examples'),
     filename,
-    plugins,
-    presets,
   });
 
   return result?.code ?? '';
-}
-
-function loadBabelConfig(configPath: string): Required<BabelConfig> {
-  const loaded = require(configPath);
-  if (!isRecordLike(loaded)) return { plugins: [], presets: [] };
-
-  return {
-    plugins: Array.isArray(loaded.plugins) ? loaded.plugins : [],
-    presets: Array.isArray(loaded.presets) ? loaded.presets : [],
-  };
-}
-
-function isRecordLike(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 describe('TextView Babel plugin', () => {
@@ -96,6 +71,16 @@ describe('TextView Babel plugin', () => {
     expect(output).toContain('coerceTextViewText as _rnteCoerceTextViewText');
     expect(output).toContain('<TextView text={_rnteCoerceTextViewText(count)}></TextView>');
     expect(output).not.toContain('normalizeTextViewChildren');
+  });
+
+  it('rejects JSX spread children', () => {
+    expect(() =>
+      transform(`
+      import { TextView } from 'react-native-text-engine';
+      const content = ['one', 'two'];
+      export const Demo = () => <TextView>{...content}</TextView>;
+    `)
+    ).toThrow('spread children are not supported in TextView');
   });
 
   it('rewrites aliased and namespace TextView imports too', () => {

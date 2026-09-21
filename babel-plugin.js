@@ -1,1 +1,1 @@
-module.exports = require('./scripts/babel-plugin-textview.cjs');
+module.exports = require('./lib/babel-plugin/babel-plugin-textview.cjs');

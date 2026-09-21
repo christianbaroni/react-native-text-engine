@@ -6,9 +6,45 @@ import os from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+const implementations = ['RN Text', 'TextView', 'PreparedTextView'] as const;
+type Platform = 'ios' | 'android';
+type Implementation = (typeof implementations)[number];
+type Scenario = {
+  label: string;
+  operations: number;
+  androidOperations?: number;
+};
+type ScenarioGroup = {
+  label: string;
+  implementations: readonly Implementation[];
+  scenarios: [string, Scenario][];
+};
+
+type RunMetadata = {
+  run: number;
+  pid: number;
+  deviceName: string;
+  osVersion: string;
+} & (
+  | { platform: 'ios'; sdk: string }
+  | {
+      platform: 'android';
+      implementation: Implementation;
+      enablePreparedTextLayout: boolean;
+      apiLevel: number;
+      density: number;
+      abi: string;
+    }
+);
+type Measurement = {
+  scenario: string;
+  implementation: Implementation;
+  operations: number;
+  samplesMs: number[];
+};
+
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const implementations = ['RN Text', 'TextView', 'PreparedTextView'];
-const scenarioGroups = [
+const scenarioGroups: ScenarioGroup[] = [
   {
     label: 'Component lifecycle',
     implementations,
@@ -48,115 +84,141 @@ const scenarios = new Map(
   )
 );
 
-export function parseRun(log, run, platform = 'ios') {
+export function parseRun(log: string, run: number, platform: Platform = 'ios') {
   assert(['ios', 'android'].includes(platform), 'Unknown benchmark platform');
   if (platform === 'android') {
     assert.match(log, /^OK \(1 test\)\s*$/m, `Android run ${run} did not pass`);
     const completion = [...log.matchAll(/^INSTRUMENTATION_CODE: (-?\d+)\s*$/gm)];
     assert.equal(completion.length, 1, 'Expected one instrumentation completion');
-    assert.equal(completion[0][1], '-1', 'Instrumentation did not finish successfully');
+    assert.equal(completion[0]?.[1], '-1', 'Instrumentation did not finish successfully');
     assert.doesNotMatch(log, /^INSTRUMENTATION_STATUS_CODE: -\d+\s*$/m, 'Instrumentation reported a failed or skipped test');
     assert.doesNotMatch(log, /FAILURES!!!|INSTRUMENTATION_FAILED|INSTRUMENTATION_ABORTED/);
   } else {
     assert.match(log, /^\*\* TEST(?: EXECUTE)? SUCCEEDED \*\*\s*$/m, `Run ${run} did not complete successfully`);
     assert.doesNotMatch(log, /^\*\* TEST(?: EXECUTE)? FAILED \*\*\s*$/m, `Run ${run} includes a failed test invocation`);
   }
-  const records = [];
-  const metadata = [];
+  const records: Record<string, unknown>[] = [];
+  const metadata: Record<string, unknown>[] = [];
   for (const line of log.split(/\r?\n/)) {
-    for (const [prefix, target] of [
+    const targets: [string, Record<string, unknown>[]][] = [
       ['RNTEXT_BENCHMARK_META ', metadata],
       ['RNTEXT_BENCHMARK_RESULT ', records],
-    ]) {
+    ];
+    for (const [prefix, target] of targets) {
       const index = line.indexOf(prefix);
-      if (index >= 0) target.push(JSON.parse(line.slice(index + prefix.length)));
+      if (index >= 0) target.push(parseObject(line.slice(index + prefix.length)));
     }
   }
   assert.equal(metadata.length, 1, `Run ${run} must have one metadata record`);
   const meta = metadata[0];
+  assert(meta);
   assert.equal(meta.run, run);
   assert.equal(meta.configuration, 'Release');
   assert.equal(meta.host, 'native-only');
   assert.equal(meta.geometryValidated, true);
   assert.equal(meta.warmups, platform === 'android' ? 10 : 2);
   assert.equal(meta.samples, 9);
-  if (platform === 'ios') {
-    assert.equal(meta.includesAutoreleasePoolDrain, true);
-    assert.match(meta.sdk, /^(iphoneos|iphonesimulator)\d+(\.\d+)*$/, 'Missing iOS build SDK');
-  } else {
-    assert.equal(meta.platform, 'android');
-    assert(implementations.includes(meta.implementation), 'Missing isolated implementation');
-    assert.equal(typeof meta.enablePreparedTextLayout, 'boolean');
-    assert.equal(meta.disableTextLayoutManagerCacheAndroid, false);
-    assert.equal(meta.preparedTextCacheSize, 200);
-    assert(Number.isInteger(meta.apiLevel) && meta.apiLevel > 0);
-    assert(Number.isFinite(meta.density) && meta.density > 0);
-    assert(typeof meta.abi === 'string' && meta.abi.length > 0);
-  }
-  assert(Number.isInteger(meta.pid) && meta.pid > 0, 'Missing test process identity');
+  assert(typeof meta.pid === 'number' && Number.isInteger(meta.pid) && meta.pid > 0, 'Missing test process identity');
   assert(typeof meta.deviceName === 'string' && meta.deviceName.trim().length > 0 && meta.deviceName !== 'unknown');
   assert(typeof meta.osVersion === 'string' && meta.osVersion.trim().length > 0 && meta.osVersion !== 'unknown');
+  const common = { run, pid: meta.pid, deviceName: meta.deviceName, osVersion: meta.osVersion };
+  let runMetadata: RunMetadata;
+  if (platform === 'ios') {
+    assert.equal(meta.includesAutoreleasePoolDrain, true);
+    assert(typeof meta.sdk === 'string');
+    assert.match(meta.sdk, /^(iphoneos|iphonesimulator)\d+(\.\d+)*$/, 'Missing iOS build SDK');
+    runMetadata = { ...common, platform, sdk: meta.sdk };
+  } else {
+    assert.equal(meta.platform, 'android');
+    assertImplementation(meta.implementation);
+    assert(typeof meta.enablePreparedTextLayout === 'boolean');
+    assert.equal(meta.disableTextLayoutManagerCacheAndroid, false);
+    assert.equal(meta.preparedTextCacheSize, 200);
+    assert(typeof meta.apiLevel === 'number' && Number.isInteger(meta.apiLevel) && meta.apiLevel > 0);
+    assert(typeof meta.density === 'number' && Number.isFinite(meta.density) && meta.density > 0);
+    assert(typeof meta.abi === 'string' && meta.abi.length > 0);
+    runMetadata = {
+      ...common,
+      platform,
+      implementation: meta.implementation,
+      enablePreparedTextLayout: meta.enablePreparedTextLayout,
+      apiLevel: meta.apiLevel,
+      density: meta.density,
+      abi: meta.abi,
+    };
+  }
   const expectedCount = [...scenarios.values()].reduce(
     (count, scenario) =>
-      count + (platform === 'android' ? Number(scenario.implementations.includes(meta.implementation)) : scenario.implementations.length),
+      count +
+      (runMetadata.platform === 'android'
+        ? Number(scenario.implementations.includes(runMetadata.implementation))
+        : scenario.implementations.length),
     0
   );
   assert.equal(records.length, expectedCount, 'Incomplete comparison');
-  const seen = new Set();
+  const seen = new Set<string>();
+  const measurements: Measurement[] = [];
   for (const record of records) {
-    assert(scenarios.has(record.scenario), `Unknown scenario: ${record.scenario}`);
-    assert(implementations.includes(record.implementation), 'Unknown implementation');
+    assert(typeof record.scenario === 'string');
+    const scenario = scenarios.get(record.scenario);
+    assert(scenario, `Unknown scenario: ${record.scenario}`);
+    assertImplementation(record.implementation);
     if (platform === 'android') assert.equal(record.implementation, meta.implementation, 'Mixed implementations in one process');
     const key = `${record.scenario}/${record.implementation}`;
     assert(!seen.has(key), `Duplicate result: ${key}`);
     seen.add(key);
-    const scenario = scenarios.get(record.scenario);
     assert(scenario.implementations.includes(record.implementation), `Unsupported comparison: ${key}`);
     const operations = platform === 'android' ? (scenario.androidOperations ?? scenario.operations) : scenario.operations;
     assert.equal(record.operations, operations, `Incorrect operation count: ${key}`);
     assert(Array.isArray(record.samplesMs) && record.samplesMs.length === 9, `Incomplete samples: ${key}`);
+    const samples: unknown[] = record.samplesMs;
     assert(
-      record.samplesMs.every(value => Number.isFinite(value) && value > 0),
+      samples.every((value): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0),
       `Invalid duration: ${key}`
     );
+    measurements.push({ scenario: record.scenario, implementation: record.implementation, operations, samplesMs: samples });
   }
-  return { meta, records };
+  return { ...runMetadata, records: measurements };
 }
 
-const median = values => {
+const median = (values: number[]): number => {
   const sorted = [...values].sort((a, b) => a - b);
   const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+  const upper = sorted[middle];
+  assert(upper !== undefined, 'Cannot summarize empty samples');
+  return sorted.length % 2 ? upper : ((sorted[middle - 1] ?? upper) + upper) / 2;
 };
 
-export function renderComparison(metadata, logs) {
+export function renderComparison(metadata: Record<string, unknown>, logs: string[]) {
   const platform = metadata.platform ?? 'ios';
+  assertPlatform(platform);
   assert.equal(logs.length, platform === 'android' ? 18 : 3, 'Three fresh processes per implementation and configuration are required');
   const runs = logs.map((log, index) => parseRun(log, (index % 3) + 1, platform));
-  assert.equal(new Set(runs.map(run => run.meta.pid)).size, runs.length, 'Each run must use a fresh process');
-  assert.equal(new Set(runs.map(run => `${run.meta.deviceName}/${run.meta.osVersion}`)).size, 1, 'Runs used different devices');
+  assert.equal(new Set(runs.map(run => run.pid)).size, runs.length, 'Each run must use a fresh process');
+  assert.equal(new Set(runs.map(run => `${run.deviceName}/${run.osVersion}`)).size, 1, 'Runs used different devices');
   if (platform === 'android') {
-    assert.equal(
-      new Set(runs.map(run => `${run.meta.apiLevel}/${run.meta.abi}/${run.meta.density}`)).size,
-      1,
-      'Android configuration changed'
-    );
+    const androidRuns = runs.filter(run => run.platform === 'android');
+    assert.equal(new Set(androidRuns.map(run => `${run.apiLevel}/${run.abi}/${run.density}`)).size, 1, 'Android configuration changed');
     for (const prepared of [false, true]) {
       for (const implementation of implementations) {
         assert.deepEqual(
-          runs
-            .filter(run => run.meta.enablePreparedTextLayout === prepared && run.meta.implementation === implementation)
-            .map(run => run.meta.run),
+          androidRuns.filter(run => run.enablePreparedTextLayout === prepared && run.implementation === implementation).map(run => run.run),
           [1, 2, 3],
           'Each Android implementation and configuration requires runs 1, 2, and 3'
         );
       }
     }
     assert.equal(metadata.compilation, 'speed');
+    assert(typeof metadata.apkSha256 === 'string');
     assert.match(metadata.apkSha256, /^[a-f0-9]{64}$/);
   } else {
-    assert.equal(new Set(runs.map(run => run.meta.sdk)).size, 1, 'iOS build SDK changed');
+    const iosRuns = runs.filter(run => run.platform === 'ios');
+    assert.equal(new Set(iosRuns.map(run => run.sdk)).size, 1, 'iOS build SDK changed');
+    assert(typeof metadata.xcode === 'string');
   }
+  assert(typeof metadata.startedAt === 'string');
+  const first = runs[0];
+  assert(first);
   const date = new Date(metadata.startedAt).toLocaleDateString('en-US', {
     year: 'numeric',
     month: 'long',
@@ -166,14 +228,14 @@ export function renderComparison(metadata, logs) {
   const lines = [
     `## ${platform === 'android' ? 'Android' : 'iOS'}`,
     '',
-    platform === 'android'
-      ? `${date}. ${runs[0].meta.deviceName}, Android ${runs[0].meta.osVersion} (API ${runs[0].meta.apiLevel}). React Native ${metadata.reactNativeVersion}, Text Engine ${metadata.textEngineVersion}, Release build.`
-      : `${date}. ${runs[0].meta.deviceName}${runs[0].meta.sdk.startsWith('iphonesimulator') ? ' simulator' : ''}, iOS ${runs[0].meta.osVersion}. React Native ${metadata.reactNativeVersion}, Text Engine ${metadata.textEngineVersion}, Release build.`,
+    first.platform === 'android'
+      ? `${date}. ${first.deviceName}, Android ${first.osVersion} (API ${first.apiLevel}). React Native ${metadata.reactNativeVersion}, Text Engine ${metadata.textEngineVersion}, Release build.`
+      : `${date}. ${first.deviceName}${first.sdk.startsWith('iphonesimulator') ? ' simulator' : ''}, iOS ${first.osVersion}. React Native ${metadata.reactNativeVersion}, Text Engine ${metadata.textEngineVersion}, Release build.`,
     '',
   ];
   const configurations = platform === 'android' ? [false, true] : [false];
   for (const prepared of configurations) {
-    const group = platform === 'android' ? runs.filter(run => run.meta.enablePreparedTextLayout === prepared) : runs;
+    const group = runs.filter(run => run.platform === 'ios' || run.enablePreparedTextLayout === prepared);
     if (platform === 'android') lines.push(`### RN Text${prepared ? ' with prepared layout' : ' with default layout'}`, '');
     for (const scenarioGroup of scenarioGroups) {
       const names = scenarioGroup.implementations;
@@ -191,17 +253,21 @@ export function renderComparison(metadata, logs) {
       for (const [scenario, definition] of scenarioGroup.scenarios) {
         const operations = platform === 'android' ? (definition.androidOperations ?? definition.operations) : definition.operations;
         const stats = names.map(implementation => {
-          const implementationRuns = platform === 'android' ? group.filter(run => run.meta.implementation === implementation) : group;
-          const values = implementationRuns.map(run =>
-            median(run.records.find(record => record.scenario === scenario && record.implementation === implementation).samplesMs)
-          );
+          const implementationRuns = group.filter(run => run.platform === 'ios' || run.implementation === implementation);
+          const values = implementationRuns.map(run => {
+            const record = run.records.find(record => record.scenario === scenario && record.implementation === implementation);
+            assert(record, `Missing ${scenario}/${implementation}`);
+            return median(record.samplesMs);
+          });
           const value = median(values);
           return { median: value, mad: median(values.map(sample => Math.abs(sample - value))) };
         });
+        const baseline = stats[0];
+        assert(baseline);
         lines.push(
           `| ${definition.label} | ${operations.toLocaleString('en-US')} | ${stats.map(stat => `${stat.median.toFixed(3)} ± ${stat.mad.toFixed(3)}`).join(' | ')} | ${stats
             .slice(1)
-            .map(stat => `${(stat.median / stats[0].median).toFixed(3)}×`)
+            .map(stat => `${(stat.median / baseline.median).toFixed(3)}×`)
             .join(' | ')} |`
         );
       }
@@ -220,14 +286,14 @@ export function renderComparison(metadata, logs) {
     '',
     `- Started: ${metadata.startedAt}`,
     `- Host: ${metadata.cpu}, ${metadata.hostOS ?? `macOS ${metadata.macos}`}, ${metadata.architecture}`,
-    ...(platform === 'android'
+    ...(first.platform === 'android'
       ? [
-          `- Device: ${runs[0].meta.abi}, density ${runs[0].meta.density}; ART compilation: ${metadata.compilation}`,
+          `- Device: ${first.abi}, density ${first.density}; ART compilation: ${metadata.compilation}`,
           '- RN defaults: measurement cache 1,024 entries; prepared layout cache 200 entries. Repeated-query workloads visit either 200 or 768 text/width combinations.',
           `- Toolchain: ${metadata.java}; Gradle ${metadata.gradle}; Node ${metadata.node}`,
           `- APK SHA256: \`${metadata.apkSha256}\``,
         ]
-      : [`- Toolchain: ${metadata.xcode.replaceAll('\n', ' / ')}; SDK ${runs[0].meta.sdk}; Node ${metadata.node}`]),
+      : [`- Toolchain: ${String(metadata.xcode).replaceAll('\n', ' / ')}; SDK ${first.sdk}; Node ${metadata.node}`]),
     `- Git HEAD: \`${metadata.revision}\``,
     `- Source checksum (SHA256): \`${metadata.sourceHash}\``,
     '',
@@ -242,9 +308,10 @@ export function renderComparison(metadata, logs) {
       runs.forEach(run => {
         const record = run.records.find(item => item.scenario === scenario && item.implementation === implementation);
         if (!record) return;
-        const configuration = platform === 'android' ? `${run.meta.enablePreparedTextLayout ? 'Prepared' : 'Default'} | ` : '';
+        const configuration =
+          platform === 'android' ? `${run.platform === 'android' && run.enablePreparedTextLayout ? 'Prepared' : 'Default'} | ` : '';
         lines.push(
-          `| ${label} | ${implementation} | ${configuration}${run.meta.run} | ${record.samplesMs.map(value => value.toFixed(6)).join(', ')} |`
+          `| ${label} | ${implementation} | ${configuration}${run.run} | ${record.samplesMs.map(value => value.toFixed(6)).join(', ')} |`
         );
       });
     }
@@ -253,7 +320,7 @@ export function renderComparison(metadata, logs) {
   return lines.join('\n');
 }
 
-export function updateResults(path, section, platform = 'ios') {
+export function updateResults(path: string, section: string, platform: Platform = 'ios') {
   assert(['ios', 'android'].includes(platform), 'Unknown benchmark platform');
   const heading = `## ${platform === 'android' ? 'Android' : 'iOS'}`;
   assert(section.startsWith(heading + '\n'), 'Report does not match the target platform');
@@ -261,7 +328,8 @@ export function updateResults(path, section, platform = 'ios') {
   const headings = [...original.matchAll(/^## .+$/gm)];
   assert.equal(headings.filter(match => match[0] === heading).length, 1, `Expected one ${heading} section`);
   const index = headings.findIndex(match => match[0] === heading);
-  const first = headings[index].index;
+  const first = headings[index]?.index;
+  assert(first !== undefined);
   const last = headings[index + 1]?.index ?? original.length;
   const suffix = original.slice(last);
   const next = original.slice(0, first) + section.trimEnd() + (suffix ? '\n\n' + suffix : '\n');
@@ -270,7 +338,7 @@ export function updateResults(path, section, platform = 'ios') {
   renameSync(temporary, path);
 }
 
-function sourceIdentity(platform) {
+function sourceIdentity(platform: Platform) {
   const platformPaths =
     platform === 'android'
       ? [
@@ -316,7 +384,7 @@ function sourceIdentity(platform) {
   const paths = new Set([
     ...tracked,
     ...readdirSync(join(root, 'benchmarks'))
-      .filter(name => /\.(mjs|sh)$/.test(name))
+      .filter(name => /\.(mts|sh)$/.test(name))
       .map(name => `benchmarks/${name}`),
   ]);
   const hash = createHash('sha256');
@@ -335,42 +403,43 @@ function sourceIdentity(platform) {
 function main() {
   const [command, directory, option] = process.argv.slice(2);
   assert(
-    directory && ['capture', 'artifact', 'write'].includes(command),
-    'Usage: node benchmarks/report.mjs <capture|artifact|write> <run-directory> [platform|apk]'
+    directory && command && ['capture', 'artifact', 'write'].includes(command),
+    'Usage: node --import jiti/register benchmarks/report.mts <capture|artifact|write> <run-directory> [platform|apk]'
   );
   const runDirectory = resolve(directory);
   const metadataPath = join(runDirectory, 'metadata.json');
   if (command === 'capture') {
     const platform = option ?? 'ios';
-    assert(['ios', 'android'].includes(platform), 'Unknown benchmark platform');
-    const read = (command, args) => execFileSync(command, args, { encoding: 'utf8' }).trim();
+    assertPlatform(platform);
+    const read = (command: string, args: string[]) => execFileSync(command, args, { encoding: 'utf8' }).trim();
     const metadata = {
       ...sourceIdentity(platform),
       platform,
       startedAt: new Date().toISOString(),
       relativeRunDirectory: relative(join(root, 'benchmarks'), runDirectory),
-      reactNativeVersion: JSON.parse(readFileSync(join(root, 'examples/node_modules/react-native/package.json'), 'utf8')).version,
-      textEngineVersion: JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version,
+      reactNativeVersion: parseObject(readFileSync(join(root, 'examples/node_modules/react-native/package.json'), 'utf8')).version,
+      textEngineVersion: parseObject(readFileSync(join(root, 'package.json'), 'utf8')).version,
       hostOS: os.type() + ' ' + os.release(),
       ...(platform === 'android'
         ? {
             java: read(process.env.JAVA_HOME ? join(process.env.JAVA_HOME, 'bin/java') : 'java', ['--version']).split('\n')[0],
             gradle: readFileSync(join(root, 'examples/android/gradle/wrapper/gradle-wrapper.properties'), 'utf8').match(
               /gradle-([\d.]+)-/
-            )[1],
+            )?.[1],
             compilation: 'speed',
           }
         : {
             xcode: read('xcodebuild', ['-version']),
           }),
-      cpu: os.cpus()[0].model,
+      cpu: os.cpus()[0]?.model,
       architecture: os.arch(),
       node: process.version,
     };
     writeFileSync(metadataPath, JSON.stringify(metadata, null, 2) + '\n');
   } else {
-    const metadata = JSON.parse(readFileSync(metadataPath, 'utf8'));
+    const metadata = parseObject(readFileSync(metadataPath, 'utf8'));
     const platform = metadata.platform ?? 'ios';
+    assertPlatform(platform);
     const current = sourceIdentity(platform);
     assert.equal(current.revision, metadata.revision, 'Git revision changed during the benchmark');
     assert.equal(current.sourceHash, metadata.sourceHash, 'Benchmark inputs changed during the run');
@@ -413,11 +482,32 @@ function main() {
   }
 }
 
+function parseObject(json: string): Record<string, unknown> {
+  const value: unknown = JSON.parse(json);
+  assert(isRecord(value), 'Expected a JSON object');
+  return value;
+}
+
+function assertPlatform(value: unknown): asserts value is Platform {
+  assert(value === 'ios' || value === 'android', 'Unknown benchmark platform');
+}
+
+function assertImplementation(value: unknown): asserts value is Implementation {
+  assert(
+    implementations.some(implementation => implementation === value),
+    'Unknown implementation'
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     main();
   } catch (error) {
-    console.error(error.message);
+    console.error(error instanceof Error ? error.message : error);
     process.exitCode = 1;
   }
 }

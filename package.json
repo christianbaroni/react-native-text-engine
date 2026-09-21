@@ -32,8 +32,8 @@
     },
     "./package.json": "./package.json",
     "./babel-plugin": {
-      "types": "./scripts/babel-plugin-textview.d.cts",
-      "default": "./scripts/babel-plugin-textview.cjs"
+      "types": "./lib/babel-plugin/babel-plugin-textview.d.cts",
+      "default": "./lib/babel-plugin/babel-plugin-textview.cjs"
     }
   },
   "files": [
@@ -47,8 +47,8 @@
     "LICENSE",
     "scripts",
     "babel-plugin.js",
-    "config.js",
-    "worklets.js",
+    "config.ts",
+    "worklets.ts",
     "*.podspec",
     "!lib/typescript/example",
     "!ios/build",
@@ -67,24 +67,25 @@
   ],
   "scripts": {
     "typescript": "tsc --noEmit",
-    "clean:src-artifacts": "node ./scripts/clean-source-artifacts.mjs",
+    "clean:src-artifacts": "node --import jiti/register ./scripts/clean-source-artifacts.mts",
     "test:android": "cd examples/android && ./gradlew :react-native-text-engine:connectedReleaseAndroidTest -PrnteNativeTests=true -Pandroid.testInstrumentationRunnerArguments.class=com.rntextengine.RNTextEngineBindingsInstrumentedTest,com.rntextengine.RNTextEngineTextViewTest",
-    "test:ts": "yarn clean:src-artifacts && node ./scripts/sync-text-engine-config.mjs && vitest run --config vitest.config.ts && tsc -p tsconfig.vitest.json --noEmit",
+    "test:ts": "yarn clean:src-artifacts && node ./scripts/sync-text-engine-config.mjs && yarn build:babel-plugin && vitest run --config vitest.config.ts && tsc -p tsconfig.vitest.json --noEmit",
     "perf:android": "./benchmarks/run-android.sh",
     "perf:ios": "./benchmarks/run-ios.sh",
     "perf:compare:android": "./benchmarks/run-android-comparison.sh",
     "perf:compare:ios": "./benchmarks/run-ios-comparison.sh",
     "lint": "yarn lint:eslint && yarn lint:prettier",
-    "lint:eslint": "eslint . --ext .ts,.tsx",
+    "lint:eslint": "eslint . --ext .ts,.tsx,.mts,.cts",
     "lint:prettier": "prettier --check .",
     "format": "prettier --write --log-level warn --ignore-path .prettierignore .",
     "format:check": "prettier --check .",
     "sync-config": "node ./scripts/sync-text-engine-config.mjs",
     "prepare": "yarn build",
     "clean": "del-cli lib && yarn clean:src-artifacts",
+    "build:babel-plugin": "tsc -p tsconfig.babel-plugin.json",
     "build:js": "bob build",
     "build:types": "yarn exec tsc -p tsconfig.build.json --declaration --emitDeclarationOnly --outDir lib/typescript",
-    "build": "yarn clean:src-artifacts && node ./scripts/sync-text-engine-config.mjs && yarn build:js && yarn build:types",
+    "build": "yarn clean:src-artifacts && node ./scripts/sync-text-engine-config.mjs && yarn build:babel-plugin && yarn build:js && yarn build:types",
     "prepack": "yarn build"
   },
   "keywords": [
@@ -120,6 +121,7 @@
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
+    "@babel/preset-typescript": "^7.25.2",
     "@react-native/metro-config": "0.87.1",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/react": "^16.3.0",
@@ -168,6 +170,7 @@
     }
   },
   "dependencies": {
+    "@types/babel__core": "^7.20.5",
     "jiti": "^2.6.1"
   }
 }

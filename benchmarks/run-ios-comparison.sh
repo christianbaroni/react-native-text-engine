@@ -15,7 +15,7 @@ mkdir -p benchmarks/.results
 RESULT_DIR="$(mktemp -d "${ROOT_DIR}/benchmarks/.results/ios-comparison-$(date -u +%Y%m%dT%H%M%SZ)-XXXXXX")"
 export NODE_BINARY
 export RCT_NEW_ARCH_ENABLED=1
-"${NODE_BINARY}" benchmarks/report.mjs capture "${RESULT_DIR}"
+"${NODE_BINARY}" --import jiti/register benchmarks/report.mts capture "${RESULT_DIR}"
 
 XCODE_ARGS=(
   -workspace examples/ios/example.xcworkspace
@@ -36,4 +36,4 @@ for run in 1 2 3; do
       2>&1 | tee "${RESULT_DIR}/run-${run}.log"
 done
 
-"${NODE_BINARY}" benchmarks/report.mjs write "${RESULT_DIR}"
+"${NODE_BINARY}" --import jiti/register benchmarks/report.mts write "${RESULT_DIR}"

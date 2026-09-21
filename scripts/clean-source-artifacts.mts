@@ -5,7 +5,7 @@ const packageRoot = process.cwd();
 const sourceRoot = path.join(packageRoot, 'src');
 const removableExtensions = new Set(['.js', '.jsx', '.map']);
 
-function removeGeneratedSourceArtifacts(directory) {
+function removeGeneratedSourceArtifacts(directory: string) {
   const entries = fs.readdirSync(directory, { withFileTypes: true });
 
   for (const entry of entries) {

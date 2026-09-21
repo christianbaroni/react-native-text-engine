@@ -21,13 +21,13 @@ esac
 cd "${ROOT_DIR}"
 mkdir -p benchmarks/.results
 RESULT_DIR="$(mktemp -d "${ROOT_DIR}/benchmarks/.results/android-comparison-$(date -u +%Y%m%dT%H%M%SZ)-XXXXXX")"
-"${NODE_BINARY}" benchmarks/report.mjs capture "${RESULT_DIR}" android
+"${NODE_BINARY}" --import jiti/register benchmarks/report.mts capture "${RESULT_DIR}" android
 (
   cd examples/android
   ./gradlew :react-native-text-engine:assembleReleaseAndroidTest \
     -PrnteNativeTests=true "-PreactNativeArchitectures=${ABI}"
 ) 2>&1 | tee "${RESULT_DIR}/build.log"
-"${NODE_BINARY}" benchmarks/report.mjs artifact "${RESULT_DIR}" \
+"${NODE_BINARY}" --import jiti/register benchmarks/report.mts artifact "${RESULT_DIR}" \
   android/build/outputs/apk/androidTest/release/react-native-text-engine-release-androidTest.apk
 adb install -r -t "${RESULT_DIR}/benchmark.apk" | tee "${RESULT_DIR}/install.log"
 adb shell cmd package compile -m speed -f com.rntextengine.test | tee "${RESULT_DIR}/compilation.log"
@@ -60,4 +60,4 @@ for run in 1 2 3; do
     done
   done
 done
-"${NODE_BINARY}" benchmarks/report.mjs write "${RESULT_DIR}"
+"${NODE_BINARY}" --import jiti/register benchmarks/report.mts write "${RESULT_DIR}"

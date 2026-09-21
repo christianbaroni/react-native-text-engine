@@ -1,20 +1,34 @@
-'use strict';
+import type { NodePath, PluginObj, PluginPass, types as t } from '@babel/core';
+
+type BabelTypes = typeof t;
+type ElementPath = NodePath<t.JSXElement>;
+type ElementName = t.JSXOpeningElement['name'];
+type ImportSpecifier = t.ImportDeclaration['specifiers'][number];
+type Binding = ReturnType<ElementPath['scope']['getBinding']>;
+type Annotation = t.TSType | t.FlowType | t.Noop | null | undefined;
+
+interface TextViewPass extends PluginPass {
+  textViewNames: Set<string>;
+  textViewNamespaces: Set<string>;
+  normalizeChildrenHelperName: string | null;
+  coerceTextHelperName: string | null;
+}
 
 const PACKAGE_NAME = 'react-native-text-engine';
 const NORMALIZE_HELPER_IMPORT = 'normalizeTextViewChildren';
 const COERCE_TEXT_HELPER_IMPORT = 'coerceTextViewText';
 
-function isImportedTextView(specifier) {
+function isImportedTextView(specifier: ImportSpecifier) {
   return specifier.type === 'ImportSpecifier' && specifier.imported.type === 'Identifier' && specifier.imported.name === 'TextView';
 }
 
-function isTypeOnlyImport(specifier, declaration) {
+function isTypeOnlyImport(specifier: ImportSpecifier, declaration: t.ImportDeclaration) {
   const declarationImportKind = declaration.importKind ?? 'value';
-  const specifierImportKind = specifier.importKind ?? declarationImportKind;
+  const specifierImportKind = (specifier.type === 'ImportSpecifier' ? specifier.importKind : null) ?? declarationImportKind;
   return declarationImportKind === 'type' || specifierImportKind === 'type';
 }
 
-function matchesTextViewElement(node, state) {
+function matchesTextViewElement(node: ElementName, state: TextViewPass) {
   if (node.type === 'JSXIdentifier') return state.textViewNames.has(node.name);
 
   return (
@@ -26,7 +40,7 @@ function matchesTextViewElement(node, state) {
   );
 }
 
-function jsxNameToExpression(t, node) {
+function jsxNameToExpression(t: BabelTypes, node: ElementName): t.Identifier | t.MemberExpression {
   if (node.type === 'JSXIdentifier') {
     return t.identifier(node.name);
   }
@@ -38,11 +52,19 @@ function jsxNameToExpression(t, node) {
   throw new Error('RNTextEngine: unsupported JSX element name for TextView child transform.');
 }
 
-function ensureHelperImport(t, path, state, importName, stateField, localNamePrefix) {
+function ensureHelperImport(
+  t: BabelTypes,
+  path: ElementPath,
+  state: TextViewPass,
+  importName: string,
+  stateField: 'normalizeChildrenHelperName' | 'coerceTextHelperName',
+  localNamePrefix: string
+) {
   if (state[stateField] != null) return t.identifier(state[stateField]);
 
   const programPath = path.findParent(parent => parent.isProgram());
   const localName = path.scope.generateUidIdentifier(localNamePrefix).name;
+  if (!programPath?.isProgram()) throw new Error('RNTextEngine: TextView transform requires a program scope.');
   programPath.unshiftContainer(
     'body',
     t.importDeclaration([t.importSpecifier(t.identifier(localName), t.identifier(importName))], t.stringLiteral(PACKAGE_NAME))
@@ -51,19 +73,19 @@ function ensureHelperImport(t, path, state, importName, stateField, localNamePre
   return t.identifier(localName);
 }
 
-function ensureNormalizeHelperImport(t, path, state) {
+function ensureNormalizeHelperImport(t: BabelTypes, path: ElementPath, state: TextViewPass) {
   return ensureHelperImport(t, path, state, NORMALIZE_HELPER_IMPORT, 'normalizeChildrenHelperName', 'rnteNormalizeTextViewChildren');
 }
 
-function ensureCoerceTextHelperImport(t, path, state) {
+function ensureCoerceTextHelperImport(t: BabelTypes, path: ElementPath, state: TextViewPass) {
   return ensureHelperImport(t, path, state, COERCE_TEXT_HELPER_IMPORT, 'coerceTextHelperName', 'rnteCoerceTextViewText');
 }
 
-function isStringCallExpression(t, node) {
+function isStringCallExpression(t: BabelTypes, node: t.Node) {
   return t.isCallExpression(node) && t.isIdentifier(node.callee, { name: 'String' }) && node.arguments.length === 1;
 }
 
-function unwrapExpression(t, node) {
+function unwrapExpression(t: BabelTypes, node: t.Node) {
   let next = node;
   while (true) {
     if (t.isTSAsExpression(next) || t.isTSSatisfiesExpression(next) || t.isTSTypeAssertion(next) || t.isParenthesizedExpression(next)) {
@@ -74,11 +96,11 @@ function unwrapExpression(t, node) {
   }
 }
 
-function isChildrenIdentifier(t, node) {
+function isChildrenIdentifier(t: BabelTypes, node: t.Node) {
   return t.isIdentifier(node, { name: 'children' });
 }
 
-function isChildrenMemberExpression(t, node) {
+function isChildrenMemberExpression(t: BabelTypes, node: t.Node) {
   if (t.isMemberExpression(node) && !node.computed) {
     return t.isIdentifier(node.property, { name: 'children' });
   }
@@ -88,7 +110,7 @@ function isChildrenMemberExpression(t, node) {
   return false;
 }
 
-function isTextLikeTypeAnnotation(t, node) {
+function isTextLikeTypeAnnotation(t: BabelTypes, node: Annotation): boolean {
   if (node == null) return false;
 
   if (
@@ -126,7 +148,7 @@ function isTextLikeTypeAnnotation(t, node) {
   return false;
 }
 
-function isReactNodeTypeAnnotation(t, node) {
+function isReactNodeTypeAnnotation(t: BabelTypes, node: Annotation): boolean {
   if (node == null) return false;
   if (t.isTSArrayType(node) || (typeof t.isTSTupleType === 'function' && t.isTSTupleType(node))) return true;
 
@@ -148,8 +170,8 @@ function isReactNodeTypeAnnotation(t, node) {
   return ['ReactNode', 'ReactElement', 'Element'].includes(node.typeName.right.name);
 }
 
-function findObjectPatternPropertyTypeAnnotation(t, pattern, name) {
-  const patternAnnotation = pattern.typeAnnotation?.typeAnnotation;
+function findObjectPatternPropertyTypeAnnotation(t: BabelTypes, pattern: t.ObjectPattern, name: string) {
+  const patternAnnotation = t.isTSTypeAnnotation(pattern.typeAnnotation) ? pattern.typeAnnotation.typeAnnotation : null;
   if (!t.isTSTypeLiteral(patternAnnotation)) return null;
 
   for (const member of patternAnnotation.members) {
@@ -161,12 +183,12 @@ function findObjectPatternPropertyTypeAnnotation(t, pattern, name) {
   return null;
 }
 
-function getBindingTypeAnnotation(t, binding, name) {
+function getBindingTypeAnnotation(t: BabelTypes, binding: Binding, name: string) {
   if (binding == null) return null;
 
   if (binding.path.isVariableDeclarator()) {
     const { id, init } = binding.path.node;
-    if (t.isIdentifier(id, { name }) && id.typeAnnotation != null) {
+    if (t.isIdentifier(id, { name }) && (t.isTSTypeAnnotation(id.typeAnnotation) || t.isTypeAnnotation(id.typeAnnotation))) {
       return id.typeAnnotation.typeAnnotation;
     }
     if (t.isObjectPattern(id)) {
@@ -179,7 +201,10 @@ function getBindingTypeAnnotation(t, binding, name) {
     return null;
   }
 
-  if (binding.path.isIdentifier() && binding.identifier.typeAnnotation != null) {
+  if (
+    binding.path.isIdentifier() &&
+    (t.isTSTypeAnnotation(binding.identifier.typeAnnotation) || t.isTypeAnnotation(binding.identifier.typeAnnotation))
+  ) {
     return binding.identifier.typeAnnotation.typeAnnotation;
   }
 
@@ -189,7 +214,7 @@ function getBindingTypeAnnotation(t, binding, name) {
 
   if (binding.path.isAssignmentPattern()) {
     const left = binding.path.node.left;
-    if (t.isIdentifier(left, { name }) && left.typeAnnotation != null) {
+    if (t.isIdentifier(left, { name }) && (t.isTSTypeAnnotation(left.typeAnnotation) || t.isTypeAnnotation(left.typeAnnotation))) {
       return left.typeAnnotation.typeAnnotation;
     }
   }
@@ -197,7 +222,7 @@ function getBindingTypeAnnotation(t, binding, name) {
   return null;
 }
 
-function getExpressionTypeAnnotation(t, path, node) {
+function getExpressionTypeAnnotation(t: BabelTypes, path: ElementPath, node: t.Node) {
   if (t.isTSAsExpression(node) || t.isTSSatisfiesExpression(node) || t.isTSTypeAssertion(node)) {
     return node.typeAnnotation;
   }
@@ -207,7 +232,7 @@ function getExpressionTypeAnnotation(t, path, node) {
   return getBindingTypeAnnotation(t, path.scope.getBinding(expression.name), expression.name);
 }
 
-function hasNestedReactNodeSyntax(t, node) {
+function hasNestedReactNodeSyntax(t: BabelTypes, node: t.Node): boolean {
   const expression = unwrapExpression(t, node);
 
   if (t.isJSXElement(expression) || t.isJSXFragment(expression) || t.isArrayExpression(expression)) {
@@ -229,7 +254,7 @@ function hasNestedReactNodeSyntax(t, node) {
   return false;
 }
 
-function canLowerExpressionToText(t, path, node) {
+function canLowerExpressionToText(t: BabelTypes, path: ElementPath, node: t.Node): boolean {
   const expression = unwrapExpression(t, node);
   if (hasNestedReactNodeSyntax(t, expression)) return false;
   if (isChildrenIdentifier(t, expression) || isChildrenMemberExpression(t, expression)) return false;
@@ -275,24 +300,33 @@ function canLowerExpressionToText(t, path, node) {
   return false;
 }
 
-function buildNormalizeChildrenCall(t, path, state, renderedChildren) {
+function buildChildren(t: BabelTypes, node: t.JSXElement | t.JSXFragment): t.Expression[] {
+  const children = t.react.buildChildren(node);
+  if (!children.every(child => !t.isJSXSpreadChild(child))) {
+    throw new Error('RNTextEngine: spread children are not supported in TextView.');
+  }
+  return children;
+}
+
+function buildNormalizeChildrenCall(t: BabelTypes, path: ElementPath, state: TextViewPass, renderedChildren: t.Expression[]) {
   const normalizeHelper = ensureNormalizeHelperImport(t, path, state);
   const componentExpression = jsxNameToExpression(t, path.node.openingElement.name);
+  const first = renderedChildren[0];
   const sourceNode =
-    renderedChildren.length === 1
-      ? t.cloneNode(renderedChildren[0], true)
+    renderedChildren.length === 1 && first
+      ? t.cloneNode(first, true)
       : t.arrayExpression(renderedChildren.map(child => t.cloneNode(child, true)));
 
   return t.callExpression(normalizeHelper, [sourceNode, componentExpression]);
 }
 
-function buildCoerceTextCall(t, path, state, node) {
+function buildCoerceTextCall(t: BabelTypes, path: ElementPath, state: TextViewPass, node: t.Expression) {
   const coerceHelper = ensureCoerceTextHelperImport(t, path, state);
   return t.callExpression(coerceHelper, [t.cloneNode(node, true)]);
 }
 
-function buildTextExpression(t, path, state, children) {
-  const parts = [];
+function buildTextExpression(t: BabelTypes, path: ElementPath, state: TextViewPass, children: t.Expression[]): t.Expression | null {
+  const parts: t.Expression[] = [];
 
   for (const child of children) {
     if (t.isStringLiteral(child)) {
@@ -316,17 +350,10 @@ function buildTextExpression(t, path, state, children) {
     parts.push(buildCoerceTextCall(t, path, state, child));
   }
 
-  if (parts.length === 0) return null;
-  if (parts.length === 1) return parts[0];
-
-  let expression = parts[0];
-  for (let index = 1; index < parts.length; index += 1) {
-    expression = t.binaryExpression('+', expression, parts[index]);
-  }
-  return expression;
+  return parts.length === 0 ? null : parts.reduce((left, right) => t.binaryExpression('+', left, right));
 }
 
-function buildTextChildElement(t, elementName, textExpression) {
+function buildTextChildElement(t: BabelTypes, elementName: ElementName, textExpression: t.Expression) {
   const attribute = t.jsxAttribute(
     t.jsxIdentifier('text'),
     t.isStringLiteral(textExpression) ? textExpression : t.jsxExpressionContainer(textExpression)
@@ -335,9 +362,15 @@ function buildTextChildElement(t, elementName, textExpression) {
   return t.jsxElement(t.jsxOpeningElement(t.cloneNode(elementName), [attribute], true), null, [], true);
 }
 
-function buildNestedChildren(t, path, state, elementName, children) {
-  const nestedChildren = [];
-  let textParts = [];
+function buildNestedChildren(
+  t: BabelTypes,
+  path: ElementPath,
+  state: TextViewPass,
+  elementName: ElementName,
+  children: t.Expression[]
+): t.JSXElement['children'] {
+  const nestedChildren: t.JSXElement['children'] = [];
+  let textParts: t.Expression[] = [];
 
   function flushTextParts() {
     if (textParts.length === 0) return;
@@ -353,7 +386,7 @@ function buildNestedChildren(t, path, state, elementName, children) {
   for (const child of children) {
     if (t.isJSXFragment(child)) {
       flushTextParts();
-      nestedChildren.push(...buildNestedChildren(t, path, state, elementName, t.react.buildChildren(child)));
+      nestedChildren.push(...buildNestedChildren(t, path, state, elementName, buildChildren(t, child)));
       continue;
     }
 
@@ -370,7 +403,7 @@ function buildNestedChildren(t, path, state, elementName, children) {
   return nestedChildren;
 }
 
-module.exports = function textViewBabelPlugin({ types: t }) {
+function textViewBabelPlugin({ types: t }: { types: BabelTypes }): PluginObj<TextViewPass> {
   return {
     name: 'react-native-text-engine-textview',
     pre() {
@@ -408,7 +441,7 @@ module.exports = function textViewBabelPlugin({ types: t }) {
       JSXElement(path, state) {
         if (!matchesTextViewElement(path.node.openingElement.name, state)) return;
 
-        const renderedChildren = t.react.buildChildren(path.node);
+        const renderedChildren = buildChildren(t, path.node);
         if (renderedChildren.length === 0) return;
 
         const hasTextProp = path.node.openingElement.attributes.some(
@@ -443,4 +476,6 @@ module.exports = function textViewBabelPlugin({ types: t }) {
       },
     },
   };
-};
+}
+
+export = textViewBabelPlugin;

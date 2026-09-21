@@ -1,3 +1,5 @@
+import type { TransformOptions } from '@babel/core';
+
 module.exports = {
   presets: ['module:@react-native/babel-preset'],
   plugins: [
@@ -13,4 +15,4 @@ module.exports = {
       },
     ],
   ],
-};
+} satisfies TransformOptions;

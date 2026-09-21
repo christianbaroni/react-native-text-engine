@@ -22,7 +22,7 @@ export default [
   },
   prettierRecommended,
   {
-    files: ['**/*.ts', '**/*.tsx'],
+    files: ['**/*.ts', '**/*.tsx', '**/*.mts', '**/*.cts'],
     languageOptions: {
       parser: typescriptParser,
       parserOptions: {
