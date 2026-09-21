@@ -693,22 +693,44 @@ std::string RunComparison(const jni::global_ref<jobject> &fabricManager, float d
     }
   }, 4));
 
-  std::vector<AttributedStringBox> inputs;
-  std::vector<uint64_t> handles;
-  for (const auto &text : chatTexts) {
-    if (engine) handles.push_back(PrepareText(text, chatStyle));
-    else inputs.emplace_back(BuildRNAttributedString(text, chatStyle, {}));
+  struct QueryWorkingSet { size_t texts; size_t widths; };
+  for (const auto workingSet : {QueryWorkingSet{50, 4}, QueryWorkingSet{chatTexts.size(), widths.size()}}) {
+    const size_t keyCount = workingSet.texts * workingSet.widths;
+    const std::vector<double> queryWidths(widths.begin(), widths.begin() + workingSet.widths);
+    std::vector<AttributedStringBox> inputs;
+    std::vector<uint64_t> handles;
+    for (size_t index = 0; index < workingSet.texts; ++index) {
+      if (engine) handles.push_back(PrepareText(chatTexts[index], chatStyle));
+      else inputs.emplace_back(BuildRNAttributedString(chatTexts[index], chatStyle, {}));
+    }
+    for (int maxLines : {0, 2}) {
+      TextLayoutManager manager(context);
+      if (prepared && !engine) {
+        // Retain identities only for validation; measured queries still go through the manager.
+        std::vector<TextLayoutManager::PreparedTextLayout> layouts;
+        const auto paragraph = BuildParagraphAttributes(maxLines);
+        const auto layoutContext = BuildTextLayoutContext(density);
+        for (double width : queryWidths) for (const auto &input : inputs) {
+          layouts.push_back(manager.prepareLayout(input.getValue(), paragraph, layoutContext, BuildLayoutConstraints(width)));
+        }
+        size_t index = 0;
+        for (double width : queryWidths) for (const auto &input : inputs) {
+          auto layout = manager.prepareLayout(input.getValue(), paragraph, layoutContext, BuildLayoutConstraints(width));
+          bool reused = jni::Environment::current()->IsSameObject(layouts[index++].get(), layout.get());
+          Require(reused == (keyCount <= ReactNativeFeatureFlags::preparedTextCacheSize()),
+              "Prepared cache reuse mismatch: " + std::to_string(keyCount) + " keys, maxLines=" + std::to_string(maxLines));
+        }
+      }
+      std::string scenario = maxLines == 0 ? "cached_uniform_layout_queries" : "cached_truncated_layout_queries";
+      if (keyCount == 200) scenario += "_200_keys";
+      record(scenario, keyCount * 8, measure([&] {
+        for (double width : queryWidths) for (const auto &input : inputs) MeasureRN(manager, input, width, maxLines, density);
+      }, [&] {
+        for (double width : queryWidths) for (auto handle : handles) MeasureTextView(handle, width, maxLines);
+      }, 8));
+    }
+    for (auto handle : handles) rntextengine::releasePreparedTextMeasurementHandle(handle);
   }
-  for (int maxLines : {0, 2}) {
-    TextLayoutManager manager(context);
-    record(maxLines == 0 ? "cached_uniform_layout_queries" : "cached_truncated_layout_queries", 6144,
-        measure([&] {
-          for (double width : widths) for (const auto &input : inputs) MeasureRN(manager, input, width, maxLines, density);
-        }, [&] {
-          for (double width : widths) for (auto handle : handles) MeasureTextView(handle, width, maxLines);
-        }, 8));
-  }
-  for (auto handle : handles) rntextengine::releasePreparedTextMeasurementHandle(handle);
 
   record("cold_rich_inline_layout", 384, measure([&] {
     TextLayoutManager manager(context);

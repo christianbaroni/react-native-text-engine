@@ -155,7 +155,7 @@ class RNTextEngineTextComparisonBenchmark {
                     bitmap.recycle()
                 }
             }
-            assertTrue(results.length() == if (implementation == 2) 2 else 8)
+            assertTrue(results.length() == if (implementation == 2) 2 else 10)
             val meta = JSONObject()
                 .put("platform", "android")
                 .put("implementation", listOf("RN Text", "TextView", "PreparedTextView")[implementation])

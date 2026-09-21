@@ -27,6 +27,8 @@ Android uses the example’s Java and SDK setup and compiles the test APK ahead 
 | Retained paragraph measurement            | Remeasure the same 128 paragraph nodes at unchanged width constraints and unconstrained height.                                  |
 | Short labels, natural line height         | Create, measure, and release 128 distinct Latin, emoji, Japanese, and Bengali labels without an explicit line height.            |
 | Plain text creation and layout            | Create, measure, and release 128 distinct paragraphs.                                                                            |
+| Manager queries, 200 keys                 | Query 50 previously measured texts at four widths, filling RN’s prepared-layout cache.                                           |
+| Manager queries, 200 keys, two-line limit | Repeat the 200-key queries with truncation after two lines.                                                                      |
 | Manager queries, 768 keys                 | Query 128 previously measured texts at six widths.                                                                               |
 | Manager queries, 768 keys, two-line limit | Repeat the manager queries with truncation after two lines.                                                                      |
 | Styled text creation and layout           | Create, measure, and release 96 texts with changes in font size, weight, style, letter spacing, and tabular numbers.             |
@@ -53,7 +55,9 @@ Each results table shows the median of its three run medians, with median absolu
 
 RN 0.87.1 implements `enablePreparedTextLayout` on Android. The flag is set before RN initialization in each process. The Fabric workload uses RN's own paragraph-node integration; direct queries use `prepareLayout` followed by `measurePreparedLayout` with matching constraints. Validation inspects the prepared Android layout's actual line breaks and glyph widths.
 
-The manager-query workload visits 128 texts at six widths: 768 cache keys. RN's default measurement cache holds 1,024 entries, while its prepared-layout cache holds 200. These rows therefore measure cache misses in prepared mode, not repeated measurements of a retained paragraph node. RN paragraph nodes separately retain their measured layouts. The prepared cache size is left at its default.
+The manager-query workloads visit 50 texts at four widths (200 keys) and 128 texts at six widths (768 keys). The smaller workload uses the first 50 paragraphs and first four widths from the larger one. RN's default measurement cache holds 1,024 entries; its prepared-layout cache holds 200. After warm-up, the 200-key workload hits the cache in either configuration. The 768-key workload fits the default measurement cache but misses the prepared-layout cache on every query. Each working set and line-limit case uses a separate RN manager; the prepared cache size stays at its default.
+
+Before timing each Android prepared-RN query case, the test retains the layouts from one complete pass and checks their identities on the next pass: every 200-key layout must be reused, and every 768-key layout must be replaced. It then releases those validation references. Timed queries still call `prepareLayout` and `measurePreparedLayout`; they do not bypass the cache by using retained layouts directly. The retained-paragraph row separately tests RN paragraph nodes’ own layout reuse.
 
 Default and prepared results each include independently measured TextView and PreparedTextView controls. The first-draw workload exercises RN’s reuse of its prepared Android layout for drawing. In prepared mode, the retained-paragraph workload exercises the paragraph node’s own result reuse. iOS has no prepared-layout implementation in RN 0.87.1 and retains its ordinary comparison.
 

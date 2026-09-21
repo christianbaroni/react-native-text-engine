@@ -24,6 +24,11 @@ const scenarioGroups = [
       ['retained_paragraph_measurement', { label: 'Retained paragraph measurement', operations: 16384 }],
       ['cold_short_label_layout', { label: 'Short labels, natural line height', operations: 512 }],
       ['cold_uniform_chat_layout', { label: 'Plain text creation and layout', operations: 512 }],
+      ['cached_uniform_layout_queries_200_keys', { label: 'Manager queries, 200 keys', operations: 25600, androidOperations: 1600 }],
+      [
+        'cached_truncated_layout_queries_200_keys',
+        { label: 'Manager queries, 200 keys, two-line limit', operations: 25600, androidOperations: 1600 },
+      ],
       ['cached_uniform_layout_queries', { label: 'Manager queries, 768 keys', operations: 98304, androidOperations: 6144 }],
       [
         'cached_truncated_layout_queries',
@@ -204,7 +209,7 @@ export function renderComparison(metadata, logs) {
     }
     if (platform === 'android' && prepared) {
       lines.push(
-        'The manager-query rows miss RN’s 200-entry prepared-layout cache on every query. The retained-paragraph row measures repeated calls on the same paragraph nodes at unchanged constraints.',
+        'The 200-key manager-query rows hit RN’s prepared-layout cache after warm-up; the 768-key rows miss on every query. The retained-paragraph row measures repeated calls on the same paragraph nodes at unchanged constraints.',
         ''
       );
     }
@@ -218,7 +223,7 @@ export function renderComparison(metadata, logs) {
     ...(platform === 'android'
       ? [
           `- Device: ${runs[0].meta.abi}, density ${runs[0].meta.density}; ART compilation: ${metadata.compilation}`,
-          '- RN defaults: measurement cache 1,024 entries; prepared layout cache 200 entries. Each repeated-query workload visits 768 text/width combinations.',
+          '- RN defaults: measurement cache 1,024 entries; prepared layout cache 200 entries. Repeated-query workloads visit either 200 or 768 text/width combinations.',
           `- Toolchain: ${metadata.java}; Gradle ${metadata.gradle}; Node ${metadata.node}`,
           `- APK SHA256: \`${metadata.apkSha256}\``,
         ]

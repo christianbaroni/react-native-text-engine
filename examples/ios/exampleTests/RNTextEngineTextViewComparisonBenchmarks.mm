@@ -977,65 +977,43 @@ preparedTextView:^{
                  }
                } preparedTextView:nil];
 
-  NSMutableArray<NSNumber *> *handles = [NSMutableArray arrayWithCapacity:chatTexts.count];
-  for (NSString *text in chatTexts) {
-    [handles addObject:@(CreateTextViewHandle(text, chatStyle, nil, nil, nil, nil, nil, nil, nil, nil, nil))];
-  }
-
-  std::vector<AttributedStringBox> rnInputs;
-  rnInputs.reserve(chatStdTexts->size());
-  for (const auto &text : *chatStdTexts) {
-    rnInputs.emplace_back(BuildRNAttributedString(text, chatStyle, {}));
-  }
-
-  auto warmUniformContextContainer = std::make_shared<ContextContainer>();
-  auto warmUniformManager = std::make_shared<TextLayoutManager>(warmUniformContextContainer);
-  [self benchmark:@"cached_uniform_layout_queries"
-      operations:chatTexts.count * widths.size()
-     repetitions:128
-              rn:^{
-                 auto context = BuildTextLayoutContext();
-                 auto paragraph = BuildParagraphAttributes(0);
-                 for (double width : widths) {
-                   auto constraints = BuildLayoutConstraints(width);
-                   for (const auto &input : rnInputs) {
-                     MeasureRNTextLayout(*warmUniformManager, input, paragraph, context, constraints);
+  struct QueryWorkingSet { size_t texts; size_t widths; };
+  for (const auto workingSet : {QueryWorkingSet{50, 4}, QueryWorkingSet{chatTexts.count, widths.size()}}) {
+    const size_t keyCount = workingSet.texts * workingSet.widths;
+    const std::vector<double> queryWidths(widths.begin(), widths.begin() + workingSet.widths);
+    NSMutableArray<NSNumber *> *handles = [NSMutableArray arrayWithCapacity:workingSet.texts];
+    std::vector<AttributedStringBox> rnInputs;
+    rnInputs.reserve(workingSet.texts);
+    for (size_t index = 0; index < workingSet.texts; ++index) {
+      [handles addObject:@(CreateTextViewHandle(chatTexts[index], chatStyle, nil, nil, nil, nil, nil, nil, nil, nil, nil))];
+      rnInputs.emplace_back(BuildRNAttributedString((*chatStdTexts)[index], chatStyle, {}));
+    }
+    for (NSInteger maxLines : {0, 2}) {
+      auto manager = std::make_shared<TextLayoutManager>(std::make_shared<ContextContainer>());
+      NSString *scenario = maxLines == 0 ? @"cached_uniform_layout_queries" : @"cached_truncated_layout_queries";
+      if (keyCount == 200) scenario = [scenario stringByAppendingString:@"_200_keys"];
+      [self benchmark:scenario
+          operations:keyCount
+         repetitions:128
+                  rn:^{
+                     auto context = BuildTextLayoutContext();
+                     auto paragraph = BuildParagraphAttributes(maxLines);
+                     for (double width : queryWidths) {
+                       auto constraints = BuildLayoutConstraints(width);
+                       for (const auto &input : rnInputs) {
+                         MeasureRNTextLayout(*manager, input, paragraph, context, constraints);
+                       }
+                     }
                    }
-                 }
-               }
-        textView:^{
-                 for (double width : widths) {
-                   for (NSNumber *handle in handles) {
-                     MeasureTextViewLayout(handle.unsignedLongLongValue, width, 0);
-                   }
-                 }
-               } preparedTextView:nil];
-
-  auto warmTruncatedContextContainer = std::make_shared<ContextContainer>();
-  auto warmTruncatedManager = std::make_shared<TextLayoutManager>(warmTruncatedContextContainer);
-  [self benchmark:@"cached_truncated_layout_queries"
-      operations:chatTexts.count * widths.size()
-     repetitions:128
-              rn:^{
-                 auto context = BuildTextLayoutContext();
-                 auto paragraph = BuildParagraphAttributes(2);
-                 for (double width : widths) {
-                   auto constraints = BuildLayoutConstraints(width);
-                   for (const auto &input : rnInputs) {
-                     MeasureRNTextLayout(*warmTruncatedManager, input, paragraph, context, constraints);
-                   }
-                 }
-               }
-        textView:^{
-                 for (double width : widths) {
-                   for (NSNumber *handle in handles) {
-                     MeasureTextViewLayout(handle.unsignedLongLongValue, width, 2);
-                   }
-                 }
-               } preparedTextView:nil];
-
-  for (NSNumber *handle in handles) {
-    rntextengine::releasePreparedTextHandle(handle.unsignedLongLongValue);
+            textView:^{
+                     for (double width : queryWidths) {
+                       for (NSNumber *handle in handles) {
+                         MeasureTextViewLayout(handle.unsignedLongLongValue, width, maxLines);
+                       }
+                     }
+                   } preparedTextView:nil];
+    }
+    for (NSNumber *handle in handles) rntextengine::releasePreparedTextHandle(handle.unsignedLongLongValue);
   }
 
   [self benchmark:@"cold_rich_inline_layout"

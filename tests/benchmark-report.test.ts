@@ -13,6 +13,8 @@ const workloads = {
   retained_paragraph_measurement: 16384,
   cold_short_label_layout: 512,
   cold_uniform_chat_layout: 512,
+  cached_uniform_layout_queries_200_keys: 25600,
+  cached_truncated_layout_queries_200_keys: 25600,
   cached_uniform_layout_queries: 98304,
   cached_truncated_layout_queries: 98304,
   cold_rich_inline_layout: 384,
@@ -64,7 +66,7 @@ function runLog(
       .filter(name => name !== 'PreparedTextView' || ['fabric_chat_shadow_tree_layout', 'fabric_mount_and_first_draw'].includes(scenario))
       .map(implementation => ({
         scenario,
-        operations: platform === 'android' && scenario.startsWith('cached_') ? 6144 : operations,
+        operations: platform === 'android' && scenario.startsWith('cached_') ? operations / 16 : operations,
         implementation,
         samplesMs: [1, 9, 3, 7, 5, 8, 2, 4, 100].map(value => value * scale * (implementation === 'RN Text' ? 2 : 1)),
       }))
@@ -87,7 +89,7 @@ it.each(['iphonesimulator26.2', 'iphoneos26.2'])('reports %s measurements with d
   expect(report).toContain(
     '| Chat list layout | RN Text | 1 | 2.000000, 18.000000, 6.000000, 14.000000, 10.000000, 16.000000, 4.000000, 8.000000, 200.000000 |'
   );
-  expect(report.split('\n').filter(line => /\| (RN Text|TextView|PreparedTextView) \| [123] \|/.test(line))).toHaveLength(54);
+  expect(report.split('\n').filter(line => /\| (RN Text|TextView|PreparedTextView) \| [123] \|/.test(line))).toHaveLength(66);
 });
 
 it('requires isolated Android processes for each implementation and layout configuration', () => {
@@ -102,8 +104,10 @@ it('requires isolated Android processes for each implementation and layout confi
   expect(report).toContain('### RN Text with prepared layout');
   expect(report).toContain('| Chat list layout | 512 | 40.000 ± 30.000 | 20.000 ± 15.000 | 20.000 ± 15.000 | 0.500× | 0.500× |');
   expect(report).toContain('| Chat list layout | 512 | 60.000 ± 40.000 | 30.000 ± 20.000 | 30.000 ± 20.000 | 0.500× | 0.500× |');
+  expect(report).toContain('| Manager queries, 200 keys | 1,600 |');
+  expect(report).toContain('| Manager queries, 200 keys, two-line limit | 1,600 |');
   expect(report).toContain('| Manager queries, 768 keys | 6,144 |');
-  expect(report.split('\n').filter(line => /\| (Default|Prepared) \| [123] \|/.test(line))).toHaveLength(108);
+  expect(report.split('\n').filter(line => /\| (Default|Prepared) \| [123] \|/.test(line))).toHaveLength(132);
   expect(() => renderComparison(androidMetadata, logs.slice(0, 3))).toThrow();
   expect(() =>
     renderComparison(
@@ -115,6 +119,18 @@ it('requires isolated Android processes for each implementation and layout confi
   expect(() => parseRun(log.replace('"implementation":"RN Text"', '"implementation":"TextView"'), 1, 'android')).toThrow();
   expect(() => parseRun(log.replace('"preparedTextCacheSize":200', '"preparedTextCacheSize":1024'), 1, 'android')).toThrow();
   expect(() => parseRun(log.replace('"operations":6144', '"operations":98304'), 1, 'android')).toThrow();
+});
+
+it.each<Platform>(['ios', 'android'])('requires both 200-key rows with exact operation counts on %s', platform => {
+  const log = runLog(1, platform);
+  for (const scenario of ['cached_uniform_layout_queries_200_keys', 'cached_truncated_layout_queries_200_keys']) {
+    const lines = log.split('\n');
+    const index = lines.findIndex(line => line.includes(`"scenario":"${scenario}"`));
+    expect(index).toBeGreaterThanOrEqual(0);
+    expect(() => parseRun(lines.filter((_, i) => i !== index).join('\n'), 1, platform)).toThrow('Incomplete comparison');
+    lines[index] = lines[index].replace(`"operations":${platform === 'android' ? 1600 : 25600}`, '"operations":200');
+    expect(() => parseRun(lines.join('\n'), 1, platform)).toThrow('Incorrect operation count');
+  }
 });
 
 it.each<Platform>(['ios', 'android'])('requires exactly the applicable PreparedTextView rows on %s', platform => {
