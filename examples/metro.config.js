@@ -12,7 +12,6 @@ const { bundleModeMetroConfig } = require('react-native-worklets/bundleMode');
 const appNodeModules = path.resolve(__dirname, 'node_modules');
 const packageRoot = path.resolve(__dirname, '..');
 const packageNodeModules = path.resolve(packageRoot, 'node_modules');
-const localEaseRoot = '/Users/christian/dev/react-native-ease';
 const runtimePeerPackages = ['react', 'react-native', 'react-native-reanimated', 'react-native-worklets'];
 const escapePathForRegex = value => value.replace(/[|\\{}()[\]^$+*?.-]/g, '\\$&');
 const appDefaultsOverlayPath = path.resolve(__dirname, 'generated/react-native-text-engine/TextEngineAppDefaults.js');
@@ -47,17 +46,15 @@ function resolveRequest(context, moduleName, platform) {
   return bundleModeResolveRequest(context, moduleName, platform);
 }
 
-const externalNodeModulesRoots = [packageNodeModules, path.join(localEaseRoot, 'node_modules')];
-
 const config = {
   resolver: {
-    blockList: externalNodeModulesRoots.flatMap(buildDuplicateRuntimePeerBlockList),
+    blockList: buildDuplicateRuntimePeerBlockList(packageNodeModules),
     extraNodeModules: buildRuntimePeerAliases(appNodeModules),
     nodeModulesPaths: [appNodeModules, packageNodeModules],
     resolveRequest,
     unstable_enableSymlinks: true,
   },
-  watchFolders: [packageRoot, localEaseRoot],
+  watchFolders: [packageRoot],
 };
 
 module.exports = wrapWithReanimatedMetroConfig(mergeConfig(getDefaultConfig(__dirname), bundleModeMetroConfig, config));
