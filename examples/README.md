@@ -104,6 +104,16 @@ Use the example app when you need to verify:
 
 If you only need the public package surface, read the root [`README.md`](../README.md) first.
 
+## Android native tests
+
+Run the Android native correctness suites from the repository root with a connected device or emulator:
+
+```sh
+yarn test:android
+```
+
+This builds the native Fabric test harness and runs both instrumentation suites, including state handoff, font scaling, environment invalidation, concurrent measurement, and width boundaries. Pass `-PreactNativeArchitectures=arm64-v8a` to build only that device architecture. Performance benchmarks have separate `perf:*` commands.
+
 ## Runtime integration check
 
 `runtime-tests.tsx` checks synchronous measurement on the JS, UI, and dedicated Worklet runtimes, mounts all three native view types plus nested text, and checks prepared-handle release after unmounting. A successful run displays `RNTE_RUNTIME_TEST_PASS`. Native rendering assertions remain in the Android instrumentation and iOS XCTest suites.

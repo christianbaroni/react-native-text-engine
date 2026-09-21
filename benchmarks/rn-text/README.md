@@ -55,6 +55,6 @@ Default and prepared results each include independently measured TextView contro
 
 ## Source
 
-The [iOS test](../../examples/ios/exampleTests/RNTextEngineTextViewComparisonBenchmarks.mm) and [Android test](../../android/src/androidTest/jni/RNTextEngineTextComparison.cpp) call the platforms’ C++ layout managers and build Fabric shadow trees. On Android, this includes RN’s C++ layout cache; calling its Java layout methods directly would bypass that cache.
+The [iOS test](../../examples/ios/exampleTests/RNTextEngineTextViewComparisonBenchmarks.mm) and [Android test](../../android/src/nativeTest/jni/RNTextEngineTextComparison.cpp) call the platforms’ C++ layout managers and build Fabric shadow trees. On Android, this includes RN’s C++ layout cache; calling its Java layout methods directly would bypass that cache.
 
 The [iOS runner](../run-ios-comparison.sh) and [Android runner](../run-android-comparison.sh) save each run under `benchmarks/.results/`. The [report script](../report.mjs) checks the logs and updates the results.

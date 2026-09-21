@@ -55,6 +55,6 @@ if(TARGET react-native-worklets::worklets)
     target_link_libraries(rn-text-engine react-native-worklets::worklets)
 endif()
 
-if(RNTEXTENGINE_BUILD_TEXT_COMPARISON)
-    add_subdirectory(../../androidTest/jni text-comparison)
+if(RNTEXTENGINE_BUILD_NATIVE_TESTS)
+    add_subdirectory(../../nativeTest/jni native-tests)
 endif()

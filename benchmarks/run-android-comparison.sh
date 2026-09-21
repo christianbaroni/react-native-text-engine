@@ -25,7 +25,7 @@ RESULT_DIR="$(mktemp -d "${ROOT_DIR}/benchmarks/.results/android-comparison-$(da
 (
   cd examples/android
   ./gradlew :react-native-text-engine:assembleReleaseAndroidTest \
-    -PrnteTextComparison=true "-PreactNativeArchitectures=${ABI}"
+    -PrnteNativeTests=true "-PreactNativeArchitectures=${ABI}"
 ) 2>&1 | tee "${RESULT_DIR}/build.log"
 "${NODE_BINARY}" benchmarks/report.mjs artifact "${RESULT_DIR}" \
   android/build/outputs/apk/androidTest/release/react-native-text-engine-release-androidTest.apk

@@ -13,21 +13,11 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.facebook.react.bridge.JavaOnlyArray
-import com.facebook.react.bridge.Callback
-import com.facebook.react.bridge.CatalystInstance
-import com.facebook.react.bridge.JavaScriptContextHolder
-import com.facebook.react.bridge.JavaScriptModule
-import com.facebook.react.bridge.NativeModule
-import com.facebook.react.bridge.ReactApplicationContext
-import com.facebook.react.bridge.RuntimeExecutor
-import com.facebook.react.bridge.UIManager
 import com.facebook.react.soloader.OpenSourceMergedSoMapping
-import com.facebook.react.turbomodule.core.interfaces.CallInvokerHolder
 import com.facebook.react.uimanager.DisplayMetricsHolder
 import com.facebook.react.uimanager.PixelUtil
 import com.facebook.react.uimanager.ReactStylesDiffMap
 import com.facebook.react.bridge.JavaOnlyMap
-import com.facebook.yoga.YogaMeasureMode
 import com.facebook.yoga.YogaMeasureOutput
 import com.facebook.soloader.SoLoader
 import kotlin.math.abs
@@ -59,55 +49,6 @@ private fun resolvePreparedHandle(node: RNTextEngineTextShadowNode): Long {
     return method.invoke(node) as Long
 }
 
-private class InstrumentedTestReactApplicationContext(application: Application) : ReactApplicationContext(application) {
-    override fun <T : JavaScriptModule> getJSModule(jsInterface: Class<T>): T {
-        throw UnsupportedOperationException("JS modules are not used in RNTextEngine instrumentation tests.")
-    }
-
-    override fun <T : NativeModule> hasNativeModule(nativeModuleInterface: Class<T>): Boolean = false
-
-    override fun getNativeModules(): MutableCollection<NativeModule> = mutableListOf()
-
-    override fun <T : NativeModule> getNativeModule(nativeModuleInterface: Class<T>): T? = null
-
-    override fun getNativeModule(moduleName: String): NativeModule? = null
-
-    override fun getCatalystInstance(): CatalystInstance {
-        throw UnsupportedOperationException("CatalystInstance is not used in RNTextEngine instrumentation tests.")
-    }
-
-    @Deprecated("Legacy bridge API")
-    override fun hasActiveCatalystInstance(): Boolean = false
-
-    override fun hasActiveReactInstance(): Boolean = false
-
-    @Deprecated("Legacy bridge API")
-    override fun hasCatalystInstance(): Boolean = false
-
-    override fun hasReactInstance(): Boolean = false
-
-    override fun destroy() = Unit
-
-    override fun handleException(e: Exception) {
-        throw e
-    }
-
-    @Deprecated("Legacy bridge API")
-    override fun isBridgeless(): Boolean = false
-
-    override fun getJavaScriptContextHolder(): JavaScriptContextHolder? = null
-
-    override fun getRuntimeExecutor(): RuntimeExecutor? = null
-
-    override fun getJSCallInvokerHolder(): CallInvokerHolder? = null
-
-    override fun getFabricUIManager(): UIManager? = null
-
-    override fun getSourceURL(): String? = null
-
-    override fun registerSegment(segmentId: Int, path: String, callback: Callback) = Unit
-}
-
 private fun expectedAnchoredContentHeight(hostHeight: Int, insets: RNTextEngineCapHeightInsetsPx): Int {
     return hostHeight + kotlin.math.floor(insets.top.toDouble()).toInt() + ceil(insets.bottom.toDouble()).toInt()
 }
@@ -123,7 +64,7 @@ class RNTextEngineBindingsInstrumentedTest {
         application = ApplicationProvider.getApplicationContext()
         SoLoader.init(application, OpenSourceMergedSoMapping)
         DisplayMetricsHolder.initDisplayMetricsIfNotInitialized(application)
-        RNTextEngineBindings.initialize(InstrumentedTestReactApplicationContext(application))
+        RNTextEngineBindings.initialize(InstrumentedReactContext(application))
         RNTextEngineBindings.cleanup()
     }
 
@@ -466,7 +407,7 @@ class RNTextEngineBindingsInstrumentedTest {
 
     @Test
     fun initializationPreservesContentUntilItsEnvironmentChanges() {
-        val context = InstrumentedTestReactApplicationContext(application)
+        val context = InstrumentedReactContext(application)
         RNTextEngineBindings.initialize(context)
         fun prepare(previous: RNTextEngineBindings.PreparedText? = null) = RNTextEngineBindings.prepareTextViewContent(
             "initial", "uppercase", null, null, 18.0, null, null, 0.0, Double.NaN, true,
@@ -485,7 +426,7 @@ class RNTextEngineBindingsInstrumentedTest {
             assertNotSame(original, localized)
             assertEquals("İNİTİAL", localized.text)
 
-            val replacement = InstrumentedTestReactApplicationContext(application)
+            val replacement = InstrumentedReactContext(application)
             RNTextEngineBindings.initialize(replacement)
             val replaced = prepare(localized)
             assertNotSame(localized, replaced)

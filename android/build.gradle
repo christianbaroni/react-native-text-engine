@@ -50,7 +50,7 @@ def resolveNodeExecutable() {
     return System.getenv("NODE_BINARY") ?: "node"
 }
 
-def textComparisonEnabled = project.findProperty('rnteTextComparison') == 'true'
+def nativeTestsEnabled = project.findProperty('rnteNativeTests') == 'true'
 def reactRuntimeLibraries = ["**/libc++_shared.so", "**/libjsi.so", "**/libreactnative.so", "**/libworklets.so"]
 
 def reactNativeRootDir = resolveReactNativeDirectory()
@@ -85,12 +85,12 @@ android {
         minSdkVersion safeExtGet('minSdkVersion', 21)
         targetSdkVersion safeExtGet('targetSdkVersion', 33)
         buildConfigField("boolean", "IS_NEW_ARCHITECTURE_ENABLED", isNewArchitectureEnabled().toString())
-        testInstrumentationRunner textComparisonEnabled ? "androidx.test.runner.AndroidJUnitRunner" : "androidx.benchmark.junit4.AndroidBenchmarkRunner"
+        testInstrumentationRunner nativeTestsEnabled ? "androidx.test.runner.AndroidJUnitRunner" : "androidx.benchmark.junit4.AndroidBenchmarkRunner"
         testInstrumentationRunnerArguments["androidx.benchmark.suppressErrors"] = "EMULATOR"
         externalNativeBuild {
             cmake {
                 cppFlags "-std=c++20"
-                arguments "-DRNTEXTENGINE_BUILD_TEXT_COMPARISON=${textComparisonEnabled ? 'ON' : 'OFF'}",
+                arguments "-DRNTEXTENGINE_BUILD_NATIVE_TESTS=${nativeTestsEnabled ? 'ON' : 'OFF'}",
                         "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON",
                         "-DANDROID_STL=c++_shared",
                         "-DREACT_NATIVE_DIR=${reactNativeRootDir ? toPlatformFileString(reactNativeRootDir.path) : ''}",
@@ -103,6 +103,9 @@ android {
     testBuildType "release"
 
     sourceSets {
+        androidTest {
+            if (nativeTestsEnabled) java.srcDir("src/nativeTest/java")
+        }
         main {
             if (isNewArchitectureEnabled()) {
                 java.srcDirs += ['src/fabric']
@@ -214,7 +217,7 @@ if (isNewArchitectureEnabled()) {
     preBuild.dependsOn(overlayFabricTextViewCodegenOverrides)
 }
 
-if (textComparisonEnabled) {
+if (nativeTestsEnabled) {
     tasks.configureEach { task ->
         if (task.name.startsWith("configureCMake")) {
             task.dependsOn(overlayFabricTextViewCodegenOverrides)

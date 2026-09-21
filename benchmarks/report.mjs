@@ -233,6 +233,7 @@ function sourceIdentity(platform) {
           'android/src/main',
           'android/src/fabric',
           'android/src/androidTest',
+          'android/src/nativeTest',
           'examples/android/build.gradle',
           'examples/android/settings.gradle',
           'examples/android/gradle.properties',

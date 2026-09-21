@@ -65,6 +65,7 @@
   "scripts": {
     "typescript": "tsc --noEmit",
     "clean:src-artifacts": "node ./scripts/clean-source-artifacts.mjs",
+    "test:android": "cd examples/android && ./gradlew :react-native-text-engine:connectedReleaseAndroidTest -PrnteNativeTests=true -Pandroid.testInstrumentationRunnerArguments.class=com.rntextengine.RNTextEngineBindingsInstrumentedTest,com.rntextengine.RNTextEngineTextViewTest",
     "test:ts": "yarn clean:src-artifacts && node ./scripts/sync-text-engine-config.mjs && vitest run --config vitest.config.ts && tsc -p tsconfig.vitest.json --noEmit",
     "perf:android": "./benchmarks/run-android.sh",
     "perf:ios": "./benchmarks/run-ios.sh",

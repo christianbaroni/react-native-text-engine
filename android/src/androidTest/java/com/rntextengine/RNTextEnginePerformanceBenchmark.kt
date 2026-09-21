@@ -5,73 +5,14 @@ import androidx.benchmark.junit4.BenchmarkRule
 import androidx.benchmark.junit4.measureRepeated
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import com.facebook.react.bridge.Callback
-import com.facebook.react.bridge.CatalystInstance
-import com.facebook.react.bridge.JavaScriptContextHolder
-import com.facebook.react.bridge.JavaScriptModule
-import com.facebook.react.bridge.NativeModule
-import com.facebook.react.bridge.ReactApplicationContext
-import com.facebook.react.bridge.RuntimeExecutor
-import com.facebook.react.bridge.UIManager
-import com.facebook.react.turbomodule.core.interfaces.CallInvokerHolder
 import com.facebook.react.uimanager.DisplayMetricsHolder
 import java.nio.ByteBuffer
-import kotlin.math.max
 import kotlin.math.min
 import org.junit.After
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
-
-internal class BenchmarkReactApplicationContext(application: Application) : ReactApplicationContext(application) {
-    override fun <T : JavaScriptModule> getJSModule(jsInterface: Class<T>): T {
-        throw UnsupportedOperationException("JS modules are not used in RNTextEngine performance benchmarks.")
-    }
-
-    override fun <T : NativeModule> hasNativeModule(nativeModuleInterface: Class<T>): Boolean = false
-
-    override fun getNativeModules(): MutableCollection<NativeModule> = mutableListOf()
-
-    override fun <T : NativeModule> getNativeModule(nativeModuleInterface: Class<T>): T? = null
-
-    override fun getNativeModule(moduleName: String): NativeModule? = null
-
-    override fun getCatalystInstance(): CatalystInstance {
-        throw UnsupportedOperationException("CatalystInstance is not used in RNTextEngine performance benchmarks.")
-    }
-
-    @Deprecated("Legacy bridge API")
-    override fun hasActiveCatalystInstance(): Boolean = false
-
-    override fun hasActiveReactInstance(): Boolean = false
-
-    @Deprecated("Legacy bridge API")
-    override fun hasCatalystInstance(): Boolean = false
-
-    override fun hasReactInstance(): Boolean = false
-
-    override fun destroy() = Unit
-
-    override fun handleException(e: Exception) {
-        throw e
-    }
-
-    @Deprecated("Legacy bridge API")
-    override fun isBridgeless(): Boolean = false
-
-    override fun getJavaScriptContextHolder(): JavaScriptContextHolder? = null
-
-    override fun getRuntimeExecutor(): RuntimeExecutor? = null
-
-    override fun getJSCallInvokerHolder(): CallInvokerHolder? = null
-
-    override fun getFabricUIManager(): UIManager? = null
-
-    override fun getSourceURL(): String? = null
-
-    override fun registerSegment(segmentId: Int, path: String, callback: Callback) = Unit
-}
 
 private data class GlyphFieldState(
     val glyphIndices: ByteArray,
@@ -96,7 +37,7 @@ class RNTextEnginePerformanceBenchmark {
     fun setUp() {
         application = ApplicationProvider.getApplicationContext()
         DisplayMetricsHolder.initDisplayMetricsIfNotInitialized(application)
-        RNTextEngineBindings.initialize(BenchmarkReactApplicationContext(application))
+        RNTextEngineBindings.initialize(InstrumentedReactContext(application))
         RNTextEngineBindings.cleanup()
     }
 
